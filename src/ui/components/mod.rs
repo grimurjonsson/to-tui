@@ -2,6 +2,7 @@ pub mod status_bar;
 pub mod todo_list;
 
 use crate::app::AppState;
+use crate::utils::unicode::{char_count, truncate_chars};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
@@ -41,8 +42,8 @@ fn render_delete_confirm(f: &mut Frame, state: &AppState) {
         .map(|item| item.content.as_str())
         .unwrap_or("");
     
-    let truncated = if item_text.len() > 40 {
-        format!("{}...", &item_text[..37])
+    let truncated = if char_count(item_text) > 40 {
+        format!("{}...", truncate_chars(item_text, 37))
     } else {
         item_text.to_string()
     };

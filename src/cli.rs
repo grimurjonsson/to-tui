@@ -1,5 +1,8 @@
 use clap::{Parser, Subcommand};
 
+/// Default port for the API server
+pub const DEFAULT_API_PORT: u16 = 48372;
+
 #[derive(Parser, Debug)]
 #[command(name = "todo")]
 #[command(about = "A terminal-based todo list manager with daily rolling lists", long_about = None)]
@@ -14,8 +17,28 @@ pub enum Commands {
         task: String,
     },
     Show,
+    /// Manage the API server
     Serve {
-        #[arg(short, long, default_value = "3000")]
+        #[command(subcommand)]
+        command: Option<ServeCommand>,
+
+        /// Port to run the server on
+        #[arg(short, long, global = true, default_value_t = DEFAULT_API_PORT)]
         port: u16,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ServeCommand {
+    /// Start the API server (default if no subcommand given)
+    Start {
+        #[arg(long, hide = true)]
+        daemon: bool,
+    },
+    /// Stop the running API server
+    Stop,
+    /// Restart the API server
+    Restart,
+    /// Check if the API server is running
+    Status,
 }

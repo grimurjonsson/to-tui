@@ -23,6 +23,11 @@ pub fn get_database_path() -> Result<PathBuf> {
     Ok(todo_dir.join("todos.db"))
 }
 
+pub fn get_pid_file_path() -> Result<PathBuf> {
+    let todo_dir = get_todo_cli_dir()?;
+    Ok(todo_dir.join("server.pid"))
+}
+
 pub fn get_daily_file_path(date: NaiveDate) -> Result<PathBuf> {
     let dailies_dir = get_dailies_dir()?;
     let filename = format!("{}.md", date.format("%Y-%m-%d"));
@@ -78,5 +83,12 @@ mod tests {
         let path = get_database_path().unwrap();
         assert!(path.to_string_lossy().contains(".todo-cli"));
         assert!(path.to_string_lossy().ends_with("todos.db"));
+    }
+
+    #[test]
+    fn test_get_pid_file_path() {
+        let path = get_pid_file_path().unwrap();
+        assert!(path.to_string_lossy().contains(".todo-cli"));
+        assert!(path.to_string_lossy().ends_with("server.pid"));
     }
 }

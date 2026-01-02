@@ -1,5 +1,6 @@
 use crate::app::{AppState, Mode};
 use crate::todo::TodoState;
+use crate::utils::unicode::{first_char_as_str, after_first_char};
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -15,7 +16,12 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     for (idx, item) in state.todo_list.items.iter().enumerate() {
         let indent = "  ".repeat(item.indent_level);
         let checkbox = format!("{}", item.state);
-        let content = format!("{}{} {}", indent, checkbox, item.content);
+        
+        let due_date_str = item.due_date
+            .map(|d| format!(" [{}]", d.format("%Y-%m-%d")))
+            .unwrap_or_default();
+        
+        let content = format!("{}{} {}{}", indent, checkbox, item.content, due_date_str);
 
         let style = if idx == state.cursor_position && state.mode != Mode::Edit {
             // Highlight in Navigate mode, but preserve strikethrough for completed items
@@ -41,6 +47,15 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
         items.push(ListItem::new(Line::from(Span::styled(content, style))));
 
+        if let Some(ref desc) = item.description {
+            let desc_indent = "  ".repeat(item.indent_level + 1);
+            let desc_content = format!("{}  {}", desc_indent, desc);
+            let desc_style = Style::default()
+                .fg(ratatui::style::Color::DarkGray)
+                .add_modifier(Modifier::ITALIC);
+            items.push(ListItem::new(Line::from(Span::styled(desc_content, desc_style))));
+        }
+
         // If creating a new item and we just rendered the current item, insert placeholder
         if state.is_creating_new_item && state.mode == Mode::Edit && idx == state.cursor_position {
             let indent = "  ".repeat(state.pending_indent_level);
@@ -58,7 +73,6 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
             // Cursor: bright block or inverted character
             if after_cursor.is_empty() {
-                // At end: show bright yellow/green block
                 spans.push(Span::styled(
                     "█",
                     Style::default()
@@ -66,16 +80,15 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
                         .add_modifier(Modifier::BOLD)
                 ));
             } else {
-                // In middle: invert the character with bright colors
                 spans.push(Span::styled(
-                    &after_cursor[..1],
+                    first_char_as_str(after_cursor),
                     Style::default()
                         .bg(ratatui::style::Color::Yellow)
                         .fg(ratatui::style::Color::Black)
                         .add_modifier(Modifier::BOLD)
                 ));
                 spans.push(Span::styled(
-                    &after_cursor[1..],
+                    after_first_char(after_cursor),
                     Style::default()
                 ));
             }
@@ -84,24 +97,19 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         }
     }
 
-    // Handle empty list case
     if state.todo_list.items.is_empty() {
         if state.is_creating_new_item && state.mode == Mode::Edit {
-            // Creating first item with visible cursor
             let indent = "  ".repeat(state.pending_indent_level);
             let prefix = format!("{}[ ] ", indent);
             let before_cursor = &state.edit_buffer[..state.edit_cursor_pos];
             let after_cursor = &state.edit_buffer[state.edit_cursor_pos..];
 
-            // Build line with visible cursor - normal text with bright cursor
             let mut spans = vec![
                 Span::styled(prefix, Style::default()),
                 Span::styled(before_cursor, Style::default()),
             ];
 
-            // Cursor: bright block or inverted character
             if after_cursor.is_empty() {
-                // At end: show bright yellow/green block
                 spans.push(Span::styled(
                     "█",
                     Style::default()
@@ -109,16 +117,15 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
                         .add_modifier(Modifier::BOLD)
                 ));
             } else {
-                // In middle: invert the character with bright colors
                 spans.push(Span::styled(
-                    &after_cursor[..1],
+                    first_char_as_str(after_cursor),
                     Style::default()
                         .bg(ratatui::style::Color::Yellow)
                         .fg(ratatui::style::Color::Black)
                         .add_modifier(Modifier::BOLD)
                 ));
                 spans.push(Span::styled(
-                    &after_cursor[1..],
+                    after_first_char(after_cursor),
                     Style::default()
                 ));
             }
@@ -167,8 +174,14 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 }
 
 fn render_edit_input(f: &mut Frame, state: &AppState, area: Rect) {
-    // Calculate position for edit input (at cursor position)
-    let y_offset = state.cursor_position.saturating_sub(state.scroll_offset) as u16 + 1; // +1 for border
+    let rows_before_cursor: usize = state.todo_list.items
+        .iter()
+        .take(state.cursor_position)
+        .skip(state.scroll_offset)
+        .map(|item| if item.description.is_some() { 2 } else { 1 })
+        .sum();
+    
+    let y_offset = rows_before_cursor as u16 + 1;
 
     if y_offset >= area.height - 1 {
         return; // Off screen
@@ -200,9 +213,7 @@ fn render_edit_input(f: &mut Frame, state: &AppState, area: Rect) {
         Span::styled(before_cursor, Style::default()),
     ];
 
-    // Cursor: bright block or inverted character
     if after_cursor.is_empty() {
-        // At end: show bright yellow block
         spans.push(Span::styled(
             "█",
             Style::default()
@@ -210,16 +221,15 @@ fn render_edit_input(f: &mut Frame, state: &AppState, area: Rect) {
                 .add_modifier(Modifier::BOLD)
         ));
     } else {
-        // In middle: invert the character with bright yellow
         spans.push(Span::styled(
-            &after_cursor[..1],
+            first_char_as_str(after_cursor),
             Style::default()
                 .bg(ratatui::style::Color::Yellow)
                 .fg(ratatui::style::Color::Black)
                 .add_modifier(Modifier::BOLD)
         ));
         spans.push(Span::styled(
-            &after_cursor[1..],
+            after_first_char(after_cursor),
             Style::default()
         ));
     }

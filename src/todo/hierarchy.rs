@@ -34,65 +34,98 @@ impl TodoList {
         Ok((index, end))
     }
 
-    /// Move item and all its children up by one position
-    pub fn move_item_with_children_up(&mut self, index: usize) -> Result<()> {
+    /// Move item and all its children up one position. Returns positions moved.
+    pub fn move_item_with_children_up(&mut self, index: usize) -> Result<usize> {
         if index == 0 {
             return Err(anyhow!("Cannot move first item up"));
         }
 
         let (item_start, item_end) = self.get_item_range(index)?;
 
-        // Find the previous item's range
-        let prev_idx = item_start - 1;
-        let prev_base_indent = self.items[prev_idx].indent_level;
-
-        // Find the start of the previous item group
-        let mut prev_start = prev_idx;
-        while prev_start > 0 && self.items[prev_start - 1].indent_level > prev_base_indent {
-            prev_start -= 1;
+        if item_start == 0 {
+            return Err(anyhow!("Already at top"));
         }
 
-        // Extract both item groups
-        let item_count = item_end - item_start;
-        let prev_count = item_start - prev_start;
+        let current_indent = self.items[item_start].indent_level;
+        
+        let mut target_idx = item_start - 1;
+        while target_idx > 0 && self.items[target_idx].indent_level > current_indent {
+            target_idx -= 1;
+        }
+        
+        let (target_start, _) = self.get_item_range(target_idx)?;
+        
+        if target_start >= item_start {
+            return Err(anyhow!("Cannot move up"));
+        }
+        
+        let displacement = item_start - target_start;
+        let mut current_items: Vec<_> = self.items.drain(item_start..item_end).collect();
 
-        // Remove current item group first (higher index)
-        let current_items: Vec<_> = self.items.drain(item_start..item_end).collect();
+        let max_indent = if target_start == 0 {
+            0
+        } else {
+            self.items[target_start - 1].indent_level + 1
+        };
 
-        // Now remove previous item group (indices have shifted)
-        let prev_items: Vec<_> = self.items.drain(prev_start..prev_start + prev_count).collect();
+        let item_indent = current_items[0].indent_level;
+        if item_indent > max_indent {
+            let diff = item_indent - max_indent;
+            for item in &mut current_items {
+                item.indent_level = item.indent_level.saturating_sub(diff);
+            }
+        }
 
-        self.items.splice(prev_start..prev_start, current_items);
-        self.items.splice(prev_start + item_count..prev_start + item_count, prev_items);
-
+        self.items.splice(target_start..target_start, current_items);
         self.recalculate_parent_ids();
-        Ok(())
+        Ok(displacement)
     }
 
-    pub fn move_item_with_children_down(&mut self, index: usize) -> Result<()> {
+    /// Move item and all its children down one position. Returns positions moved.
+    pub fn move_item_with_children_down(&mut self, index: usize) -> Result<usize> {
         let (item_start, item_end) = self.get_item_range(index)?;
 
         if item_end >= self.items.len() {
             return Err(anyhow!("Cannot move last item down"));
         }
 
-        // Find the next item's range
-        let (next_start, next_end) = self.get_item_range(item_end)?;
-
+        let current_indent = self.items[item_start].indent_level;
+        
+        let mut target_idx = item_end;
+        while target_idx < self.items.len() && self.items[target_idx].indent_level > current_indent {
+            target_idx += 1;
+        }
+        
+        if target_idx >= self.items.len() {
+            return Err(anyhow!("Cannot move down"));
+        }
+        
+        let target_indent = self.items[target_idx].indent_level;
         let item_count = item_end - item_start;
-        let next_count = next_end - next_start;
 
-        // Remove next item group first (higher index)
-        let next_items: Vec<_> = self.items.drain(next_start..next_end).collect();
+        let insert_pos = if current_indent > target_indent {
+            target_idx + 1
+        } else {
+            let (_, target_end) = self.get_item_range(target_idx)?;
+            target_end
+        };
 
-        // Now remove current item group (indices have shifted)
-        let current_items: Vec<_> = self.items.drain(item_start..item_start + item_count).collect();
+        let mut current_items: Vec<_> = self.items.drain(item_start..item_end).collect();
+        
+        let actual_insert = insert_pos - item_count;
+        let max_indent = self.items[actual_insert - 1].indent_level + 1;
 
-        self.items.splice(item_start..item_start, next_items);
-        self.items.splice(item_start + next_count..item_start + next_count, current_items);
+        let item_indent = current_items[0].indent_level;
+        if item_indent > max_indent {
+            let diff = item_indent - max_indent;
+            for item in &mut current_items {
+                item.indent_level = item.indent_level.saturating_sub(diff);
+            }
+        }
 
+        self.items.splice(actual_insert..actual_insert, current_items);
         self.recalculate_parent_ids();
-        Ok(())
+        Ok(insert_pos - item_end)
     }
 
     pub fn indent_item(&mut self, index: usize) -> Result<()> {

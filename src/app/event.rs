@@ -1,6 +1,7 @@
 use super::state::AppState;
 use super::mode::Mode;
 use crate::storage::save_todo_list;
+use crate::utils::unicode::{next_char_boundary, prev_char_boundary};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -29,23 +30,18 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
     }
 
     match (key.code, key.modifiers) {
-        // Move item up/down with children (Alt/Option+Shift+Arrows) - MUST come before plain navigation
         (KeyCode::Up, mods) if mods.intersects(KeyModifiers::SHIFT) &&
                                 mods.intersects(KeyModifiers::ALT) => {
-            if let Err(_) = state.todo_list.move_item_with_children_up(state.cursor_position) {
-                // Silently ignore errors (item at top, etc.)
-            } else {
-                state.cursor_position = state.cursor_position.saturating_sub(1);
+            if let Ok(displacement) = state.todo_list.move_item_with_children_up(state.cursor_position) {
+                state.cursor_position = state.cursor_position.saturating_sub(displacement);
                 state.unsaved_changes = true;
             }
         }
         (KeyCode::Down, mods) if mods.intersects(KeyModifiers::SHIFT) &&
                                   mods.intersects(KeyModifiers::ALT) => {
-            let old_pos = state.cursor_position;
-            if let Err(_) = state.todo_list.move_item_with_children_down(state.cursor_position) {
-                // Silently ignore errors
-            } else {
-                state.cursor_position = (old_pos + 1).min(state.todo_list.items.len().saturating_sub(1));
+            if let Ok(displacement) = state.todo_list.move_item_with_children_down(state.cursor_position) {
+                state.cursor_position = (state.cursor_position + displacement)
+                    .min(state.todo_list.items.len().saturating_sub(1));
                 state.unsaved_changes = true;
             }
         }
@@ -199,18 +195,19 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         }
         (KeyCode::Backspace, _) => {
             if state.edit_cursor_pos > 0 {
-                state.edit_buffer.remove(state.edit_cursor_pos - 1);
-                state.edit_cursor_pos -= 1;
+                let prev_boundary = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                state.edit_buffer.drain(prev_boundary..state.edit_cursor_pos);
+                state.edit_cursor_pos = prev_boundary;
             }
         }
         (KeyCode::Left, _) => {
             if state.edit_cursor_pos > 0 {
-                state.edit_cursor_pos -= 1;
+                state.edit_cursor_pos = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
             }
         }
         (KeyCode::Right, _) => {
             if state.edit_cursor_pos < state.edit_buffer.len() {
-                state.edit_cursor_pos += 1;
+                state.edit_cursor_pos = next_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
             }
         }
         (KeyCode::Home, _) => {
@@ -241,7 +238,7 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         }
         (KeyCode::Char(c), _) => {
             state.edit_buffer.insert(state.edit_cursor_pos, c);
-            state.edit_cursor_pos += 1;
+            state.edit_cursor_pos += c.len_utf8();
         }
         _ => {}
     }
