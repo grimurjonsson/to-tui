@@ -1,0 +1,15 @@
+meta {
+  name: List Todos
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{baseUrl}}/api/todos?date=2026-01-02
+  body: none
+  auth: none
+}
+
+params:query {
+  date: 2026-01-02
+}

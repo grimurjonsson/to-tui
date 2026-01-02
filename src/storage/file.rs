@@ -1,4 +1,5 @@
-use super::markdown::{parse_todo_list, serialize_todo_list};
+use super::database;
+use super::markdown::{parse_todo_list, serialize_todo_list_clean};
 use crate::todo::TodoList;
 use crate::utils::paths::{ensure_directories_exist, get_daily_file_path};
 use anyhow::{Context, Result};
@@ -8,26 +9,40 @@ use std::path::Path;
 
 pub fn load_todo_list(date: NaiveDate) -> Result<TodoList> {
     ensure_directories_exist()?;
+    database::init_database()?;
 
     let file_path = get_daily_file_path(date)?;
 
-    if !file_path.exists() {
-        return Ok(TodoList::new(date, file_path));
+    if database::has_todos_for_date(date)? {
+        let items = database::load_todos_for_date(date)?;
+        return Ok(TodoList::with_items(date, file_path, items));
     }
 
-    let content = fs::read_to_string(&file_path)
-        .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
+    if file_path.exists() {
+        let content = fs::read_to_string(&file_path)
+            .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
-    parse_todo_list(&content, date, file_path)
-        .with_context(|| "Failed to parse todo list")
+        let list = parse_todo_list(&content, date, file_path.clone())
+            .with_context(|| "Failed to parse todo list")?;
+
+        if !list.items.is_empty() {
+            database::save_todo_list(&list)?;
+        }
+
+        return Ok(list);
+    }
+
+    Ok(TodoList::new(date, file_path))
 }
 
 pub fn save_todo_list(list: &TodoList) -> Result<()> {
     ensure_directories_exist()?;
+    database::init_database()?;
 
-    let content = serialize_todo_list(list);
+    database::save_todo_list(list)?;
 
-    // Atomic write: write to temp file then rename
+    let content = serialize_todo_list_clean(list);
+
     let temp_path = list.file_path.with_extension("tmp");
 
     fs::write(&temp_path, content)
@@ -40,6 +55,12 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
 }
 
 pub fn file_exists(date: NaiveDate) -> Result<bool> {
+    database::init_database()?;
+    
+    if database::has_todos_for_date(date)? {
+        return Ok(true);
+    }
+    
     let file_path = get_daily_file_path(date)?;
     Ok(file_path.exists())
 }
@@ -56,10 +77,10 @@ pub fn delete_file(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::markdown::serialize_todo_list_clean;
     use tempfile::TempDir;
     use chrono::NaiveDate;
 
-    // Helper to setup temporary test directory
     fn setup_test_dir() -> TempDir {
         TempDir::new().unwrap()
     }
@@ -70,16 +91,13 @@ mod tests {
         let temp_dir = setup_test_dir();
         let file_path = temp_dir.path().join("2025-12-31.md");
 
-        // Create a list
         let mut list = TodoList::new(date, file_path.clone());
         list.add_item("Test task 1".to_string());
         list.add_item("Test task 2".to_string());
 
-        // Save it
-        let content = serialize_todo_list(&list);
+        let content = serialize_todo_list_clean(&list);
         fs::write(&file_path, content).unwrap();
 
-        // Load it back
         let loaded_content = fs::read_to_string(&file_path).unwrap();
         let loaded_list = parse_todo_list(&loaded_content, date, file_path).unwrap();
 
@@ -99,7 +117,7 @@ mod tests {
         list.add_item_with_indent("Child".to_string(), 1);
         list.items[1].state = crate::todo::TodoState::Checked;
 
-        let markdown = serialize_todo_list(&list);
+        let markdown = serialize_todo_list_clean(&list);
         let parsed = parse_todo_list(&markdown, date, file_path).unwrap();
 
         assert_eq!(parsed.items.len(), 2);

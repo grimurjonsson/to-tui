@@ -1,0 +1,26 @@
+meta {
+  name: Update Todo
+  type: http
+  seq: 4
+}
+
+patch {
+  url: {{baseUrl}}/api/todos/:id?date=2026-01-02
+  body: json
+  auth: none
+}
+
+params:path {
+  id: aadca3cf-bff1-43bd-a7f6-e1fc523780d1
+}
+
+params:query {
+  date: 2026-01-02
+}
+
+body:json {
+  {
+    "content": "Updated content",
+    "state": "x"
+  }
+}

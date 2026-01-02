@@ -1,13 +1,16 @@
 use super::state::TodoState;
+use chrono::NaiveDate;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct TodoItem {
-    #[allow(dead_code)]
     pub id: Uuid,
     pub content: String,
     pub state: TodoState,
     pub indent_level: usize,
+    pub parent_id: Option<Uuid>,
+    pub due_date: Option<NaiveDate>,
+    pub description: Option<String>,
 }
 
 impl TodoItem {
@@ -17,15 +20,54 @@ impl TodoItem {
             content,
             state: TodoState::Empty,
             indent_level,
+            parent_id: None,
+            due_date: None,
+            description: None,
         }
     }
 
+    #[allow(dead_code)]
     pub fn with_state(content: String, state: TodoState, indent_level: usize) -> Self {
         Self {
             id: Uuid::new_v4(),
             content,
             state,
             indent_level,
+            parent_id: None,
+            due_date: None,
+            description: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_parent(content: String, indent_level: usize, parent_id: Option<Uuid>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            content,
+            state: TodoState::Empty,
+            indent_level,
+            parent_id,
+            due_date: None,
+            description: None,
+        }
+    }
+
+    pub fn full(
+        content: String,
+        state: TodoState,
+        indent_level: usize,
+        parent_id: Option<Uuid>,
+        due_date: Option<NaiveDate>,
+        description: Option<String>,
+    ) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            content,
+            state,
+            indent_level,
+            parent_id,
+            due_date,
+            description,
         }
     }
 
@@ -96,12 +138,24 @@ mod tests {
         assert_eq!(item.state, TodoState::Checked);
 
         item.toggle_state();
+        assert_eq!(item.state, TodoState::Empty);
+    }
+
+    #[test]
+    fn test_cycle_state() {
+        let mut item = TodoItem::new("Task".to_string(), 0);
+        assert_eq!(item.state, TodoState::Empty);
+
+        item.cycle_state();
+        assert_eq!(item.state, TodoState::Checked);
+
+        item.cycle_state();
         assert_eq!(item.state, TodoState::Question);
 
-        item.toggle_state();
+        item.cycle_state();
         assert_eq!(item.state, TodoState::Exclamation);
 
-        item.toggle_state();
+        item.cycle_state();
         assert_eq!(item.state, TodoState::Empty);
     }
 

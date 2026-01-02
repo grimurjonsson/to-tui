@@ -1,5 +1,7 @@
+use crate::storage::file::load_todo_list;
 use crate::todo::{TodoItem, TodoList};
 use crate::ui::theme::Theme;
+use anyhow::Result;
 use super::mode::Mode;
 use std::time::Instant;
 
@@ -88,5 +90,16 @@ impl AppState {
         } else {
             self.cursor_position = 0;
         }
+    }
+
+    /// Reload the todo list from the database.
+    /// Used when external changes are detected (e.g., from API server).
+    pub fn reload_from_database(&mut self) -> Result<()> {
+        let date = self.todo_list.date;
+        let new_list = load_todo_list(date)?;
+        self.todo_list = new_list;
+        self.clamp_cursor();
+        self.unsaved_changes = false;
+        Ok(())
     }
 }

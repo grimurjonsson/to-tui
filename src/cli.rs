@@ -10,11 +10,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Add a new todo item to today's list
     Add {
-        /// The todo item text
         task: String,
     },
-    /// Show today's todo list
     Show,
+    Serve {
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+    },
 }

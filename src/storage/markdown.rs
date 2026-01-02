@@ -3,60 +3,110 @@ use anyhow::{anyhow, Result};
 use chrono::NaiveDate;
 use std::path::PathBuf;
 
-pub fn serialize_todo_list(list: &TodoList) -> String {
+pub fn serialize_todo_list_clean(list: &TodoList) -> String {
     let mut output = String::new();
 
-    // Add header with human-readable date
     output.push_str(&format!(
         "# Todo List - {}\n\n",
         list.date.format("%B %d, %Y")
     ));
 
-    // Serialize each item
     for item in &list.items {
         let indent = "  ".repeat(item.indent_level);
+        
+        let due_suffix = item.due_date
+            .map(|d| format!(" @due({})", d.format("%Y-%m-%d")))
+            .unwrap_or_default();
+        
         output.push_str(&format!(
-            "{}- [{}] {}\n",
+            "{}- [{}] {}{}\n",
             indent,
             item.state.to_char(),
-            item.content
+            item.content,
+            due_suffix
         ));
+        
+        if let Some(ref desc) = item.description {
+            for line in desc.lines() {
+                output.push_str(&format!("{}  > {}\n", indent, line));
+            }
+        }
     }
 
     output
 }
 
+#[allow(dead_code)]
+pub fn serialize_todo_list(list: &TodoList) -> String {
+    serialize_todo_list_clean(list)
+}
+
 pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Result<TodoList> {
-    let mut items = Vec::new();
+    let mut items: Vec<TodoItem> = Vec::new();
+    let mut pending_description: Option<String> = None;
 
     for line in content.lines() {
-        // Skip empty lines and headers
         if line.trim().is_empty() || line.trim().starts_with('#') {
             continue;
         }
 
-        // Check if line is a checkbox item
-        if let Some(item) = parse_todo_line(line)? {
+        let trimmed = line.trim_start();
+        
+        if trimmed.starts_with('>') {
+            if let Some(ref mut desc) = pending_description {
+                desc.push('\n');
+                desc.push_str(trimmed[1..].trim());
+            } else {
+                pending_description = Some(trimmed[1..].trim().to_string());
+            }
+            continue;
+        }
+
+        if let Some(desc) = pending_description.take() {
+            if let Some(last_item) = items.last_mut() {
+                last_item.description = Some(desc);
+            }
+        }
+
+        if let Some(mut item) = parse_todo_line(line)? {
+            let parent_id = find_parent_id(&items, item.indent_level);
+            item.parent_id = parent_id;
             items.push(item);
+        }
+    }
+
+    if let Some(desc) = pending_description.take() {
+        if let Some(last_item) = items.last_mut() {
+            last_item.description = Some(desc);
         }
     }
 
     Ok(TodoList::with_items(date, file_path, items))
 }
 
+fn find_parent_id(items: &[TodoItem], indent_level: usize) -> Option<uuid::Uuid> {
+    if indent_level == 0 {
+        return None;
+    }
+    
+    for item in items.iter().rev() {
+        if item.indent_level < indent_level {
+            return Some(item.id);
+        }
+    }
+    None
+}
+
 fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
-    // Count leading spaces for indent level
     let indent_level = line.len() - line.trim_start().len();
-    let indent_level = indent_level / 2; // 2 spaces per indent
+    let indent_level = indent_level / 2;
 
     let trimmed = line.trim_start();
 
-    // Check if it's a checkbox line: starts with "- ["
     if !trimmed.starts_with("- [") {
         return Ok(None);
     }
 
-    // Extract the state character
     if trimmed.len() < 5 {
         return Err(anyhow!("Invalid checkbox format"));
     }
@@ -65,14 +115,75 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
     let state = TodoState::from_char(state_char)
         .ok_or_else(|| anyhow!("Invalid state character: {}", state_char))?;
 
-    // Extract content after "] "
-    let content = if trimmed.len() > 5 {
-        trimmed[5..].trim().to_string()
+    let raw_content = if trimmed.len() > 5 {
+        trimmed[5..].trim()
     } else {
-        String::new()
+        ""
     };
 
-    Ok(Some(TodoItem::with_state(content, state, indent_level)))
+    let (content, id) = parse_id(raw_content);
+    let (content, due_date) = parse_due_date(&content);
+
+    let mut item = TodoItem::full(
+        content,
+        state,
+        indent_level,
+        None,
+        due_date,
+        None,
+    );
+    
+    if let Some(parsed_id) = id {
+        item.id = parsed_id;
+    }
+
+    Ok(Some(item))
+}
+
+fn parse_id(content: &str) -> (String, Option<uuid::Uuid>) {
+    if let Some(start) = content.find("@id(") {
+        if let Some(end) = content[start..].find(')') {
+            let id_str = &content[start + 4..start + end];
+            let id = uuid::Uuid::parse_str(id_str).ok();
+            
+            let mut cleaned = String::new();
+            cleaned.push_str(content[..start].trim());
+            if start + end + 1 < content.len() {
+                let suffix = content[start + end + 1..].trim();
+                if !suffix.is_empty() {
+                    if !cleaned.is_empty() {
+                        cleaned.push(' ');
+                    }
+                    cleaned.push_str(suffix);
+                }
+            }
+            return (cleaned, id);
+        }
+    }
+    (content.to_string(), None)
+}
+
+fn parse_due_date(content: &str) -> (String, Option<NaiveDate>) {
+    if let Some(start) = content.find("@due(") {
+        if let Some(end) = content[start..].find(')') {
+            let date_str = &content[start + 5..start + end];
+            let due_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
+            
+            let mut cleaned = String::new();
+            cleaned.push_str(content[..start].trim());
+            if start + end + 1 < content.len() {
+                let suffix = content[start + end + 1..].trim();
+                if !suffix.is_empty() {
+                    if !cleaned.is_empty() {
+                        cleaned.push(' ');
+                    }
+                    cleaned.push_str(suffix);
+                }
+            }
+            return (cleaned, due_date);
+        }
+    }
+    (content.to_string(), None)
 }
 
 #[cfg(test)]
@@ -147,9 +258,9 @@ mod tests {
 
         let markdown = serialize_todo_list(&list);
         assert!(markdown.contains("- [ ] Parent\n"));
-        assert!(markdown.contains("  - [ ] Child 1\n"));
-        assert!(markdown.contains("    - [ ] Grandchild\n"));
-        assert!(markdown.contains("  - [ ] Child 2\n"));
+        assert!(markdown.contains("\n  - [ ] Child 1\n"));
+        assert!(markdown.contains("\n    - [ ] Grandchild\n"));
+        assert!(markdown.contains("\n  - [ ] Child 2\n"));
     }
 
     #[test]

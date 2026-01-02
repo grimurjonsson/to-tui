@@ -1,3 +1,4 @@
+mod api;
 mod app;
 mod cli;
 mod config;
@@ -25,8 +26,10 @@ fn main() -> Result<()> {
         Some(Commands::Show) => {
             handle_show()?;
         }
+        Some(Commands::Serve { port }) => {
+            handle_serve(port)?;
+        }
         None => {
-            // No command - launch TUI
             let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
                 let today = Local::now().date_naive();
                 todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
@@ -38,6 +41,26 @@ fn main() -> Result<()> {
             ui::run_tui(state)?;
         }
     }
+
+    Ok(())
+}
+
+#[tokio::main]
+async fn handle_serve(port: u16) -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "info,tower_http=debug".into()),
+        )
+        .init();
+
+    let app = api::create_router();
+    let addr = format!("0.0.0.0:{}", port);
+
+    tracing::info!("Starting server on {}", addr);
+
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
 }

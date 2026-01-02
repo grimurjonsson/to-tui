@@ -2,7 +2,22 @@ use super::TodoList;
 use anyhow::{anyhow, Result};
 
 impl TodoList {
-    /// Get the range (start_idx, end_idx) of an item and all its children
+    pub fn recalculate_parent_ids(&mut self) {
+        for i in 0..self.items.len() {
+            let indent_level = self.items[i].indent_level;
+            if indent_level == 0 {
+                self.items[i].parent_id = None;
+            } else {
+                let parent_id = self.items[..i]
+                    .iter()
+                    .rev()
+                    .find(|item| item.indent_level < indent_level)
+                    .map(|item| item.id);
+                self.items[i].parent_id = parent_id;
+            }
+        }
+    }
+
     pub fn get_item_range(&self, index: usize) -> Result<(usize, usize)> {
         if index >= self.items.len() {
             return Err(anyhow!("Index out of bounds"));
@@ -47,14 +62,13 @@ impl TodoList {
         // Now remove previous item group (indices have shifted)
         let prev_items: Vec<_> = self.items.drain(prev_start..prev_start + prev_count).collect();
 
-        // Insert in swapped order
         self.items.splice(prev_start..prev_start, current_items);
         self.items.splice(prev_start + item_count..prev_start + item_count, prev_items);
 
+        self.recalculate_parent_ids();
         Ok(())
     }
 
-    /// Move item and all its children down by one position
     pub fn move_item_with_children_down(&mut self, index: usize) -> Result<()> {
         let (item_start, item_end) = self.get_item_range(index)?;
 
@@ -74,14 +88,13 @@ impl TodoList {
         // Now remove current item group (indices have shifted)
         let current_items: Vec<_> = self.items.drain(item_start..item_start + item_count).collect();
 
-        // Insert in swapped order
         self.items.splice(item_start..item_start, next_items);
         self.items.splice(item_start + next_count..item_start + next_count, current_items);
 
+        self.recalculate_parent_ids();
         Ok(())
     }
 
-    /// Indent item (increase indent_level by 1)
     pub fn indent_item(&mut self, index: usize) -> Result<()> {
         if index >= self.items.len() {
             return Err(anyhow!("Index out of bounds"));
@@ -100,10 +113,10 @@ impl TodoList {
         }
 
         self.items[index].indent_level += 1;
+        self.recalculate_parent_ids();
         Ok(())
     }
 
-    /// Outdent item (decrease indent_level by 1)
     pub fn outdent_item(&mut self, index: usize) -> Result<()> {
         if index >= self.items.len() {
             return Err(anyhow!("Index out of bounds"));
@@ -114,10 +127,10 @@ impl TodoList {
         }
 
         self.items[index].indent_level -= 1;
+        self.recalculate_parent_ids();
         Ok(())
     }
 
-    /// Indent item and all its children (increase indent_level by 1)
     pub fn indent_item_with_children(&mut self, index: usize) -> Result<()> {
         if index >= self.items.len() {
             return Err(anyhow!("Index out of bounds"));
@@ -138,15 +151,14 @@ impl TodoList {
         // Get the range of this item and its children
         let (start, end) = self.get_item_range(index)?;
 
-        // Indent all items in the range
         for i in start..end {
             self.items[i].indent_level += 1;
         }
 
+        self.recalculate_parent_ids();
         Ok(())
     }
 
-    /// Outdent item and all its children (decrease indent_level by 1)
     pub fn outdent_item_with_children(&mut self, index: usize) -> Result<()> {
         if index >= self.items.len() {
             return Err(anyhow!("Index out of bounds"));
@@ -159,13 +171,13 @@ impl TodoList {
         // Get the range of this item and its children
         let (start, end) = self.get_item_range(index)?;
 
-        // Outdent all items in the range
         for i in start..end {
             if self.items[i].indent_level > 0 {
                 self.items[i].indent_level -= 1;
             }
         }
 
+        self.recalculate_parent_ids();
         Ok(())
     }
 }
