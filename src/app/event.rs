@@ -1,9 +1,10 @@
-use super::state::AppState;
 use super::mode::Mode;
+use super::state::AppState;
+use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::storage::save_todo_list;
 use crate::utils::unicode::{next_char_boundary, prev_char_boundary};
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
     match state.mode {
@@ -14,162 +15,29 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
-    if state.awaiting_second_d {
-        state.awaiting_second_d = false;
-        if key.code == KeyCode::Char('d') && key.modifiers == KeyModifiers::NONE {
-            if !state.todo_list.items.is_empty() {
-                state.save_undo();
-                delete_current_item(state)?;
-                save_todo_list(&state.todo_list)?;
-                state.unsaved_changes = false;
-                state.last_save_time = Some(std::time::Instant::now());
-            }
+    let pending = if let (Some(pending_key), Some(pending_time)) = (state.pending_key.take(), state.pending_key_time.take()) {
+        let elapsed = pending_time.elapsed().as_millis() as u64;
+        if elapsed < state.timeoutlen {
+            Some(pending_key)
+        } else {
+            None
         }
-        return Ok(());
+    } else {
+        None
+    };
+    
+    match state.keybindings.lookup_navigate(&key, pending) {
+        KeyLookupResult::Pending => {
+            state.pending_key = Some(KeyBinding::from_event(&key));
+            state.pending_key_time = Some(std::time::Instant::now());
+            return Ok(());
+        }
+        KeyLookupResult::Action(action) => {
+            execute_navigate_action(action, state)?;
+        }
+        KeyLookupResult::None => {}
     }
 
-    match (key.code, key.modifiers) {
-        (KeyCode::Up, mods) if mods.intersects(KeyModifiers::SHIFT) &&
-                                mods.intersects(KeyModifiers::ALT) => {
-            if let Ok(displacement) = state.todo_list.move_item_with_children_up(state.cursor_position) {
-                state.cursor_position = state.cursor_position.saturating_sub(displacement);
-                state.unsaved_changes = true;
-            }
-        }
-        (KeyCode::Down, mods) if mods.intersects(KeyModifiers::SHIFT) &&
-                                  mods.intersects(KeyModifiers::ALT) => {
-            if let Ok(displacement) = state.todo_list.move_item_with_children_down(state.cursor_position) {
-                state.cursor_position = (state.cursor_position + displacement)
-                    .min(state.todo_list.items.len().saturating_sub(1));
-                state.unsaved_changes = true;
-            }
-        }
-
-        // Navigation (plain arrows)
-        (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
-            state.move_cursor_up();
-        }
-        (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
-            state.move_cursor_down();
-        }
-
-        // Toggle state (checked/unchecked)
-        (KeyCode::Char('x'), KeyModifiers::NONE) => {
-            if state.selected_item().is_some() {
-                state.save_undo();
-                if let Some(item) = state.selected_item_mut() {
-                    item.toggle_state();
-                    state.unsaved_changes = true;
-                }
-            }
-        }
-
-        // Cycle through all 4 states
-        (KeyCode::Char(' '), _) => {
-            if state.selected_item().is_some() {
-                state.save_undo();
-                if let Some(item) = state.selected_item_mut() {
-                    item.cycle_state();
-                    state.unsaved_changes = true;
-                }
-            }
-        }
-
-        // Indent/outdent WITH children using Alt/Option+Shift+Left/Right
-        (KeyCode::Right, mods) if mods.intersects(KeyModifiers::SHIFT) &&
-                                   mods.intersects(KeyModifiers::ALT) => {
-            if let Err(_) = state.todo_list.indent_item_with_children(state.cursor_position) {
-                // Silently ignore errors
-            } else {
-                state.unsaved_changes = true;
-            }
-        }
-        (KeyCode::Left, mods) if mods.intersects(KeyModifiers::SHIFT) &&
-                                  mods.intersects(KeyModifiers::ALT) => {
-            if let Err(_) = state.todo_list.outdent_item_with_children(state.cursor_position) {
-                // Silently ignore errors
-            } else {
-                state.unsaved_changes = true;
-            }
-        }
-
-        // Indent/outdent single item (WITHOUT children) with Tab/Shift+Tab
-        (KeyCode::Tab, KeyModifiers::NONE) => {
-            if let Err(_) = state.todo_list.indent_item(state.cursor_position) {
-                // Silently ignore errors
-            } else {
-                state.unsaved_changes = true;
-            }
-        }
-        (KeyCode::BackTab, _) => {
-            // BackTab is sent when Shift+Tab is pressed
-            if let Err(_) = state.todo_list.outdent_item(state.cursor_position) {
-                // Silently ignore errors
-            } else {
-                state.unsaved_changes = true;
-            }
-        }
-
-        (KeyCode::Char('i'), KeyModifiers::NONE) => {
-            enter_edit_mode(state);
-        }
-
-        // New item
-        (KeyCode::Char('n'), KeyModifiers::NONE) => {
-            new_item_below(state);
-        }
-
-        (KeyCode::Char('d'), KeyModifiers::NONE) => {
-            if !state.todo_list.items.is_empty() {
-                state.awaiting_second_d = true;
-            }
-        }
-
-        (KeyCode::Char('c'), KeyModifiers::NONE) => {
-            if state.todo_list.has_children(state.cursor_position) {
-                if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
-                    item.collapsed = !item.collapsed;
-                    state.unsaved_changes = true;
-                }
-            }
-        }
-
-        // Undo
-        (KeyCode::Char('u'), KeyModifiers::NONE) => {
-            if state.undo() {
-                save_todo_list(&state.todo_list)?;
-                state.last_save_time = Some(std::time::Instant::now());
-            }
-        }
-
-        // Help toggle
-        (KeyCode::Char('?'), KeyModifiers::NONE) => {
-            state.show_help = !state.show_help;
-        }
-
-        (KeyCode::Esc, _) => {
-            if state.show_help {
-                state.show_help = false;
-            }
-        }
-
-        // Quit - but if help is showing, just close help
-        (KeyCode::Char('q'), KeyModifiers::NONE) => {
-            if state.show_help {
-                state.show_help = false;
-            } else {
-                state.should_quit = true;
-            }
-        }
-
-        (KeyCode::Enter, _) => {
-            new_item_at_same_level(state);
-        }
-
-        _ => {}
-    }
-
-    // Auto-save on changes
     if state.unsaved_changes {
         save_todo_list(&state.todo_list)?;
         state.unsaved_changes = false;
@@ -179,65 +47,178 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
     Ok(())
 }
 
-fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
-    match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) => {
-            save_edit_buffer(state)?;
-            state.mode = Mode::Navigate;
+fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
+    match action {
+        Action::MoveUp => {
+            state.move_cursor_up();
         }
-        (KeyCode::Enter, _) => {
-            save_edit_buffer(state)?;
+        Action::MoveDown => {
+            state.move_cursor_down();
+        }
+        Action::ToggleState => {
+            if state.selected_item().is_some() {
+                state.save_undo();
+                if let Some(item) = state.selected_item_mut() {
+                    item.toggle_state();
+                    state.unsaved_changes = true;
+                }
+            }
+        }
+        Action::CycleState => {
+            if state.selected_item().is_some() {
+                state.save_undo();
+                if let Some(item) = state.selected_item_mut() {
+                    item.cycle_state();
+                    state.unsaved_changes = true;
+                }
+            }
+        }
+        Action::Delete => {
+            if !state.todo_list.items.is_empty() {
+                state.save_undo();
+                delete_current_item(state)?;
+                save_todo_list(&state.todo_list)?;
+                state.unsaved_changes = false;
+                state.last_save_time = Some(std::time::Instant::now());
+            }
+        }
+        Action::NewItem => {
+            new_item_below(state);
+        }
+        Action::NewItemSameLevel => {
             new_item_at_same_level(state);
         }
-        (KeyCode::Backspace, _) => {
-            if state.edit_cursor_pos > 0 {
-                let prev_boundary = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
-                state.edit_buffer.drain(prev_boundary..state.edit_cursor_pos);
-                state.edit_cursor_pos = prev_boundary;
+        Action::EnterEditMode => {
+            enter_edit_mode(state);
+        }
+        Action::Indent => {
+            if state.todo_list.indent_item(state.cursor_position).is_ok() {
+                state.unsaved_changes = true;
             }
         }
-        (KeyCode::Left, _) => {
-            if state.edit_cursor_pos > 0 {
-                state.edit_cursor_pos = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+        Action::Outdent => {
+            if state.todo_list.outdent_item(state.cursor_position).is_ok() {
+                state.unsaved_changes = true;
             }
         }
-        (KeyCode::Right, _) => {
-            if state.edit_cursor_pos < state.edit_buffer.len() {
-                state.edit_cursor_pos = next_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+        Action::IndentWithChildren => {
+            if state.todo_list.indent_item_with_children(state.cursor_position).is_ok() {
+                state.unsaved_changes = true;
             }
         }
-        (KeyCode::Home, _) => {
-            state.edit_cursor_pos = 0;
+        Action::OutdentWithChildren => {
+            if state.todo_list.outdent_item_with_children(state.cursor_position).is_ok() {
+                state.unsaved_changes = true;
+            }
         }
-        (KeyCode::End, _) => {
-            state.edit_cursor_pos = state.edit_buffer.len();
+        Action::MoveItemUp => {
+            if let Ok(displacement) = state.todo_list.move_item_with_children_up(state.cursor_position) {
+                state.cursor_position = state.cursor_position.saturating_sub(displacement);
+                state.unsaved_changes = true;
+            }
         }
-        (KeyCode::Tab, _) | (KeyCode::Char('\t'), _) => {
-            if state.is_creating_new_item {
-                let max_indent = state
-                    .selected_item()
-                    .map(|item| item.indent_level + 1)
-                    .unwrap_or(0);
-                if state.pending_indent_level < max_indent {
-                    state.pending_indent_level += 1;
+        Action::MoveItemDown => {
+            if let Ok(displacement) = state.todo_list.move_item_with_children_down(state.cursor_position) {
+                state.cursor_position = (state.cursor_position + displacement)
+                    .min(state.todo_list.items.len().saturating_sub(1));
+                state.unsaved_changes = true;
+            }
+        }
+        Action::ToggleCollapse => {
+            if state.todo_list.has_children(state.cursor_position) {
+                if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
+                    item.collapsed = !item.collapsed;
+                    state.unsaved_changes = true;
                 }
-            } else if state.todo_list.indent_item(state.cursor_position).is_ok() {
-                state.unsaved_changes = true;
             }
         }
-        (KeyCode::BackTab, _) => {
-            if state.is_creating_new_item {
-                state.pending_indent_level = state.pending_indent_level.saturating_sub(1);
-            } else if state.todo_list.outdent_item(state.cursor_position).is_ok() {
-                state.unsaved_changes = true;
+        Action::Undo => {
+            if state.undo() {
+                save_todo_list(&state.todo_list)?;
+                state.last_save_time = Some(std::time::Instant::now());
             }
         }
-        (KeyCode::Char(c), _) => {
-            state.edit_buffer.insert(state.edit_cursor_pos, c);
-            state.edit_cursor_pos += c.len_utf8();
+        Action::ToggleHelp => {
+            state.show_help = !state.show_help;
+        }
+        Action::CloseHelp => {
+            if state.show_help {
+                state.show_help = false;
+            }
+        }
+        Action::Quit => {
+            if state.show_help {
+                state.show_help = false;
+            } else {
+                state.should_quit = true;
+            }
         }
         _ => {}
     }
+    Ok(())
+}
+
+fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    if let Some(action) = state.keybindings.get_edit_action(&key) {
+        match action {
+            Action::EditCancel => {
+                save_edit_buffer(state)?;
+                state.mode = Mode::Navigate;
+            }
+            Action::EditConfirm => {
+                save_edit_buffer(state)?;
+                new_item_at_same_level(state);
+            }
+            Action::EditBackspace => {
+                if state.edit_cursor_pos > 0 {
+                    let prev_boundary = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                    state.edit_buffer.drain(prev_boundary..state.edit_cursor_pos);
+                    state.edit_cursor_pos = prev_boundary;
+                }
+            }
+            Action::EditLeft => {
+                if state.edit_cursor_pos > 0 {
+                    state.edit_cursor_pos = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                }
+            }
+            Action::EditRight => {
+                if state.edit_cursor_pos < state.edit_buffer.len() {
+                    state.edit_cursor_pos = next_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                }
+            }
+            Action::EditHome => {
+                state.edit_cursor_pos = 0;
+            }
+            Action::EditEnd => {
+                state.edit_cursor_pos = state.edit_buffer.len();
+            }
+            Action::EditIndent => {
+                if state.is_creating_new_item {
+                    let max_indent = state
+                        .selected_item()
+                        .map(|item| item.indent_level + 1)
+                        .unwrap_or(0);
+                    if state.pending_indent_level < max_indent {
+                        state.pending_indent_level += 1;
+                    }
+                } else if state.todo_list.indent_item(state.cursor_position).is_ok() {
+                    state.unsaved_changes = true;
+                }
+            }
+            Action::EditOutdent => {
+                if state.is_creating_new_item {
+                    state.pending_indent_level = state.pending_indent_level.saturating_sub(1);
+                } else if state.todo_list.outdent_item(state.cursor_position).is_ok() {
+                    state.unsaved_changes = true;
+                }
+            }
+            _ => {}
+        }
+    } else if let KeyCode::Char(c) = key.code {
+        state.edit_buffer.insert(state.edit_cursor_pos, c);
+        state.edit_cursor_pos += c.len_utf8();
+    }
+    
     Ok(())
 }
 
@@ -302,11 +283,9 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
         }
         state.is_creating_new_item = false;
     } else {
-        // Editing existing item
         if state.cursor_position < state.todo_list.items.len() {
             state.todo_list.items[state.cursor_position].content = state.edit_buffer.clone();
         } else {
-            // Fallback: adding new item at end
             state.todo_list.add_item_with_indent(state.edit_buffer.clone(), 0);
             state.cursor_position = state.todo_list.items.len() - 1;
         }

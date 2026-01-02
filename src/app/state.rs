@@ -1,3 +1,4 @@
+use crate::keybindings::{KeyBinding, KeybindingCache};
 use crate::storage::file::load_todo_list;
 use crate::todo::{TodoItem, TodoList};
 use crate::ui::theme::Theme;
@@ -17,16 +18,19 @@ pub struct AppState {
     pub should_quit: bool,
     pub show_help: bool,
     pub theme: Theme,
+    pub keybindings: KeybindingCache,
+    pub pending_key: Option<KeyBinding>,
+    pub pending_key_time: Option<Instant>,
+    pub timeoutlen: u64,
     pub unsaved_changes: bool,
     pub last_save_time: Option<Instant>,
     pub is_creating_new_item: bool,
     pub pending_indent_level: usize,
     pub undo_stack: Vec<(TodoList, usize)>,
-    pub awaiting_second_d: bool,
 }
 
 impl AppState {
-    pub fn new(todo_list: TodoList, theme: Theme) -> Self {
+    pub fn new(todo_list: TodoList, theme: Theme, keybindings: KeybindingCache, timeoutlen: u64) -> Self {
         Self {
             todo_list,
             cursor_position: 0,
@@ -37,12 +41,15 @@ impl AppState {
             should_quit: false,
             show_help: false,
             theme,
+            keybindings,
+            pending_key: None,
+            pending_key_time: None,
+            timeoutlen,
             unsaved_changes: false,
             last_save_time: None,
             is_creating_new_item: false,
             pending_indent_level: 0,
             undo_stack: Vec::new(),
-            awaiting_second_d: false,
         }
     }
 

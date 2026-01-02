@@ -2,22 +2,35 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+use crate::keybindings::KeybindingsConfig;
 use crate::utils::paths::get_config_path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_theme")]
     pub theme: String,
+    
+    #[serde(default = "default_timeoutlen")]
+    pub timeoutlen: u64,
+    
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
 }
 
 fn default_theme() -> String {
     "default".to_string()
 }
 
+fn default_timeoutlen() -> u64 {
+    1000
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             theme: default_theme(),
+            timeoutlen: default_timeoutlen(),
+            keybindings: KeybindingsConfig::default(),
         }
     }
 }

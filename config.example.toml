@@ -1,0 +1,57 @@
+theme = "default"
+
+# Time in milliseconds to wait for a key sequence to complete (neovim default: 1000)
+timeoutlen = 1000
+
+[keybindings.navigate]
+# Navigation
+"k" = "move_up"
+"j" = "move_down"
+"<Up>" = "move_up"
+"<Down>" = "move_down"
+
+# State changes
+"x" = "toggle_state"
+"<Space>" = "cycle_state"
+
+# Item manipulation
+"dd" = "delete"
+"n" = "new_item"
+"<Enter>" = "new_item_same_level"
+
+# Editing
+"i" = "enter_edit_mode"
+
+# Indentation (single item)
+"<Tab>" = "indent"
+"<S-Tab>" = "outdent"
+
+# Indentation with children
+"<S-A-Right>" = "indent_with_children"
+"<S-A-Left>" = "outdent_with_children"
+
+# Move items with children
+"<S-A-Up>" = "move_item_up"
+"<S-A-Down>" = "move_item_down"
+
+# Collapse/expand
+"c" = "toggle_collapse"
+
+# Undo
+"u" = "undo"
+
+# UI
+"?" = "toggle_help"
+"<Esc>" = "close_help"
+"q" = "quit"
+
+[keybindings.edit]
+"<Esc>" = "edit_cancel"
+"<Enter>" = "edit_confirm"
+"<BS>" = "edit_backspace"
+"<Left>" = "edit_left"
+"<Right>" = "edit_right"
+"<Home>" = "edit_home"
+"<End>" = "edit_end"
+"<Tab>" = "edit_indent"
+"<S-Tab>" = "edit_outdent"

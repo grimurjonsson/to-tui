@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod cli;
 mod config;
+mod keybindings;
 mod storage;
 mod todo;
 mod ui;
@@ -12,6 +13,7 @@ use chrono::Local;
 use clap::Parser;
 use cli::{Cli, Commands, ServeCommand, DEFAULT_API_PORT};
 use config::Config;
+use keybindings::KeybindingCache;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -45,7 +47,8 @@ fn main() -> Result<()> {
             });
 
             let theme = Theme::from_config(&config);
-            let state = app::AppState::new(list, theme);
+            let keybindings = KeybindingCache::from_config(&config.keybindings);
+            let state = app::AppState::new(list, theme, keybindings, config.timeoutlen);
 
             ui::run_tui(state)?;
         }
