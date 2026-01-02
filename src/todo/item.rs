@@ -30,6 +30,10 @@ impl TodoItem {
     }
 
     pub fn toggle_state(&mut self) {
+        self.state = self.state.toggle();
+    }
+
+    pub fn cycle_state(&mut self) {
         self.state = self.state.cycle();
     }
 

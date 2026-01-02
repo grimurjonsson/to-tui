@@ -9,13 +9,7 @@ use ratatui::{
 
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     let mode_text = format!("{}", state.mode);
-
-    let save_indicator = if state.unsaved_changes {
-        " [unsaved]"
-    } else {
-        ""
-    };
-
+    let save_indicator = if state.unsaved_changes { " [unsaved]" } else { "" };
     let help_text = " Press ? for help, q to quit";
 
     let status_line = format!(

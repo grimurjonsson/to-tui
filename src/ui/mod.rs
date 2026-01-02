@@ -4,9 +4,15 @@ pub mod theme;
 use crate::app::{event::handle_key_event, AppState};
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event},
+    event::{
+        self, Event, KeyboardEnhancementFlags, KeyEventKind, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
+        LeaveAlternateScreen,
+    },
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io;
@@ -16,6 +22,17 @@ pub fn run_tui(mut state: AppState) -> Result<()> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
+
+    // Enable enhanced keyboard support (Kitty protocol) for proper modifier detection
+    // This allows Shift+Enter and other modifier combinations to work correctly
+    let keyboard_enhancement_enabled = supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhancement_enabled {
+        execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+    }
+
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -25,6 +42,9 @@ pub fn run_tui(mut state: AppState) -> Result<()> {
 
     // Cleanup terminal
     disable_raw_mode()?;
+    if keyboard_enhancement_enabled {
+        execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
+    }
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
@@ -40,7 +60,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, state: &mut Ap
         // Poll for events with timeout
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                handle_key_event(key, state)?;
+                if key.kind == KeyEventKind::Press {
+                    handle_key_event(key, state)?;
+                }
             }
         }
 

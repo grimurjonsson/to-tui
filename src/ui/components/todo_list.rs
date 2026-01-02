@@ -43,7 +43,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
         // If creating a new item and we just rendered the current item, insert placeholder
         if state.is_creating_new_item && state.mode == Mode::Edit && idx == state.cursor_position {
-            let indent = "  ".repeat(item.indent_level);
+            let indent = "  ".repeat(state.pending_indent_level);
             let prefix = format!("{}[ ] ", indent);
 
             // Split text at cursor position to show cursor
@@ -88,7 +88,8 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     if state.todo_list.items.is_empty() {
         if state.is_creating_new_item && state.mode == Mode::Edit {
             // Creating first item with visible cursor
-            let prefix = "[ ] ";
+            let indent = "  ".repeat(state.pending_indent_level);
+            let prefix = format!("{}[ ] ", indent);
             let before_cursor = &state.edit_buffer[..state.edit_cursor_pos];
             let after_cursor = &state.edit_buffer[state.edit_cursor_pos..];
 

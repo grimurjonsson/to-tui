@@ -3,6 +3,8 @@ use crate::ui::theme::Theme;
 use super::mode::Mode;
 use std::time::Instant;
 
+const MAX_UNDO_HISTORY: usize = 50;
+
 pub struct AppState {
     pub todo_list: TodoList,
     pub cursor_position: usize,
@@ -16,6 +18,9 @@ pub struct AppState {
     pub unsaved_changes: bool,
     pub last_save_time: Option<Instant>,
     pub is_creating_new_item: bool,
+    pub pending_indent_level: usize,
+    pub undo_stack: Vec<(TodoList, usize)>,
+    pub confirm_delete: bool,
 }
 
 impl AppState {
@@ -33,6 +38,27 @@ impl AppState {
             unsaved_changes: false,
             last_save_time: None,
             is_creating_new_item: false,
+            pending_indent_level: 0,
+            undo_stack: Vec::new(),
+            confirm_delete: false,
+        }
+    }
+
+    pub fn save_undo(&mut self) {
+        if self.undo_stack.len() >= MAX_UNDO_HISTORY {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push((self.todo_list.clone(), self.cursor_position));
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if let Some((list, cursor)) = self.undo_stack.pop() {
+            self.todo_list = list;
+            self.cursor_position = cursor;
+            self.unsaved_changes = true;
+            true
+        } else {
+            false
         }
     }
 

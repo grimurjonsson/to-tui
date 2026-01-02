@@ -37,6 +37,13 @@ impl TodoState {
         }
     }
 
+    pub fn toggle(&self) -> Self {
+        match self {
+            Self::Checked => Self::Empty,
+            _ => Self::Checked,
+        }
+    }
+
     pub fn is_complete(&self) -> bool {
         matches!(self, Self::Checked)
     }

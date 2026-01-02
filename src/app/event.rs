@@ -13,6 +13,21 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    if state.confirm_delete {
+        match key.code {
+            KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                state.confirm_delete = false;
+                state.save_undo();
+                delete_current_item(state)?;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                state.confirm_delete = false;
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     match (key.code, key.modifiers) {
         // Move item up/down with children (Alt/Option+Shift+Arrows) - MUST come before plain navigation
         (KeyCode::Up, mods) if mods.intersects(KeyModifiers::SHIFT) &&
@@ -43,11 +58,25 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
             state.move_cursor_down();
         }
 
-        // Toggle state (cycle through all 4 states)
-        (KeyCode::Char(' '), KeyModifiers::NONE) => {
-            if let Some(item) = state.selected_item_mut() {
-                item.toggle_state();
-                state.unsaved_changes = true;
+        // Toggle state (checked/unchecked)
+        (KeyCode::Char('x'), KeyModifiers::NONE) => {
+            if state.selected_item().is_some() {
+                state.save_undo();
+                if let Some(item) = state.selected_item_mut() {
+                    item.toggle_state();
+                    state.unsaved_changes = true;
+                }
+            }
+        }
+
+        // Cycle through all 4 states
+        (KeyCode::Char(' '), _) => {
+            if state.selected_item().is_some() {
+                state.save_undo();
+                if let Some(item) = state.selected_item_mut() {
+                    item.cycle_state();
+                    state.unsaved_changes = true;
+                }
             }
         }
 
@@ -98,7 +127,17 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
 
         // Delete item
         (KeyCode::Char('d'), KeyModifiers::NONE) => {
-            delete_current_item(state)?;
+            if !state.todo_list.items.is_empty() {
+                state.confirm_delete = true;
+            }
+        }
+
+        // Undo
+        (KeyCode::Char('u'), KeyModifiers::NONE) => {
+            if state.undo() {
+                save_todo_list(&state.todo_list)?;
+                state.last_save_time = Some(std::time::Instant::now());
+            }
         }
 
         // Help toggle
@@ -106,9 +145,24 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
             state.show_help = !state.show_help;
         }
 
-        // Quit
+        (KeyCode::Esc, _) => {
+            if state.show_help {
+                state.show_help = false;
+            }
+        }
+
+        // Quit - but if help is showing, just close help
         (KeyCode::Char('q'), KeyModifiers::NONE) => {
-            state.should_quit = true;
+            if state.show_help {
+                state.show_help = false;
+            } else {
+                state.should_quit = true;
+            }
+        }
+
+        // Shift+Enter in Navigate mode: create new item at same level
+        (KeyCode::Enter, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            new_item_at_same_level(state);
         }
 
         _ => {}
@@ -125,42 +179,67 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
-    match key.code {
-        KeyCode::Esc => {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) => {
             // Cancel edit
             state.mode = Mode::Navigate;
             state.edit_buffer.clear();
             state.edit_cursor_pos = 0;
             state.is_creating_new_item = false;
         }
-        KeyCode::Enter => {
-            // Save edit
+        (KeyCode::Enter, mods) if mods.contains(KeyModifiers::SHIFT) => {
+            // Shift+Enter: Save and create new item at same level
+            save_edit_buffer(state)?;
+            new_item_at_same_level(state);
+        }
+        (KeyCode::Enter, _) => {
+            // Regular Enter: Save edit and return to Navigate
             save_edit_buffer(state)?;
             state.mode = Mode::Navigate;
         }
-        KeyCode::Backspace => {
+        (KeyCode::Backspace, _) => {
             if state.edit_cursor_pos > 0 {
                 state.edit_buffer.remove(state.edit_cursor_pos - 1);
                 state.edit_cursor_pos -= 1;
             }
         }
-        KeyCode::Left => {
+        (KeyCode::Left, _) => {
             if state.edit_cursor_pos > 0 {
                 state.edit_cursor_pos -= 1;
             }
         }
-        KeyCode::Right => {
+        (KeyCode::Right, _) => {
             if state.edit_cursor_pos < state.edit_buffer.len() {
                 state.edit_cursor_pos += 1;
             }
         }
-        KeyCode::Home => {
+        (KeyCode::Home, _) => {
             state.edit_cursor_pos = 0;
         }
-        KeyCode::End => {
+        (KeyCode::End, _) => {
             state.edit_cursor_pos = state.edit_buffer.len();
         }
-        KeyCode::Char(c) => {
+        (KeyCode::Tab, _) | (KeyCode::Char('\t'), _) => {
+            if state.is_creating_new_item {
+                let max_indent = state
+                    .selected_item()
+                    .map(|item| item.indent_level + 1)
+                    .unwrap_or(0);
+                if state.pending_indent_level < max_indent {
+                    state.pending_indent_level += 1;
+                }
+            } else if state.todo_list.indent_item(state.cursor_position).is_ok() {
+                state.unsaved_changes = true;
+            }
+        }
+        (KeyCode::BackTab, _) => {
+            if state.is_creating_new_item {
+                state.pending_indent_level = state.pending_indent_level.saturating_sub(1);
+            } else if state.todo_list.outdent_item(state.cursor_position).is_ok() {
+                state.unsaved_changes = true;
+            }
+        }
+        (KeyCode::Char(c), _) => {
             state.edit_buffer.insert(state.edit_cursor_pos, c);
             state.edit_cursor_pos += 1;
         }
@@ -183,6 +262,21 @@ fn new_item_below(state: &mut AppState) {
     state.edit_cursor_pos = 0;
     state.mode = Mode::Edit;
     state.is_creating_new_item = true;
+    state.pending_indent_level = state
+        .selected_item()
+        .map(|item| item.indent_level)
+        .unwrap_or(0);
+}
+
+fn new_item_at_same_level(state: &mut AppState) {
+    state.edit_buffer.clear();
+    state.edit_cursor_pos = 0;
+    state.mode = Mode::Edit;
+    state.is_creating_new_item = true;
+    state.pending_indent_level = state
+        .selected_item()
+        .map(|item| item.indent_level)
+        .unwrap_or(0);
 }
 
 fn delete_current_item(state: &mut AppState) -> Result<()> {
@@ -205,16 +299,12 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
     }
 
     if state.is_creating_new_item {
-        // Creating new item below current position
         if state.todo_list.items.is_empty() {
-            // List is empty, add first item
-            state.todo_list.add_item(state.edit_buffer.clone());
+            state.todo_list.add_item_with_indent(state.edit_buffer.clone(), state.pending_indent_level);
             state.cursor_position = 0;
         } else {
-            // Insert below current item with same indent level
-            let indent_level = state.todo_list.items[state.cursor_position].indent_level;
             let insert_position = state.cursor_position + 1;
-            state.todo_list.insert_item(insert_position, state.edit_buffer.clone(), indent_level)?;
+            state.todo_list.insert_item(insert_position, state.edit_buffer.clone(), state.pending_indent_level)?;
             state.cursor_position = insert_position;
         }
         state.is_creating_new_item = false;
