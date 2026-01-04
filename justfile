@@ -1,33 +1,47 @@
 default:
     @just --list
 
+# Build release binary
 build:
     cargo build --release
 
+# Build and install to /usr/local/bin
+install: build
+    sudo cp target/release/todo /usr/local/bin/todo
+
+# Run all tests
 test:
     cargo test
 
+# Start MCP server (release mode)
 start-mcp-server:
     cargo run --release --bin todo-mcp
 
+# Start MCP server with debug logging
 start-mcp-server-debug:
     RUST_LOG=debug cargo run --bin todo-mcp
 
+# Start REST API server as daemon
 start-api-server port="3000":
     cargo run --release -- serve start --port {{port}} --daemon
 
+# Stop REST API server daemon
 stop-api-server:
     cargo run -- serve stop
 
+# Check REST API server status
 api-status:
     cargo run -- serve status
 
+# Open MCP inspector for debugging
 inspect-mcp:
     npx @modelcontextprotocol/inspector cargo run --release --bin todo-mcp
 
+# Run the TUI app
 tui:
     cargo run --release
 
+# Add todo-mcp to OpenCode config
 configure-mcp-opencode:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -82,6 +96,7 @@ configure-mcp-opencode:
     echo ""
     echo "Restart OpenCode to load the new MCP server."
 
+# Remove todo-mcp from OpenCode config
 remove-mcp-opencode:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -96,6 +111,7 @@ remove-mcp-opencode:
         echo "todo-mcp not found in OpenCode config"
     fi
 
+# Install todo-mcp skill to Claude Code
 install-claude-skill:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -114,6 +130,7 @@ install-claude-skill:
     
     echo "✓ Installed $SKILL_NAME skill to $TARGET_DIR"
 
+# Install todo-mcp skill to OpenCode
 install-opencode-skill:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -131,3 +148,36 @@ install-opencode-skill:
     cp -r "$SOURCE_DIR"/* "$TARGET_DIR/"
     
     echo "✓ Installed $SKILL_NAME skill to $TARGET_DIR"
+
+# Bump patch version (0.1.0 → 0.1.1)
+release-patch: (_release "patch")
+# Bump minor version (0.1.0 → 0.2.0)
+release-minor: (_release "minor")
+# Bump major version (0.1.0 → 1.0.0)
+release-major: (_release "major")
+
+_release bump:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+    
+    case "{{bump}}" in
+        patch) PATCH=$((PATCH + 1)) ;;
+        minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+        major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+    esac
+    
+    NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+    sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
+    echo "✓ Version: $VERSION → $NEW_VERSION"
+    
+    read -p "Create commit and tag? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        git add Cargo.toml
+        git commit -m "Release v$NEW_VERSION"
+        git tag "v$NEW_VERSION"
+        echo "✓ Created commit and tag v$NEW_VERSION"
+    fi
