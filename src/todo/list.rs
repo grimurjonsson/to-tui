@@ -1,7 +1,9 @@
 use super::TodoItem;
 use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
+use std::collections::HashSet;
 use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct TodoList {
@@ -36,11 +38,44 @@ impl TodoList {
     }
 
     pub fn get_incomplete_items(&self) -> Vec<TodoItem> {
+        if self.items.is_empty() {
+            return Vec::new();
+        }
+
+        let id_to_item: std::collections::HashMap<Uuid, &TodoItem> =
+            self.items.iter().map(|item| (item.id, item)).collect();
+
+        let mut include_ids: HashSet<Uuid> = HashSet::new();
+
+        for item in &self.items {
+            if !item.is_complete() {
+                include_ids.insert(item.id);
+                self.collect_ancestor_ids(item, &id_to_item, &mut include_ids);
+            }
+        }
+
         self.items
             .iter()
-            .filter(|item| !item.is_complete())
+            .filter(|item| include_ids.contains(&item.id))
             .cloned()
             .collect()
+    }
+
+    fn collect_ancestor_ids(
+        &self,
+        item: &TodoItem,
+        id_to_item: &std::collections::HashMap<Uuid, &TodoItem>,
+        include_ids: &mut HashSet<Uuid>,
+    ) {
+        let mut current_parent_id = item.parent_id;
+        while let Some(parent_id) = current_parent_id {
+            if let Some(parent) = id_to_item.get(&parent_id) {
+                include_ids.insert(parent.id);
+                current_parent_id = parent.parent_id;
+            } else {
+                break;
+            }
+        }
     }
 
     #[cfg(test)]
@@ -137,6 +172,63 @@ mod tests {
         assert_eq!(incomplete.len(), 2);
         assert_eq!(incomplete[0].content, "Task 1");
         assert_eq!(incomplete[1].content, "Task 3");
+    }
+
+    #[test]
+    fn test_get_incomplete_items_includes_complete_parent_with_incomplete_child() {
+        let mut list = create_test_list();
+        list.add_item("Parent".to_string());
+        list.add_item("Child".to_string());
+
+        let parent_id = list.items[0].id;
+        list.items[0].state = TodoState::Checked;
+        list.items[1].parent_id = Some(parent_id);
+        list.items[1].indent_level = 1;
+
+        let incomplete = list.get_incomplete_items();
+        assert_eq!(incomplete.len(), 2);
+        assert_eq!(incomplete[0].content, "Parent");
+        assert_eq!(incomplete[1].content, "Child");
+    }
+
+    #[test]
+    fn test_get_incomplete_items_includes_complete_ancestors() {
+        let mut list = create_test_list();
+        list.add_item("Grandparent".to_string());
+        list.add_item("Parent".to_string());
+        list.add_item("Child".to_string());
+
+        let grandparent_id = list.items[0].id;
+        let parent_id = list.items[1].id;
+
+        list.items[0].state = TodoState::Checked;
+        list.items[1].state = TodoState::Checked;
+        list.items[1].parent_id = Some(grandparent_id);
+        list.items[1].indent_level = 1;
+        list.items[2].parent_id = Some(parent_id);
+        list.items[2].indent_level = 2;
+
+        let incomplete = list.get_incomplete_items();
+        assert_eq!(incomplete.len(), 3);
+        assert_eq!(incomplete[0].content, "Grandparent");
+        assert_eq!(incomplete[1].content, "Parent");
+        assert_eq!(incomplete[2].content, "Child");
+    }
+
+    #[test]
+    fn test_get_incomplete_items_excludes_complete_parent_without_incomplete_children() {
+        let mut list = create_test_list();
+        list.add_item("Parent".to_string());
+        list.add_item("Child".to_string());
+
+        let parent_id = list.items[0].id;
+        list.items[0].state = TodoState::Checked;
+        list.items[1].state = TodoState::Checked;
+        list.items[1].parent_id = Some(parent_id);
+        list.items[1].indent_level = 1;
+
+        let incomplete = list.get_incomplete_items();
+        assert!(incomplete.is_empty());
     }
 
     #[test]
