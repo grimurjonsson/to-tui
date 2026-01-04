@@ -46,37 +46,51 @@ pub fn check_and_prompt_rollover() -> Result<Option<TodoList>> {
     Ok(Some(TodoList::new(today, get_daily_file_path(today)?)))
 }
 
-pub fn create_rolled_over_list(date: NaiveDate, mut items: Vec<crate::todo::TodoItem>) -> Result<TodoList> {
+pub fn create_rolled_over_list(
+    date: NaiveDate,
+    mut items: Vec<crate::todo::TodoItem>,
+) -> Result<TodoList> {
     let file_path = get_daily_file_path(date)?;
-    
+
     let mut old_to_new_id: HashMap<Uuid, Uuid> = HashMap::new();
-    
+
     for item in &mut items {
         let new_id = Uuid::new_v4();
         old_to_new_id.insert(item.id, new_id);
         item.id = new_id;
     }
-    
+
     for item in &mut items {
         if let Some(old_parent_id) = item.parent_id {
             item.parent_id = old_to_new_id.get(&old_parent_id).copied();
         }
     }
-    
+
     Ok(TodoList::with_items(date, file_path, items))
 }
 
-fn prompt_user_for_rollover(incomplete: &[crate::todo::TodoItem], source_date: NaiveDate) -> Result<bool> {
+fn prompt_user_for_rollover(
+    incomplete: &[crate::todo::TodoItem],
+    source_date: NaiveDate,
+) -> Result<bool> {
     let today = Local::now().date_naive();
     let days_ago = (today - source_date).num_days();
 
     let date_desc = if days_ago == 1 {
         "yesterday".to_string()
     } else {
-        format!("{} ({} days ago)", source_date.format("%B %d, %Y"), days_ago)
+        format!(
+            "{} ({} days ago)",
+            source_date.format("%B %d, %Y"),
+            days_ago
+        )
     };
 
-    println!("\n{} incomplete item(s) found from {}:", incomplete.len(), date_desc);
+    println!(
+        "\n{} incomplete item(s) found from {}:",
+        incomplete.len(),
+        date_desc
+    );
     for (idx, item) in incomplete.iter().enumerate() {
         let indent = "  ".repeat(item.indent_level);
         println!("  {}{}. {} {}", indent, idx + 1, item.state, item.content);

@@ -1,5 +1,5 @@
 use super::TodoItem;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
 use std::path::PathBuf;
 
@@ -32,8 +32,7 @@ impl TodoList {
     }
 
     pub fn add_item_with_indent(&mut self, content: String, indent_level: usize) {
-        self.items
-            .push(TodoItem::new(content, indent_level));
+        self.items.push(TodoItem::new(content, indent_level));
     }
 
     pub fn get_incomplete_items(&self) -> Vec<TodoItem> {
@@ -60,11 +59,17 @@ impl TodoList {
         Ok(self.items.remove(index))
     }
 
-    pub fn insert_item(&mut self, index: usize, content: String, indent_level: usize) -> Result<()> {
+    pub fn insert_item(
+        &mut self,
+        index: usize,
+        content: String,
+        indent_level: usize,
+    ) -> Result<()> {
         if index > self.items.len() {
             return Err(anyhow!("Index out of bounds"));
         }
-        self.items.insert(index, TodoItem::new(content, indent_level));
+        self.items
+            .insert(index, TodoItem::new(content, indent_level));
         Ok(())
     }
 

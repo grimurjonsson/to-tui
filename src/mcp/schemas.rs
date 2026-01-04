@@ -17,7 +17,9 @@ pub struct CreateTodoRequest {
     pub content: String,
     #[schemars(description = "Date in YYYY-MM-DD format. Defaults to today if not provided.")]
     pub date: Option<String>,
-    #[schemars(description = "UUID of parent todo to nest under. Use list_todos to get valid IDs.")]
+    #[schemars(
+        description = "UUID of parent todo to nest under. Use list_todos to get valid IDs."
+    )]
     pub parent_id: Option<String>,
     #[schemars(description = "Due date in YYYY-MM-DD format.")]
     pub due_date: Option<String>,
@@ -33,7 +35,9 @@ pub struct UpdateTodoRequest {
     pub date: Option<String>,
     #[schemars(description = "New content text for the todo.")]
     pub content: Option<String>,
-    #[schemars(description = "New state: ' ' (empty/pending), 'x' (done), '?' (question), '!' (important)")]
+    #[schemars(
+        description = "New state: ' ' (empty/pending), 'x' (done), '?' (question), '!' (important)"
+    )]
     pub state: Option<String>,
     #[schemars(description = "New due date in YYYY-MM-DD format.")]
     pub due_date: Option<String>,
@@ -51,7 +55,9 @@ pub struct DeleteTodoRequest {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MarkCompleteRequest {
-    #[schemars(description = "UUID of the todo to toggle completion. Use list_todos to get valid IDs.")]
+    #[schemars(
+        description = "UUID of the todo to toggle completion. Use list_todos to get valid IDs."
+    )]
     pub id: String,
     #[schemars(description = "Date in YYYY-MM-DD format. Defaults to today if not provided.")]
     pub date: Option<String>,
@@ -96,9 +102,13 @@ impl From<&TodoItem> for TodoItemResponse {
 pub struct TodoListResponse {
     pub date: String,
     pub item_count: usize,
-    #[schemars(description = "Pre-formatted todo list for display. Show this directly to the user.")]
+    #[schemars(
+        description = "Pre-formatted todo list for display. Show this directly to the user."
+    )]
     pub formatted: String,
-    #[schemars(description = "Raw item data for programmatic access. Use 'formatted' for display.")]
+    #[schemars(
+        description = "Raw item data for programmatic access. Use 'formatted' for display."
+    )]
     pub items: Vec<TodoItemResponse>,
 }
 
@@ -136,7 +146,11 @@ impl TodoListResponse {
                 "!" => "❗",
                 _ => "⬜",
             };
-            let due = item.due_date.as_ref().map(|d| format!(" (due: {d})")).unwrap_or_default();
+            let due = item
+                .due_date
+                .as_ref()
+                .map(|d| format!(" (due: {d})"))
+                .unwrap_or_default();
             lines.push(format!("{}{} {}{}", indent, checkbox, item.content, due));
         }
 

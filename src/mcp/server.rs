@@ -1,8 +1,9 @@
 use chrono::Local;
 use rmcp::{
+    Json,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{ServerCapabilities, ServerInfo},
-    tool, tool_handler, tool_router, Json,
+    tool, tool_handler, tool_router,
 };
 use tracing::{debug, error, info, warn};
 
@@ -12,9 +13,9 @@ use crate::todo::{TodoItem, TodoList};
 
 use super::errors::McpErrorDetail;
 use super::schemas::{
-    parse_date, parse_state, parse_uuid, CreateTodoRequest, DeleteTodoRequest,
-    DeleteTodoResponse, ListTodosRequest, MarkCompleteRequest, TodoItemResponse,
-    TodoListResponse, UpdateTodoRequest,
+    CreateTodoRequest, DeleteTodoRequest, DeleteTodoResponse, ListTodosRequest,
+    MarkCompleteRequest, TodoItemResponse, TodoListResponse, UpdateTodoRequest, parse_date,
+    parse_state, parse_uuid,
 };
 
 #[derive(Clone)]
@@ -39,11 +40,15 @@ impl Default for TodoMcpServer {
 fn load_list_with_rollover(date: chrono::NaiveDate) -> Result<TodoList, McpErrorDetail> {
     let today = Local::now().date_naive();
 
-    if date == today && !file_exists(date).map_err(|e| McpErrorDetail::storage_error(e.to_string()))? {
+    if date == today
+        && !file_exists(date).map_err(|e| McpErrorDetail::storage_error(e.to_string()))?
+    {
         debug!(date = %date, "No todos for today, checking for rollover candidates");
         for days_back in 1..=30 {
             if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back)) {
-                if file_exists(check_date).map_err(|e| McpErrorDetail::storage_error(e.to_string()))? {
+                if file_exists(check_date)
+                    .map_err(|e| McpErrorDetail::storage_error(e.to_string()))?
+                {
                     let list = load_todo_list(check_date)
                         .map_err(|e| McpErrorDetail::storage_error(e.to_string()))?;
                     let incomplete = list.get_incomplete_items();
@@ -91,17 +96,17 @@ impl TodoMcpServer {
     ) -> Result<Json<TodoListResponse>, String> {
         info!(date = ?params.0.date, "list_todos called");
 
-        let date = parse_date(params.0.date.as_deref())
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format, e.g., 2025-01-02")))?;
+        let date = parse_date(params.0.date.as_deref()).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(
+                &msg,
+                "Use YYYY-MM-DD format, e.g., 2025-01-02",
+            ))
+        })?;
 
-        let list = load_list_with_rollover(date)
-            .map_err(format_error)?;
+        let list = load_list_with_rollover(date).map_err(format_error)?;
 
         let items: Vec<TodoItemResponse> = list.items.iter().map(TodoItemResponse::from).collect();
-        let response = TodoListResponse::new(
-            list.date.format("%Y-%m-%d").to_string(),
-            items,
-        );
+        let response = TodoListResponse::new(list.date.format("%Y-%m-%d").to_string(), items);
 
         info!(date = %date, count = response.item_count, "list_todos returning items");
         Ok(Json(response))
@@ -130,21 +135,31 @@ impl TodoMcpServer {
             )));
         }
 
-        let date = parse_date(req.date.as_deref())
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
+        let date = parse_date(req.date.as_deref()).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
+        })?;
 
-        let mut list = load_list_with_rollover(date)
-            .map_err(format_error)?;
+        let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
-        let due_date = req.due_date
+        let due_date = req
+            .due_date
             .as_deref()
             .map(|s| parse_date(Some(s)))
             .transpose()
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format for due_date")))?;
+            .map_err(|msg| {
+                format_error(McpErrorDetail::invalid_input(
+                    &msg,
+                    "Use YYYY-MM-DD format for due_date",
+                ))
+            })?;
 
         let (indent_level, insert_index) = if let Some(ref parent_id_str) = req.parent_id {
-            let parent_id = parse_uuid(parent_id_str)
-                .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use list_todos to get valid parent IDs")))?;
+            let parent_id = parse_uuid(parent_id_str).map_err(|msg| {
+                format_error(McpErrorDetail::invalid_input(
+                    &msg,
+                    "Use list_todos to get valid parent IDs",
+                ))
+            })?;
 
             match list.items.iter().position(|item| item.id == parent_id) {
                 Some(parent_idx) => {
@@ -169,9 +184,7 @@ impl TodoMcpServer {
         };
 
         let mut item = TodoItem::new(req.content, indent_level);
-        item.parent_id = req.parent_id
-            .as_deref()
-            .and_then(|s| parse_uuid(s).ok());
+        item.parent_id = req.parent_id.as_deref().and_then(|s| parse_uuid(s).ok());
         item.due_date = due_date;
         item.description = req.description;
 
@@ -202,20 +215,29 @@ impl TodoMcpServer {
             "update_todo called"
         );
 
-        let id = parse_uuid(&req.id)
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use list_todos to get valid IDs")))?;
+        let id = parse_uuid(&req.id).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(
+                &msg,
+                "Use list_todos to get valid IDs",
+            ))
+        })?;
 
-        let date = parse_date(req.date.as_deref())
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
+        let date = parse_date(req.date.as_deref()).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
+        })?;
 
-        let mut list = load_list_with_rollover(date)
-            .map_err(format_error)?;
+        let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
-        let item = list.items.iter_mut().find(|item| item.id == id)
-            .ok_or_else(|| format_error(McpErrorDetail::not_found(
-                format!("Todo with id '{}' not found on {}", req.id, date),
-                "Use list_todos to verify the todo exists on this date",
-            )))?;
+        let item = list
+            .items
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or_else(|| {
+                format_error(McpErrorDetail::not_found(
+                    format!("Todo with id '{}' not found on {}", req.id, date),
+                    "Use list_todos to verify the todo exists on this date",
+                ))
+            })?;
 
         if let Some(ref content) = req.content {
             if content.trim().is_empty() {
@@ -228,21 +250,30 @@ impl TodoMcpServer {
         }
 
         if let Some(ref state_str) = req.state {
-            let state = parse_state(state_str)
-                .ok_or_else(|| format_error(McpErrorDetail::invalid_state(
-                    format!("Invalid state '{state_str}'. "),
-                )))?;
+            let state = parse_state(state_str).ok_or_else(|| {
+                format_error(McpErrorDetail::invalid_state(format!(
+                    "Invalid state '{state_str}'. "
+                )))
+            })?;
             item.state = state;
         }
 
         if let Some(ref due_date_str) = req.due_date {
-            let due_date = parse_date(Some(due_date_str))
-                .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format for due_date")))?;
+            let due_date = parse_date(Some(due_date_str)).map_err(|msg| {
+                format_error(McpErrorDetail::invalid_input(
+                    &msg,
+                    "Use YYYY-MM-DD format for due_date",
+                ))
+            })?;
             item.due_date = Some(due_date);
         }
 
         if let Some(ref description) = req.description {
-            item.description = if description.is_empty() { None } else { Some(description.clone()) };
+            item.description = if description.is_empty() {
+                None
+            } else {
+                Some(description.clone())
+            };
         }
 
         let response = TodoItemResponse::from(&*item);
@@ -265,22 +296,32 @@ impl TodoMcpServer {
         let req = params.0;
         info!(id = %req.id, date = ?req.date, "delete_todo called");
 
-        let id = parse_uuid(&req.id)
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use list_todos to get valid IDs")))?;
+        let id = parse_uuid(&req.id).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(
+                &msg,
+                "Use list_todos to get valid IDs",
+            ))
+        })?;
 
-        let date = parse_date(req.date.as_deref())
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
+        let date = parse_date(req.date.as_deref()).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
+        })?;
 
-        let mut list = load_list_with_rollover(date)
-            .map_err(format_error)?;
+        let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
-        let idx = list.items.iter().position(|item| item.id == id)
-            .ok_or_else(|| format_error(McpErrorDetail::not_found(
-                format!("Todo with id '{}' not found on {}", req.id, date),
-                "Use list_todos to verify the todo exists on this date",
-            )))?;
+        let idx = list
+            .items
+            .iter()
+            .position(|item| item.id == id)
+            .ok_or_else(|| {
+                format_error(McpErrorDetail::not_found(
+                    format!("Todo with id '{}' not found on {}", req.id, date),
+                    "Use list_todos to verify the todo exists on this date",
+                ))
+            })?;
 
-        let (start, end) = list.get_item_range(idx)
+        let (start, end) = list
+            .get_item_range(idx)
             .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
 
         let deleted_count = end - start;
@@ -308,20 +349,29 @@ impl TodoMcpServer {
         let req = params.0;
         info!(id = %req.id, date = ?req.date, "mark_complete called");
 
-        let id = parse_uuid(&req.id)
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use list_todos to get valid IDs")))?;
+        let id = parse_uuid(&req.id).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(
+                &msg,
+                "Use list_todos to get valid IDs",
+            ))
+        })?;
 
-        let date = parse_date(req.date.as_deref())
-            .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
+        let date = parse_date(req.date.as_deref()).map_err(|msg| {
+            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
+        })?;
 
-        let mut list = load_list_with_rollover(date)
-            .map_err(format_error)?;
+        let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
-        let item = list.items.iter_mut().find(|item| item.id == id)
-            .ok_or_else(|| format_error(McpErrorDetail::not_found(
-                format!("Todo with id '{}' not found on {}", req.id, date),
-                "Use list_todos to verify the todo exists on this date",
-            )))?;
+        let item = list
+            .items
+            .iter_mut()
+            .find(|item| item.id == id)
+            .ok_or_else(|| {
+                format_error(McpErrorDetail::not_found(
+                    format!("Todo with id '{}' not found on {}", req.id, date),
+                    "Use list_todos to verify the todo exists on this date",
+                ))
+            })?;
 
         item.toggle_state();
         let response = TodoItemResponse::from(&*item);

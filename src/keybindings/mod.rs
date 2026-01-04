@@ -11,46 +11,46 @@ pub enum Action {
     // Navigation
     MoveUp,
     MoveDown,
-    
+
     // Visual mode
     ToggleVisual,
     ExitVisual,
-    
+
     // Item manipulation
     ToggleState,
     CycleState,
     Delete,
     NewItem,
     NewItemSameLevel,
-    
+
     // Editing
     EnterEditMode,
-    
+
     // Indentation (single item)
     Indent,
     Outdent,
-    
+
     // Indentation with children
     IndentWithChildren,
     OutdentWithChildren,
-    
+
     // Move items
     MoveItemUp,
     MoveItemDown,
-    
+
     // Collapse/expand
     ToggleCollapse,
     Expand,
     CollapseOrParent,
-    
+
     // Undo
     Undo,
-    
+
     // UI
     ToggleHelp,
     CloseHelp,
     Quit,
-    
+
     // Edit mode specific
     EditCancel,
     EditConfirm,
@@ -105,7 +105,7 @@ impl fmt::Display for Action {
 
 impl FromStr for Action {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
             "move_up" => Ok(Action::MoveUp),
@@ -155,7 +155,7 @@ impl KeyBinding {
     pub fn new(code: KeyCode, modifiers: KeyModifiers) -> Self {
         Self { code, modifiers }
     }
-    
+
     pub fn from_event(event: &KeyEvent) -> Self {
         let modifiers = if event.code == KeyCode::BackTab {
             event.modifiers - KeyModifiers::SHIFT
@@ -172,7 +172,7 @@ impl KeyBinding {
 impl fmt::Display for KeyBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
-        
+
         if self.modifiers.contains(KeyModifiers::CONTROL) {
             parts.push("C");
         }
@@ -182,7 +182,7 @@ impl fmt::Display for KeyBinding {
         if self.modifiers.contains(KeyModifiers::SHIFT) {
             parts.push("S");
         }
-        
+
         let key_str = match self.code {
             KeyCode::Char(' ') => "Space".to_string(),
             KeyCode::Char(c) => c.to_string(),
@@ -201,9 +201,9 @@ impl fmt::Display for KeyBinding {
             KeyCode::F(n) => format!("F{n}"),
             _ => format!("{:?}", self.code),
         };
-        
+
         parts.push(&key_str);
-        
+
         if parts.len() > 1 || key_str.len() > 1 {
             write!(f, "<{}>", parts.join("-"))
         } else {
@@ -224,77 +224,77 @@ impl KeySequence {
 /// Parse key sequence: "d", "dd", "<C-d>", "<C-d><C-d>", "g g", etc.
 impl FromStr for KeySequence {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
         let mut keys = Vec::new();
         let mut chars = s.chars().peekable();
-        
+
         while chars.peek().is_some() {
             while chars.peek() == Some(&' ') {
                 chars.next();
             }
-            
+
             if chars.peek().is_none() {
                 break;
             }
-            
+
             if chars.peek() == Some(&'<') {
                 let mut bracket_content = String::new();
                 bracket_content.push(chars.next().unwrap());
-                
+
                 while let Some(&c) = chars.peek() {
                     bracket_content.push(chars.next().unwrap());
                     if c == '>' {
                         break;
                     }
                 }
-                
+
                 keys.push(bracket_content.parse::<KeyBinding>()?);
             } else {
                 let c = chars.next().unwrap();
                 keys.push(KeyBinding::new(KeyCode::Char(c), KeyModifiers::NONE));
             }
         }
-        
+
         if keys.is_empty() {
             return Err("Empty key sequence".to_string());
         }
-        
+
         if keys.len() > 2 {
             return Err("Key sequences longer than 2 are not supported".to_string());
         }
-        
+
         Ok(KeySequence(keys))
     }
 }
 
 impl FromStr for KeyBinding {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let s = s.trim();
-        
+
         if s.starts_with('<') && s.ends_with('>') {
-            let inner = &s[1..s.len()-1];
+            let inner = &s[1..s.len() - 1];
             return parse_bracket_notation(inner);
         }
-        
+
         if s.len() == 1 {
             let c = s.chars().next().unwrap();
             return Ok(KeyBinding::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
-        
+
         Err(format!("Invalid key binding: {s}"))
     }
 }
 
 fn parse_bracket_notation(s: &str) -> Result<KeyBinding, String> {
     let parts: Vec<&str> = s.split('-').collect();
-    
+
     let mut modifiers = KeyModifiers::NONE;
     let mut key_part = "";
-    
+
     for (i, part) in parts.iter().enumerate() {
         let part_upper = part.to_uppercase();
         if i == parts.len() - 1 {
@@ -308,15 +308,15 @@ fn parse_bracket_notation(s: &str) -> Result<KeyBinding, String> {
             }
         }
     }
-    
+
     let code = parse_key_code(key_part)?;
-    
+
     Ok(KeyBinding::new(code, modifiers))
 }
 
 fn parse_key_code(s: &str) -> Result<KeyCode, String> {
     let s_lower = s.to_lowercase();
-    
+
     match s_lower.as_str() {
         "space" => Ok(KeyCode::Char(' ')),
         "tab" => Ok(KeyCode::Tab),
@@ -357,21 +357,24 @@ pub struct KeybindingCache {
     navigate_single: HashMap<KeyBinding, Action>,
     navigate_sequences: HashMap<KeyBinding, HashMap<KeyBinding, Action>>,
     navigate_sequence_starters: HashSet<KeyBinding>,
-    
+
     edit_single: HashMap<KeyBinding, Action>,
-    
+
     visual_single: HashMap<KeyBinding, Action>,
 }
 
 impl KeybindingCache {
     pub fn from_config(config: &KeybindingsConfig) -> Self {
         let mut navigate_single = HashMap::new();
-        let mut navigate_sequences: HashMap<KeyBinding, HashMap<KeyBinding, Action>> = HashMap::new();
+        let mut navigate_sequences: HashMap<KeyBinding, HashMap<KeyBinding, Action>> =
+            HashMap::new();
         let mut navigate_sequence_starters = HashSet::new();
         let mut edit_single = HashMap::new();
-        
+
         for (key_str, action_str) in &config.navigate {
-            if let (Ok(seq), Ok(action)) = (key_str.parse::<KeySequence>(), action_str.parse::<Action>()) {
+            if let (Ok(seq), Ok(action)) =
+                (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
+            {
                 if seq.is_single() {
                     navigate_single.insert(seq.0[0], action);
                 } else {
@@ -385,24 +388,28 @@ impl KeybindingCache {
                 }
             }
         }
-        
+
         for (key_str, action_str) in &config.edit {
-            if let (Ok(seq), Ok(action)) = (key_str.parse::<KeySequence>(), action_str.parse::<Action>()) {
+            if let (Ok(seq), Ok(action)) =
+                (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
+            {
                 if seq.is_single() {
                     edit_single.insert(seq.0[0], action);
                 }
             }
         }
-        
+
         let mut visual_single = HashMap::new();
         for (key_str, action_str) in &config.visual {
-            if let (Ok(seq), Ok(action)) = (key_str.parse::<KeySequence>(), action_str.parse::<Action>()) {
+            if let (Ok(seq), Ok(action)) =
+                (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
+            {
                 if seq.is_single() {
                     visual_single.insert(seq.0[0], action);
                 }
             }
         }
-        
+
         Self {
             navigate_single,
             navigate_sequences,
@@ -411,10 +418,14 @@ impl KeybindingCache {
             visual_single,
         }
     }
-    
-    pub fn lookup_navigate(&self, event: &KeyEvent, pending: Option<KeyBinding>) -> KeyLookupResult {
+
+    pub fn lookup_navigate(
+        &self,
+        event: &KeyEvent,
+        pending: Option<KeyBinding>,
+    ) -> KeyLookupResult {
         let binding = KeyBinding::from_event(event);
-        
+
         if let Some(first_key) = pending {
             if let Some(second_map) = self.navigate_sequences.get(&first_key) {
                 if let Some(&action) = second_map.get(&binding) {
@@ -423,26 +434,26 @@ impl KeybindingCache {
             }
             return KeyLookupResult::None;
         }
-        
+
         if self.navigate_sequence_starters.contains(&binding) {
             if !self.navigate_single.contains_key(&binding) {
                 return KeyLookupResult::Pending;
             }
             return KeyLookupResult::Pending;
         }
-        
+
         if let Some(&action) = self.navigate_single.get(&binding) {
             return KeyLookupResult::Action(action);
         }
-        
+
         KeyLookupResult::None
     }
-    
+
     pub fn get_edit_action(&self, event: &KeyEvent) -> Option<Action> {
         let binding = KeyBinding::from_event(event);
         self.edit_single.get(&binding).copied()
     }
-    
+
     pub fn get_visual_action(&self, event: &KeyEvent) -> Option<Action> {
         let binding = KeyBinding::from_event(event);
         self.visual_single.get(&binding).copied()
@@ -459,10 +470,10 @@ impl Default for KeybindingCache {
 pub struct KeybindingsConfig {
     #[serde(default = "default_navigate_bindings")]
     pub navigate: HashMap<String, String>,
-    
+
     #[serde(default = "default_edit_bindings")]
     pub edit: HashMap<String, String>,
-    
+
     #[serde(default = "default_visual_bindings")]
     pub visual: HashMap<String, String>,
 }
@@ -479,7 +490,7 @@ impl Default for KeybindingsConfig {
 
 fn default_navigate_bindings() -> HashMap<String, String> {
     let mut m = HashMap::new();
-    
+
     m.insert("k".to_string(), "move_up".to_string());
     m.insert("j".to_string(), "move_down".to_string());
     m.insert("<Up>".to_string(), "move_up".to_string());
@@ -493,8 +504,14 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("i".to_string(), "enter_edit_mode".to_string());
     m.insert("<Tab>".to_string(), "indent".to_string());
     m.insert("<BackTab>".to_string(), "outdent".to_string());
-    m.insert("<S-A-Right>".to_string(), "indent_with_children".to_string());
-    m.insert("<S-A-Left>".to_string(), "outdent_with_children".to_string());
+    m.insert(
+        "<S-A-Right>".to_string(),
+        "indent_with_children".to_string(),
+    );
+    m.insert(
+        "<S-A-Left>".to_string(),
+        "outdent_with_children".to_string(),
+    );
     m.insert("<S-A-Up>".to_string(), "move_item_up".to_string());
     m.insert("<S-A-Down>".to_string(), "move_item_down".to_string());
     m.insert("c".to_string(), "toggle_collapse".to_string());
@@ -506,13 +523,13 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("?".to_string(), "toggle_help".to_string());
     m.insert("<Esc>".to_string(), "close_help".to_string());
     m.insert("q".to_string(), "quit".to_string());
-    
+
     m
 }
 
 fn default_edit_bindings() -> HashMap<String, String> {
     let mut m = HashMap::new();
-    
+
     m.insert("<Esc>".to_string(), "edit_cancel".to_string());
     m.insert("<Enter>".to_string(), "edit_confirm".to_string());
     m.insert("<BS>".to_string(), "edit_backspace".to_string());
@@ -522,13 +539,13 @@ fn default_edit_bindings() -> HashMap<String, String> {
     m.insert("<End>".to_string(), "edit_end".to_string());
     m.insert("<Tab>".to_string(), "edit_indent".to_string());
     m.insert("<BackTab>".to_string(), "edit_outdent".to_string());
-    
+
     m
 }
 
 fn default_visual_bindings() -> HashMap<String, String> {
     let mut m = HashMap::new();
-    
+
     m.insert("k".to_string(), "move_up".to_string());
     m.insert("j".to_string(), "move_down".to_string());
     m.insert("<Up>".to_string(), "move_up".to_string());
@@ -539,35 +556,35 @@ fn default_visual_bindings() -> HashMap<String, String> {
     m.insert("v".to_string(), "exit_visual".to_string());
     m.insert("<Esc>".to_string(), "exit_visual".to_string());
     m.insert("q".to_string(), "exit_visual".to_string());
-    
+
     m
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_parse_simple_key() {
         let binding: KeyBinding = "j".parse().unwrap();
         assert_eq!(binding.code, KeyCode::Char('j'));
         assert_eq!(binding.modifiers, KeyModifiers::NONE);
     }
-    
+
     #[test]
     fn test_parse_special_key() {
         let binding: KeyBinding = "<Space>".parse().unwrap();
         assert_eq!(binding.code, KeyCode::Char(' '));
         assert_eq!(binding.modifiers, KeyModifiers::NONE);
     }
-    
+
     #[test]
     fn test_parse_modifier_key() {
         let binding: KeyBinding = "<C-d>".parse().unwrap();
         assert_eq!(binding.code, KeyCode::Char('d'));
         assert!(binding.modifiers.contains(KeyModifiers::CONTROL));
     }
-    
+
     #[test]
     fn test_parse_multi_modifier() {
         let binding: KeyBinding = "<S-A-Up>".parse().unwrap();
@@ -575,14 +592,14 @@ mod tests {
         assert!(binding.modifiers.contains(KeyModifiers::SHIFT));
         assert!(binding.modifiers.contains(KeyModifiers::ALT));
     }
-    
+
     #[test]
     fn test_parse_sequence_single() {
         let seq: KeySequence = "j".parse().unwrap();
         assert!(seq.is_single());
         assert_eq!(seq.0[0].code, KeyCode::Char('j'));
     }
-    
+
     #[test]
     fn test_parse_sequence_double() {
         let seq: KeySequence = "dd".parse().unwrap();
@@ -591,7 +608,7 @@ mod tests {
         assert_eq!(seq.0[0].code, KeyCode::Char('d'));
         assert_eq!(seq.0[1].code, KeyCode::Char('d'));
     }
-    
+
     #[test]
     fn test_parse_sequence_with_space() {
         let seq: KeySequence = "g g".parse().unwrap();
@@ -599,7 +616,7 @@ mod tests {
         assert_eq!(seq.0[0].code, KeyCode::Char('g'));
         assert_eq!(seq.0[1].code, KeyCode::Char('g'));
     }
-    
+
     #[test]
     fn test_parse_sequence_brackets() {
         let seq: KeySequence = "<C-d><C-d>".parse().unwrap();
@@ -609,30 +626,30 @@ mod tests {
         assert_eq!(seq.0[1].code, KeyCode::Char('d'));
         assert!(seq.0[1].modifiers.contains(KeyModifiers::CONTROL));
     }
-    
+
     #[test]
     fn test_cache_single_lookup() {
         let cache = KeybindingCache::default();
-        
+
         let event = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
         let result = cache.lookup_navigate(&event, None);
         assert_eq!(result, KeyLookupResult::Action(Action::MoveDown));
     }
-    
+
     #[test]
     fn test_cache_sequence_lookup() {
         let cache = KeybindingCache::default();
-        
+
         let d_event = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE);
         let d_binding = KeyBinding::from_event(&d_event);
-        
+
         let result1 = cache.lookup_navigate(&d_event, None);
         assert_eq!(result1, KeyLookupResult::Pending);
-        
+
         let result2 = cache.lookup_navigate(&d_event, Some(d_binding));
         assert_eq!(result2, KeyLookupResult::Action(Action::Delete));
     }
-    
+
     #[test]
     fn test_action_roundtrip() {
         let action = Action::MoveUp;

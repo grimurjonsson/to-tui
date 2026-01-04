@@ -4,6 +4,8 @@ This document provides guidelines for AI coding agents working in this Rust code
 
 ## Project Overview
 
+**Rust Edition: 2024** (requires Rust 1.85+)
+
 A terminal-based todo list manager with:
 - TUI interface (ratatui)
 - REST API server (axum)

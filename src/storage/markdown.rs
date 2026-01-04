@@ -1,5 +1,5 @@
 use crate::todo::{TodoItem, TodoList, TodoState};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
 use std::path::PathBuf;
 
@@ -13,11 +13,12 @@ pub fn serialize_todo_list_clean(list: &TodoList) -> String {
 
     for item in &list.items {
         let indent = "  ".repeat(item.indent_level);
-        
-        let due_suffix = item.due_date
+
+        let due_suffix = item
+            .due_date
             .map(|d| format!(" @due({})", d.format("%Y-%m-%d")))
             .unwrap_or_default();
-        
+
         output.push_str(&format!(
             "{}- [{}] {}{}\n",
             indent,
@@ -25,7 +26,7 @@ pub fn serialize_todo_list_clean(list: &TodoList) -> String {
             item.content,
             due_suffix
         ));
-        
+
         if let Some(ref desc) = item.description {
             for line in desc.lines() {
                 output.push_str(&format!("{indent}  > {line}\n"));
@@ -46,7 +47,7 @@ pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Re
         }
 
         let trimmed = line.trim_start();
-        
+
         if let Some(stripped) = trimmed.strip_prefix('>') {
             if let Some(ref mut desc) = pending_description {
                 desc.push('\n');
@@ -83,7 +84,7 @@ fn find_parent_id(items: &[TodoItem], indent_level: usize) -> Option<uuid::Uuid>
     if indent_level == 0 {
         return None;
     }
-    
+
     for item in items.iter().rev() {
         if item.indent_level < indent_level {
             return Some(item.id);
@@ -106,7 +107,10 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
         return Err(anyhow!("Invalid checkbox format"));
     }
 
-    let state_char = trimmed.chars().nth(3).ok_or_else(|| anyhow!("Missing state character"))?;
+    let state_char = trimmed
+        .chars()
+        .nth(3)
+        .ok_or_else(|| anyhow!("Missing state character"))?;
     let state = TodoState::from_char(state_char)
         .ok_or_else(|| anyhow!("Invalid state character: {state_char}"))?;
 
@@ -119,16 +123,8 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
     let (content, id) = parse_id(raw_content);
     let (content, due_date) = parse_due_date(&content);
 
-    let mut item = TodoItem::full(
-        content,
-        state,
-        indent_level,
-        None,
-        due_date,
-        None,
-        false,
-    );
-    
+    let mut item = TodoItem::full(content, state, indent_level, None, due_date, None, false);
+
     if let Some(parsed_id) = id {
         item.id = parsed_id;
     }
@@ -141,7 +137,7 @@ fn parse_id(content: &str) -> (String, Option<uuid::Uuid>) {
         if let Some(end) = content[start..].find(')') {
             let id_str = &content[start + 4..start + end];
             let id = uuid::Uuid::parse_str(id_str).ok();
-            
+
             let mut cleaned = String::new();
             cleaned.push_str(content[..start].trim());
             if start + end + 1 < content.len() {
@@ -164,7 +160,7 @@ fn parse_due_date(content: &str) -> (String, Option<NaiveDate>) {
         if let Some(end) = content[start..].find(')') {
             let date_str = &content[start + 5..start + end];
             let due_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
-            
+
             let mut cleaned = String::new();
             cleaned.push_str(content[..start].trim());
             if start + end + 1 < content.len() {

@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use chrono::Local;
 use uuid::Uuid;
@@ -11,8 +11,8 @@ use crate::storage::file::{load_todo_list, save_todo_list};
 use crate::todo::TodoItem;
 
 use super::models::{
-    parse_state, CreateTodoRequest, DateQuery, ErrorResponse, TodoListResponse, TodoResponse,
-    UpdateTodoRequest,
+    CreateTodoRequest, DateQuery, ErrorResponse, TodoListResponse, TodoResponse, UpdateTodoRequest,
+    parse_state,
 };
 
 pub async fn list_todos(Query(query): Query<DateQuery>) -> impl IntoResponse {
@@ -47,7 +47,7 @@ pub async fn create_todo(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(e.to_string())),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -68,7 +68,7 @@ pub async fn create_todo(
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse::new("Parent not found")),
                 )
-                    .into_response()
+                    .into_response();
             }
         }
     } else {
@@ -107,7 +107,7 @@ pub async fn delete_todo(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(e.to_string())),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -126,7 +126,7 @@ pub async fn delete_todo(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(e.to_string())),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -158,7 +158,7 @@ pub async fn update_todo(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse::new(e.to_string())),
             )
-                .into_response()
+                .into_response();
         }
     };
 
@@ -184,7 +184,7 @@ pub async fn update_todo(
                         "Invalid state: {state_str}. Use ' ', 'x', '?', or '!'"
                     ))),
                 )
-                    .into_response()
+                    .into_response();
             }
         }
     }

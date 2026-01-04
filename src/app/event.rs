@@ -16,7 +16,9 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
-    let pending = if let (Some(pending_key), Some(pending_time)) = (state.pending_key.take(), state.pending_key_time.take()) {
+    let pending = if let (Some(pending_key), Some(pending_time)) =
+        (state.pending_key.take(), state.pending_key_time.take())
+    {
         let elapsed = pending_time.elapsed().as_millis() as u64;
         if elapsed < state.timeoutlen {
             Some(pending_key)
@@ -26,7 +28,7 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
     } else {
         None
     };
-    
+
     match state.keybindings.lookup_navigate(&key, pending) {
         KeyLookupResult::Pending => {
             state.pending_key = Some(KeyBinding::from_event(&key));
@@ -131,26 +133,40 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::IndentWithChildren => {
             state.save_undo();
-            if state.todo_list.indent_item_with_children(state.cursor_position).is_ok() {
+            if state
+                .todo_list
+                .indent_item_with_children(state.cursor_position)
+                .is_ok()
+            {
                 state.unsaved_changes = true;
             }
         }
         Action::OutdentWithChildren => {
             state.save_undo();
-            if state.todo_list.outdent_item_with_children(state.cursor_position).is_ok() {
+            if state
+                .todo_list
+                .outdent_item_with_children(state.cursor_position)
+                .is_ok()
+            {
                 state.unsaved_changes = true;
             }
         }
         Action::MoveItemUp => {
             state.save_undo();
-            if let Ok(displacement) = state.todo_list.move_item_with_children_up(state.cursor_position) {
+            if let Ok(displacement) = state
+                .todo_list
+                .move_item_with_children_up(state.cursor_position)
+            {
                 state.cursor_position = state.cursor_position.saturating_sub(displacement);
                 state.unsaved_changes = true;
             }
         }
         Action::MoveItemDown => {
             state.save_undo();
-            if let Ok(displacement) = state.todo_list.move_item_with_children_down(state.cursor_position) {
+            if let Ok(displacement) = state
+                .todo_list
+                .move_item_with_children_down(state.cursor_position)
+            {
                 state.cursor_position = (state.cursor_position + displacement)
                     .min(state.todo_list.items.len().saturating_sub(1));
                 state.unsaved_changes = true;
@@ -167,11 +183,13 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::Expand => {
             let should_expand = state.todo_list.has_children(state.cursor_position)
-                && state.todo_list.items
+                && state
+                    .todo_list
+                    .items
                     .get(state.cursor_position)
                     .map(|item| item.collapsed)
                     .unwrap_or(false);
-            
+
             if should_expand {
                 state.save_undo();
                 if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
@@ -182,11 +200,13 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::CollapseOrParent => {
             let has_children = state.todo_list.has_children(state.cursor_position);
-            let is_collapsed = state.todo_list.items
+            let is_collapsed = state
+                .todo_list
+                .items
                 .get(state.cursor_position)
                 .map(|item| item.collapsed)
                 .unwrap_or(false);
-            
+
             if has_children && !is_collapsed {
                 state.save_undo();
                 if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
@@ -268,7 +288,7 @@ fn execute_visual_action(action: Action, state: &mut AppState) -> Result<()> {
                     let first_indent = state.todo_list.items[start].indent_level;
                     first_indent <= prev_indent
                 };
-                
+
                 if can_indent {
                     state.save_undo();
                     for idx in start..=end {
@@ -282,7 +302,7 @@ fn execute_visual_action(action: Action, state: &mut AppState) -> Result<()> {
         Action::Outdent => {
             if let Some((start, end)) = state.get_selection_range() {
                 let can_outdent = state.todo_list.items[start].indent_level > 0;
-                
+
                 if can_outdent {
                     state.save_undo();
                     for idx in start..=end {
@@ -313,19 +333,24 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
             }
             Action::EditBackspace => {
                 if state.edit_cursor_pos > 0 {
-                    let prev_boundary = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
-                    state.edit_buffer.drain(prev_boundary..state.edit_cursor_pos);
+                    let prev_boundary =
+                        prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                    state
+                        .edit_buffer
+                        .drain(prev_boundary..state.edit_cursor_pos);
                     state.edit_cursor_pos = prev_boundary;
                 }
             }
             Action::EditLeft => {
                 if state.edit_cursor_pos > 0 {
-                    state.edit_cursor_pos = prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                    state.edit_cursor_pos =
+                        prev_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
                 }
             }
             Action::EditRight => {
                 if state.edit_cursor_pos < state.edit_buffer.len() {
-                    state.edit_cursor_pos = next_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                    state.edit_cursor_pos =
+                        next_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
                 }
             }
             Action::EditHome => {
@@ -360,7 +385,7 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         state.edit_buffer.insert(state.edit_cursor_pos, c);
         state.edit_cursor_pos += c.len_utf8();
     }
-    
+
     Ok(())
 }
 
@@ -416,18 +441,26 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
 
     if state.is_creating_new_item {
         if state.todo_list.items.is_empty() {
-            state.todo_list.add_item_with_indent(state.edit_buffer.clone(), state.pending_indent_level);
+            state
+                .todo_list
+                .add_item_with_indent(state.edit_buffer.clone(), state.pending_indent_level);
             state.cursor_position = 0;
         } else {
             let insert_position = state.cursor_position + 1;
-            state.todo_list.insert_item(insert_position, state.edit_buffer.clone(), state.pending_indent_level)?;
+            state.todo_list.insert_item(
+                insert_position,
+                state.edit_buffer.clone(),
+                state.pending_indent_level,
+            )?;
             state.cursor_position = insert_position;
         }
         state.is_creating_new_item = false;
     } else if state.cursor_position < state.todo_list.items.len() {
         state.todo_list.items[state.cursor_position].content = state.edit_buffer.clone();
     } else {
-        state.todo_list.add_item_with_indent(state.edit_buffer.clone(), 0);
+        state
+            .todo_list
+            .add_item_with_indent(state.edit_buffer.clone(), 0);
         state.cursor_position = state.todo_list.items.len() - 1;
     }
 

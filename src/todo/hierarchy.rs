@@ -1,22 +1,25 @@
 use super::TodoList;
 use super::state::TodoState;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 impl TodoList {
     pub fn count_children_stats(&self, index: usize) -> (usize, usize) {
         if index >= self.items.len() {
             return (0, 0);
         }
-        
+
         let (_, end) = self.get_item_range(index).unwrap_or((index, index + 1));
         let children = &self.items[index + 1..end];
-        
-        let completed = children.iter().filter(|item| item.state == TodoState::Checked).count();
+
+        let completed = children
+            .iter()
+            .filter(|item| item.state == TodoState::Checked)
+            .count();
         let total = children.len();
-        
+
         (completed, total)
     }
-    
+
     pub fn has_children(&self, index: usize) -> bool {
         if index >= self.items.len() {
             return false;
@@ -69,18 +72,18 @@ impl TodoList {
         }
 
         let current_indent = self.items[item_start].indent_level;
-        
+
         let mut target_idx = item_start - 1;
         while target_idx > 0 && self.items[target_idx].indent_level > current_indent {
             target_idx -= 1;
         }
-        
+
         let (target_start, _) = self.get_item_range(target_idx)?;
-        
+
         if target_start >= item_start {
             return Err(anyhow!("Cannot move up"));
         }
-        
+
         let displacement = item_start - target_start;
         let mut current_items: Vec<_> = self.items.drain(item_start..item_end).collect();
 
@@ -112,16 +115,17 @@ impl TodoList {
         }
 
         let current_indent = self.items[item_start].indent_level;
-        
+
         let mut target_idx = item_end;
-        while target_idx < self.items.len() && self.items[target_idx].indent_level > current_indent {
+        while target_idx < self.items.len() && self.items[target_idx].indent_level > current_indent
+        {
             target_idx += 1;
         }
-        
+
         if target_idx >= self.items.len() {
             return Err(anyhow!("Cannot move down"));
         }
-        
+
         let target_indent = self.items[target_idx].indent_level;
         let item_count = item_end - item_start;
 
@@ -133,7 +137,7 @@ impl TodoList {
         };
 
         let mut current_items: Vec<_> = self.items.drain(item_start..item_end).collect();
-        
+
         let actual_insert = insert_pos - item_count;
         let max_indent = self.items[actual_insert - 1].indent_level + 1;
 
@@ -145,7 +149,8 @@ impl TodoList {
             }
         }
 
-        self.items.splice(actual_insert..actual_insert, current_items);
+        self.items
+            .splice(actual_insert..actual_insert, current_items);
         self.recalculate_parent_ids();
         Ok(insert_pos - item_end)
     }

@@ -34,7 +34,10 @@ impl McpErrorDetail {
             code: "INVALID_STATE".to_string(),
             message: message.into(),
             retryable: true,
-            suggestion: Some("Valid states: ' ' (empty), 'x' (done), '?' (question), '!' (important)".to_string()),
+            suggestion: Some(
+                "Valid states: ' ' (empty), 'x' (done), '?' (question), '!' (important)"
+                    .to_string(),
+            ),
         }
     }
 

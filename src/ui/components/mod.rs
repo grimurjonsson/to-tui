@@ -4,10 +4,10 @@ pub mod todo_list;
 use crate::app::AppState;
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
-    Frame,
 };
 
 pub fn render(f: &mut Frame, state: &AppState) {

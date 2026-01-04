@@ -23,10 +23,7 @@ pub fn first_char_as_str(s: &str) -> &str {
     if s.is_empty() {
         return "";
     }
-    let end = s.char_indices()
-        .nth(1)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len());
+    let end = s.char_indices().nth(1).map(|(i, _)| i).unwrap_or(s.len());
     &s[..end]
 }
 
@@ -34,10 +31,7 @@ pub fn after_first_char(s: &str) -> &str {
     if s.is_empty() {
         return "";
     }
-    let start = s.char_indices()
-        .nth(1)
-        .map(|(i, _)| i)
-        .unwrap_or(s.len());
+    let start = s.char_indices().nth(1).map(|(i, _)| i).unwrap_or(s.len());
     &s[start..]
 }
 

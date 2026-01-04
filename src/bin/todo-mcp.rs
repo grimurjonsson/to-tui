@@ -1,8 +1,8 @@
 use anyhow::Result;
-use rmcp::{transport::stdio, ServiceExt};
+use rmcp::{ServiceExt, transport::stdio};
 use todo_cli::mcp::TodoMcpServer;
 use tracing::info;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[tokio::main]
 async fn main() -> Result<()> {

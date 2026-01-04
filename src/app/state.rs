@@ -1,9 +1,9 @@
+use super::mode::Mode;
 use crate::keybindings::{KeyBinding, KeybindingCache};
 use crate::storage::file::load_todo_list;
 use crate::todo::{TodoItem, TodoList};
 use crate::ui::theme::Theme;
 use anyhow::Result;
-use super::mode::Mode;
 use std::time::Instant;
 
 const MAX_UNDO_HISTORY: usize = 50;
@@ -30,7 +30,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(todo_list: TodoList, theme: Theme, keybindings: KeybindingCache, timeoutlen: u64) -> Self {
+    pub fn new(
+        todo_list: TodoList,
+        theme: Theme,
+        keybindings: KeybindingCache,
+        timeoutlen: u64,
+    ) -> Self {
         Self {
             todo_list,
             cursor_position: 0,
@@ -57,7 +62,8 @@ impl AppState {
         if self.undo_stack.len() >= MAX_UNDO_HISTORY {
             self.undo_stack.remove(0);
         }
-        self.undo_stack.push((self.todo_list.clone(), self.cursor_position));
+        self.undo_stack
+            .push((self.todo_list.clone(), self.cursor_position));
     }
 
     pub fn undo(&mut self) -> bool {
@@ -81,10 +87,12 @@ impl AppState {
     }
 
     pub fn move_cursor_down(&mut self) {
-        if !self.todo_list.items.is_empty() && self.cursor_position < self.todo_list.items.len() - 1 {
+        if !self.todo_list.items.is_empty() && self.cursor_position < self.todo_list.items.len() - 1
+        {
             self.cursor_position += 1;
-            while self.cursor_position < self.todo_list.items.len() - 1 
-                && self.is_item_hidden(self.cursor_position) {
+            while self.cursor_position < self.todo_list.items.len() - 1
+                && self.is_item_hidden(self.cursor_position)
+            {
                 self.cursor_position += 1;
             }
             if self.is_item_hidden(self.cursor_position) && self.cursor_position > 0 {
@@ -95,7 +103,7 @@ impl AppState {
             }
         }
     }
-    
+
     fn is_item_hidden(&self, index: usize) -> bool {
         if index >= self.todo_list.items.len() {
             return false;
@@ -163,7 +171,9 @@ impl AppState {
         if target_indent == 0 {
             return None;
         }
-        (0..index).rev().find(|&i| self.todo_list.items[i].indent_level < target_indent)
+        (0..index)
+            .rev()
+            .find(|&i| self.todo_list.items[i].indent_level < target_indent)
     }
 
     pub fn move_to_parent(&mut self) {

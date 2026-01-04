@@ -47,29 +47,33 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
     fs::write(&temp_path, content)
         .with_context(|| format!("Failed to write to temp file: {}", temp_path.display()))?;
 
-    fs::rename(&temp_path, &list.file_path)
-        .with_context(|| format!("Failed to rename temp file to: {}", list.file_path.display()))?;
+    fs::rename(&temp_path, &list.file_path).with_context(|| {
+        format!(
+            "Failed to rename temp file to: {}",
+            list.file_path.display()
+        )
+    })?;
 
     Ok(())
 }
 
 pub fn file_exists(date: NaiveDate) -> Result<bool> {
     database::init_database()?;
-    
+
     if database::has_todos_for_date(date)? {
         return Ok(true);
     }
-    
+
     let file_path = get_daily_file_path(date)?;
     Ok(file_path.exists())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::markdown::serialize_todo_list_clean;
-    use tempfile::TempDir;
+    use super::*;
     use chrono::NaiveDate;
+    use tempfile::TempDir;
 
     fn setup_test_dir() -> TempDir {
         TempDir::new().unwrap()

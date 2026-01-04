@@ -9,10 +9,10 @@ use crate::utils::paths::get_config_path;
 pub struct Config {
     #[serde(default = "default_theme")]
     pub theme: String,
-    
+
     #[serde(default = "default_timeoutlen")]
     pub timeoutlen: u64,
-    
+
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
 }

@@ -8,10 +8,10 @@ mod todo;
 mod ui;
 mod utils;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::Local;
 use clap::Parser;
-use cli::{Cli, Commands, ServeCommand, DEFAULT_API_PORT};
+use cli::{Cli, Commands, DEFAULT_API_PORT, ServeCommand};
 use config::Config;
 use keybindings::KeybindingCache;
 use std::env;
@@ -88,7 +88,7 @@ fn handle_serve_start(port: u16) -> Result<()> {
 
 fn handle_serve_stop() -> Result<()> {
     let pid = read_pid_file()?;
-    
+
     if let Some(pid) = pid {
         kill_process(pid)?;
         remove_pid_file()?;
@@ -96,7 +96,7 @@ fn handle_serve_stop() -> Result<()> {
     } else {
         println!("Server is not running (no PID file found)");
     }
-    
+
     Ok(())
 }
 
@@ -109,7 +109,7 @@ fn handle_serve_restart(port: u16) -> Result<()> {
 fn handle_serve_status(port: u16) -> Result<()> {
     let pid = read_pid_file()?;
     let running = is_server_running(port);
-    
+
     match (pid, running) {
         (Some(pid), true) => {
             println!("Server is running on port {port} (PID: {pid})");
@@ -125,7 +125,7 @@ fn handle_serve_status(port: u16) -> Result<()> {
             println!("Server is not running");
         }
     }
-    
+
     Ok(())
 }
 
@@ -150,22 +150,24 @@ fn is_server_running(port: u16) -> bool {
 
 fn start_server_background(port: u16) -> Result<()> {
     let current_exe = env::current_exe()?;
-    
+
     let child = Command::new(&current_exe)
         .args(["serve", "start", "--port", &port.to_string(), "--daemon"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    
+
     write_pid_file(child.id())?;
-    
+
     std::thread::sleep(Duration::from_millis(500));
-    
+
     if !is_server_running(port) {
-        return Err(anyhow!("Failed to start server - not responding on port {port}"));
+        return Err(anyhow!(
+            "Failed to start server - not responding on port {port}"
+        ));
     }
-    
+
     Ok(())
 }
 
@@ -179,11 +181,11 @@ fn ensure_server_running(port: u16) -> Result<()> {
 
 fn read_pid_file() -> Result<Option<u32>> {
     let pid_path = get_pid_file_path()?;
-    
+
     if !pid_path.exists() {
         return Ok(None);
     }
-    
+
     let content = fs::read_to_string(&pid_path)?;
     let pid: u32 = content.trim().parse()?;
     Ok(Some(pid))
@@ -191,13 +193,13 @@ fn read_pid_file() -> Result<Option<u32>> {
 
 fn write_pid_file(pid: u32) -> Result<()> {
     let pid_path = get_pid_file_path()?;
-    
+
     if let Some(parent) = pid_path.parent() {
         if !parent.exists() {
             fs::create_dir_all(parent)?;
         }
     }
-    
+
     fs::write(&pid_path, pid.to_string())?;
     Ok(())
 }
@@ -266,7 +268,7 @@ fn handle_show(date: Option<String>) -> Result<()> {
     let (items, display_date, is_archived) = if let Some(date_str) = date {
         let parsed_date = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
             .map_err(|_| anyhow!("Invalid date format. Use YYYY-MM-DD"))?;
-        
+
         let today = Local::now().date_naive();
         if parsed_date == today {
             let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
@@ -288,14 +290,21 @@ fn handle_show(date: Option<String>) -> Result<()> {
 
     if items.is_empty() {
         if is_archived {
-            println!("No archived todos for {}!", display_date.format("%B %d, %Y"));
+            println!(
+                "No archived todos for {}!",
+                display_date.format("%B %d, %Y")
+            );
         } else {
             println!("No todos for today!");
         }
         return Ok(());
     }
 
-    let label = if is_archived { "📦 Archived" } else { "📋 Todo List" };
+    let label = if is_archived {
+        "📦 Archived"
+    } else {
+        "📋 Todo List"
+    };
     println!("\n{} - {}\n", label, display_date.format("%B %d, %Y"));
 
     for (idx, item) in items.iter().enumerate() {
@@ -312,41 +321,39 @@ fn handle_import_archive() -> Result<()> {
     use storage::database::{archive_todos_for_date, init_database};
     use storage::markdown::parse_todo_list;
     use utils::paths::get_dailies_dir;
-    
+
     init_database()?;
-    
+
     let dailies_dir = get_dailies_dir()?;
     if !dailies_dir.exists() {
         println!("No dailies directory found at {dailies_dir:?}");
         return Ok(());
     }
-    
+
     let today = Local::now().date_naive();
     let mut imported = 0;
-    
+
     for entry in std::fs::read_dir(&dailies_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.extension().map(|e| e == "md").unwrap_or(false) {
-            let filename = path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
-            
+            let filename = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+
             if let Ok(date) = chrono::NaiveDate::parse_from_str(filename, "%Y-%m-%d") {
                 if date >= today {
                     println!("Skipping {filename} (today or future)");
                     continue;
                 }
-                
+
                 let content = std::fs::read_to_string(&path)?;
                 let list = parse_todo_list(&content, date, path.clone())?;
-                
+
                 if list.items.is_empty() {
                     println!("Skipping {filename} (empty)");
                     continue;
                 }
-                
+
                 storage::database::save_todo_list(&list)?;
                 let count = archive_todos_for_date(date)?;
                 println!("Imported {count} items from {filename}");
@@ -354,7 +361,7 @@ fn handle_import_archive() -> Result<()> {
             }
         }
     }
-    
+
     println!("\nTotal: {imported} items imported to archive");
     Ok(())
 }

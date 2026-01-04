@@ -1,16 +1,16 @@
 pub mod components;
 pub mod theme;
 
-use crate::app::{event::handle_key_event, AppState};
+use crate::app::{AppState, event::handle_key_event};
 use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io::{self, Write};
 use std::sync::mpsc;
 use std::time::Duration;

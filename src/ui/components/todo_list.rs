@@ -1,12 +1,12 @@
 use crate::app::{AppState, Mode};
 use crate::todo::TodoState;
-use crate::utils::unicode::{first_char_as_str, after_first_char};
+use crate::utils::unicode::{after_first_char, first_char_as_str};
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem},
-    Frame,
 };
 use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
@@ -20,29 +20,30 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         if hidden_indices.contains(&idx) {
             continue;
         }
-        
+
         let indent = "  ".repeat(item.indent_level);
         let has_children = state.todo_list.has_children(idx);
-        
+
         let fold_icon = if has_children {
             if item.collapsed { "▶ " } else { "▼ " }
         } else {
             "  "
         };
-        
+
         let checkbox = format!("{}", item.state);
-        
-        let due_date_str = item.due_date
+
+        let due_date_str = item
+            .due_date
             .map(|d| format!(" [{}]", d.format("%Y-%m-%d")))
             .unwrap_or_default();
-        
+
         let collapse_indicator = if item.collapsed {
             let (completed, total) = state.todo_list.count_children_stats(idx);
             format!(" ({completed}/{total})")
         } else {
             String::new()
         };
-        
+
         let prefix = format!("{indent}{fold_icon}");
         let prefix_width = prefix.width();
         let checkbox_with_space = format!("{checkbox} ");
@@ -83,16 +84,18 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         };
 
         let content_max_width = available_width.saturating_sub(prefix_width + checkbox_width);
-        
-        let is_editing_this_item = state.mode == Mode::Edit && !state.is_creating_new_item && idx == state.cursor_position;
-        
+
+        let is_editing_this_item =
+            state.mode == Mode::Edit && !state.is_creating_new_item && idx == state.cursor_position;
+
         if is_editing_this_item {
-            let edit_lines = build_wrapped_edit_lines_for_existing(state, available_width, item.indent_level);
+            let edit_lines =
+                build_wrapped_edit_lines_for_existing(state, available_width, item.indent_level);
             items.push(ListItem::new(edit_lines));
         } else {
             let wrapped_lines = wrap_text(&content_with_extras, content_max_width);
             let continuation_indent = " ".repeat(prefix_width + checkbox_width);
-            
+
             let mut lines: Vec<Line> = Vec::new();
             for (i, line_text) in wrapped_lines.iter().enumerate() {
                 if i == 0 {
@@ -108,7 +111,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
                     ]));
                 }
             }
-            
+
             items.push(ListItem::new(lines));
         }
 
@@ -122,7 +125,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
                 let desc_style = Style::default()
                     .fg(ratatui::style::Color::DarkGray)
                     .add_modifier(Modifier::ITALIC);
-                
+
                 let mut desc_lines: Vec<Line> = Vec::new();
                 for (i, line_text) in desc_wrapped.iter().enumerate() {
                     if i == 0 {
@@ -155,31 +158,28 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
             // Show helpful message when list is empty
             items.push(ListItem::new(Line::from(Span::styled(
                 "",
-                Style::default()
+                Style::default(),
             ))));
             items.push(ListItem::new(Line::from(Span::styled(
                 "  No todos for today!",
-                Style::default().fg(state.theme.foreground)
+                Style::default().fg(state.theme.foreground),
             ))));
             items.push(ListItem::new(Line::from(Span::styled(
                 "",
-                Style::default()
+                Style::default(),
             ))));
             items.push(ListItem::new(Line::from(Span::styled(
                 "  Press 'n' to create a new todo",
-                Style::default().fg(state.theme.foreground)
+                Style::default().fg(state.theme.foreground),
             ))));
             items.push(ListItem::new(Line::from(Span::styled(
                 "  Press '?' for help",
-                Style::default().fg(state.theme.foreground)
+                Style::default().fg(state.theme.foreground),
             ))));
         }
     }
 
-    let title = format!(
-        " Todo List - {} ",
-        state.todo_list.date.format("%B %d, %Y")
-    );
+    let title = format!(" Todo List - {} ", state.todo_list.date.format("%B %d, %Y"));
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
@@ -192,23 +192,32 @@ fn build_wrapped_edit_lines(state: &AppState, available_width: usize) -> Vec<Lin
     build_wrapped_edit_lines_with_indent(state, available_width, state.pending_indent_level)
 }
 
-fn build_wrapped_edit_lines_for_existing(state: &AppState, available_width: usize, indent_level: usize) -> Vec<Line<'static>> {
+fn build_wrapped_edit_lines_for_existing(
+    state: &AppState,
+    available_width: usize,
+    indent_level: usize,
+) -> Vec<Line<'static>> {
     build_wrapped_edit_lines_with_indent(state, available_width, indent_level)
 }
 
-fn build_wrapped_edit_lines_with_indent(state: &AppState, available_width: usize, indent_level: usize) -> Vec<Line<'static>> {
+fn build_wrapped_edit_lines_with_indent(
+    state: &AppState,
+    available_width: usize,
+    indent_level: usize,
+) -> Vec<Line<'static>> {
     let indent = "  ".repeat(indent_level);
     let fold_icon_space = "  ";
     let prefix = format!("{indent}{fold_icon_space}[ ] ");
     let prefix_width = prefix.width();
     let content_max_width = available_width.saturating_sub(prefix_width);
-    
+
     let edit_wrapped = wrap_text(&state.edit_buffer, content_max_width);
     let edit_row_count = edit_wrapped.len();
-    let cursor_line = find_cursor_line(&state.edit_buffer, state.edit_cursor_pos, content_max_width);
-    
+    let cursor_line =
+        find_cursor_line(&state.edit_buffer, state.edit_cursor_pos, content_max_width);
+
     let mut lines: Vec<Line<'static>> = Vec::new();
-    
+
     for (line_idx, line_text) in edit_wrapped.iter().enumerate() {
         let line_prefix = if line_idx == 0 {
             prefix.clone()
@@ -217,21 +226,26 @@ fn build_wrapped_edit_lines_with_indent(state: &AppState, available_width: usize
         };
 
         if cursor_line == line_idx {
-            let cursor_pos_in_line = find_cursor_pos_in_wrapped_line(&state.edit_buffer, state.edit_cursor_pos, content_max_width, line_idx);
+            let cursor_pos_in_line = find_cursor_pos_in_wrapped_line(
+                &state.edit_buffer,
+                state.edit_cursor_pos,
+                content_max_width,
+                line_idx,
+            );
             let before_cursor = &line_text[..cursor_pos_in_line.min(line_text.len())];
             let after_cursor = &line_text[cursor_pos_in_line.min(line_text.len())..];
-            
+
             let mut spans: Vec<Span<'static>> = vec![
                 Span::styled(line_prefix, Style::default()),
                 Span::styled(before_cursor.to_string(), Style::default()),
             ];
-            
+
             if after_cursor.is_empty() && line_idx == edit_row_count - 1 {
                 spans.push(Span::styled(
                     "█",
                     Style::default()
                         .fg(ratatui::style::Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::BOLD),
                 ));
             } else if !after_cursor.is_empty() {
                 spans.push(Span::styled(
@@ -239,21 +253,21 @@ fn build_wrapped_edit_lines_with_indent(state: &AppState, available_width: usize
                     Style::default()
                         .bg(ratatui::style::Color::Yellow)
                         .fg(ratatui::style::Color::Black)
-                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 spans.push(Span::styled(
                     after_first_char(after_cursor).to_string(),
-                    Style::default()
+                    Style::default(),
                 ));
             } else {
                 spans.push(Span::styled(
                     "█",
                     Style::default()
                         .fg(ratatui::style::Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
-            
+
             lines.push(Line::from(spans));
         } else {
             let spans: Vec<Span<'static>> = vec![
@@ -263,7 +277,7 @@ fn build_wrapped_edit_lines_with_indent(state: &AppState, available_width: usize
             lines.push(Line::from(spans));
         }
     }
-    
+
     lines
 }
 
@@ -271,23 +285,23 @@ fn find_cursor_line(text: &str, cursor_pos: usize, max_width: usize) -> usize {
     if max_width == 0 || text.is_empty() {
         return 0;
     }
-    
+
     let mut current_line = 0;
     let mut line_start_byte = 0;
     let mut current_width = 0;
     let mut last_space_byte = None;
-    
+
     for (byte_idx, c) in text.char_indices() {
         if byte_idx >= cursor_pos {
             return current_line;
         }
-        
+
         let char_width = c.to_string().width();
-        
+
         if c == ' ' {
             last_space_byte = Some(byte_idx);
         }
-        
+
         if current_width + char_width > max_width && current_width > 0 {
             if let Some(space_byte) = last_space_byte {
                 if space_byte > line_start_byte {
@@ -309,16 +323,21 @@ fn find_cursor_line(text: &str, cursor_pos: usize, max_width: usize) -> usize {
             current_width += char_width;
         }
     }
-    
+
     current_line
 }
 
-fn find_cursor_pos_in_wrapped_line(text: &str, cursor_pos: usize, max_width: usize, target_line: usize) -> usize {
+fn find_cursor_pos_in_wrapped_line(
+    text: &str,
+    cursor_pos: usize,
+    max_width: usize,
+    target_line: usize,
+) -> usize {
     let wrapped = wrap_text(text, max_width);
     if target_line >= wrapped.len() {
         return 0;
     }
-    
+
     let mut byte_offset = 0;
     for (line_idx, line) in wrapped.iter().enumerate() {
         if line_idx == target_line {
@@ -334,11 +353,11 @@ fn find_cursor_pos_in_wrapped_line(text: &str, cursor_pos: usize, max_width: usi
             }
         }
     }
-    
+
     if cursor_pos < byte_offset {
         return 0;
     }
-    
+
     let pos_in_line = cursor_pos - byte_offset;
     pos_in_line.min(wrapped[target_line].len())
 }
@@ -346,7 +365,7 @@ fn find_cursor_pos_in_wrapped_line(text: &str, cursor_pos: usize, max_width: usi
 fn build_hidden_indices(state: &AppState) -> HashSet<usize> {
     let mut hidden = HashSet::new();
     let items = &state.todo_list.items;
-    
+
     let mut i = 0;
     while i < items.len() {
         if items[i].collapsed {
@@ -361,7 +380,7 @@ fn build_hidden_indices(state: &AppState) -> HashSet<usize> {
             i += 1;
         }
     }
-    
+
     hidden
 }
 
@@ -369,14 +388,14 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     if max_width == 0 {
         return vec![text.to_string()];
     }
-    
+
     let mut lines = Vec::new();
     let mut current_line = String::new();
     let mut current_width = 0;
-    
+
     for word in text.split_whitespace() {
         let word_width = word.width();
-        
+
         if current_line.is_empty() {
             current_line = word.to_string();
             current_width = word_width;
@@ -390,14 +409,14 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
             current_width = word_width;
         }
     }
-    
+
     if !current_line.is_empty() {
         lines.push(current_line);
     }
-    
+
     if lines.is_empty() {
         lines.push(String::new());
     }
-    
+
     lines
 }
