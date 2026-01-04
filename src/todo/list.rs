@@ -44,7 +44,7 @@ impl TodoList {
             .collect()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn toggle_item_state(&mut self, index: usize) -> Result<()> {
         if index >= self.items.len() {
             return Err(anyhow!("Index out of bounds"));
@@ -68,11 +68,12 @@ impl TodoList {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.items.len()
     }

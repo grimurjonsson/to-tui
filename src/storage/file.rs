@@ -5,7 +5,6 @@ use crate::utils::paths::{ensure_directories_exist, get_daily_file_path};
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use std::fs;
-use std::path::Path;
 
 pub fn load_todo_list(date: NaiveDate) -> Result<TodoList> {
     ensure_directories_exist()?;
@@ -63,15 +62,6 @@ pub fn file_exists(date: NaiveDate) -> Result<bool> {
     
     let file_path = get_daily_file_path(date)?;
     Ok(file_path.exists())
-}
-
-#[allow(dead_code)]
-pub fn delete_file(path: &Path) -> Result<()> {
-    if path.exists() {
-        fs::remove_file(path)
-            .with_context(|| format!("Failed to delete file: {}", path.display()))?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

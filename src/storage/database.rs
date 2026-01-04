@@ -14,7 +14,7 @@ fn get_db_path() -> Result<PathBuf> {
 pub fn get_connection() -> Result<Connection> {
     let db_path = get_db_path()?;
     let conn = Connection::open(&db_path)
-        .with_context(|| format!("Failed to open database at {:?}", db_path))?;
+        .with_context(|| format!("Failed to open database at {db_path:?}"))?;
     Ok(conn)
 }
 
@@ -51,6 +51,30 @@ pub fn init_database() -> Result<()> {
     
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos(parent_id)",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS archived_todos (
+            id TEXT PRIMARY KEY,
+            original_date TEXT NOT NULL,
+            archived_at TEXT NOT NULL,
+            content TEXT NOT NULL,
+            state TEXT NOT NULL,
+            indent_level INTEGER NOT NULL,
+            parent_id TEXT,
+            due_date TEXT,
+            description TEXT,
+            collapsed INTEGER NOT NULL DEFAULT 0,
+            position INTEGER NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+    
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_todos_original_date ON archived_todos(original_date)",
         [],
     )?;
     
@@ -154,6 +178,71 @@ pub fn has_todos_for_date(date: NaiveDate) -> Result<bool> {
     )?;
     
     Ok(count > 0)
+}
+
+pub fn archive_todos_for_date(date: NaiveDate) -> Result<usize> {
+    let conn = get_connection()?;
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    
+    let count = conn.execute(
+        "INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, collapsed, position, created_at, updated_at)
+         SELECT id, date, ?1, content, state, indent_level, parent_id, due_date, description, collapsed, position, created_at, updated_at
+         FROM todos WHERE date = ?2",
+        params![now, date_str],
+    )?;
+    
+    conn.execute("DELETE FROM todos WHERE date = ?1", [&date_str])?;
+    
+    Ok(count)
+}
+
+pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
+    let conn = get_connection()?;
+    let date_str = date.format("%Y-%m-%d").to_string();
+    
+    let mut stmt = conn.prepare(
+        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed 
+         FROM archived_todos 
+         WHERE original_date = ?1 
+         ORDER BY position ASC"
+    )?;
+    
+    let items = stmt.query_map([&date_str], |row| {
+        let id_str: String = row.get(0)?;
+        let content: String = row.get(1)?;
+        let state_str: String = row.get(2)?;
+        let indent_level: usize = row.get(3)?;
+        let parent_id_str: Option<String> = row.get(4)?;
+        let due_date_str: Option<String> = row.get(5)?;
+        let description: Option<String> = row.get(6)?;
+        let collapsed: i32 = row.get(7).unwrap_or(0);
+        
+        Ok((id_str, content, state_str, indent_level, parent_id_str, due_date_str, description, collapsed))
+    })?;
+    
+    let mut result = Vec::new();
+    for item in items {
+        let (id_str, content, state_str, indent_level, parent_id_str, due_date_str, description, collapsed) = item?;
+        
+        let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
+        let state = TodoState::from_char(state_str.chars().next().unwrap_or(' '))
+            .unwrap_or(TodoState::Empty);
+        let parent_id = parent_id_str.and_then(|s| Uuid::parse_str(&s).ok());
+        let due_date = due_date_str.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
+        
+        let mut todo = TodoItem::new(content, indent_level);
+        todo.id = id;
+        todo.state = state;
+        todo.parent_id = parent_id;
+        todo.due_date = due_date;
+        todo.description = description;
+        todo.collapsed = collapsed != 0;
+        
+        result.push(todo);
+    }
+    
+    Ok(result)
 }
 
 #[cfg(test)]

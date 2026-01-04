@@ -38,14 +38,14 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         
         let collapse_indicator = if item.collapsed {
             let (completed, total) = state.todo_list.count_children_stats(idx);
-            format!(" ({}/{})", completed, total)
+            format!(" ({completed}/{total})")
         } else {
             String::new()
         };
         
-        let prefix = format!("{}{}", indent, fold_icon);
+        let prefix = format!("{indent}{fold_icon}");
         let prefix_width = prefix.width();
-        let checkbox_with_space = format!("{} ", checkbox);
+        let checkbox_with_space = format!("{checkbox} ");
         let checkbox_width = checkbox_with_space.width();
         let content_with_extras = format!("{}{}{}", item.content, due_date_str, collapse_indicator);
 
@@ -199,7 +199,7 @@ fn build_wrapped_edit_lines_for_existing(state: &AppState, available_width: usiz
 fn build_wrapped_edit_lines_with_indent(state: &AppState, available_width: usize, indent_level: usize) -> Vec<Line<'static>> {
     let indent = "  ".repeat(indent_level);
     let fold_icon_space = "  ";
-    let prefix = format!("{}{}[ ] ", indent, fold_icon_space);
+    let prefix = format!("{indent}{fold_icon_space}[ ] ");
     let prefix_width = prefix.width();
     let content_max_width = available_width.saturating_sub(prefix_width);
     

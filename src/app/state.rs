@@ -163,12 +163,7 @@ impl AppState {
         if target_indent == 0 {
             return None;
         }
-        for i in (0..index).rev() {
-            if self.todo_list.items[i].indent_level < target_indent {
-                return Some(i);
-            }
-        }
-        None
+        (0..index).rev().find(|&i| self.todo_list.items[i].indent_level < target_indent)
     }
 
     pub fn move_to_parent(&mut self) {

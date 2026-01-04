@@ -28,7 +28,7 @@ impl TodoItem {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn with_state(content: String, state: TodoState, indent_level: usize) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -36,20 +36,6 @@ impl TodoItem {
             state,
             indent_level,
             parent_id: None,
-            due_date: None,
-            description: None,
-            collapsed: false,
-        }
-    }
-
-    #[allow(dead_code)]
-    pub fn with_parent(content: String, indent_level: usize, parent_id: Option<Uuid>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            content,
-            state: TodoState::Empty,
-            indent_level,
-            parent_id,
             due_date: None,
             description: None,
             collapsed: false,
@@ -89,25 +75,25 @@ impl TodoItem {
         self.state.is_complete()
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn can_indent(&self, prev_indent: Option<usize>) -> bool {
         match prev_indent {
-            None => false, // Can't indent the first item
+            None => false,
             Some(prev) => self.indent_level <= prev,
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn can_outdent(&self) -> bool {
         self.indent_level > 0
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn indent(&mut self) {
         self.indent_level += 1;
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn outdent(&mut self) {
         if self.indent_level > 0 {
             self.indent_level -= 1;

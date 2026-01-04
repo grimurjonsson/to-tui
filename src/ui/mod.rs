@@ -5,35 +5,34 @@ use crate::app::{event::handle_key_event, AppState};
 use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
-    event::{
-        self, Event, KeyboardEnhancementFlags, KeyEventKind, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
-    },
+    event::{self, Event, KeyEventKind},
     execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
-        LeaveAlternateScreen,
-    },
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io;
+use std::io::{self, Write};
 use std::sync::mpsc;
 use std::time::Duration;
+
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let mut stdout = io::stdout();
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = stdout.flush();
+    }
+}
 
 pub fn run_tui(mut state: AppState) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-
-    let keyboard_enhancement_enabled = supports_keyboard_enhancement().unwrap_or(false);
-    if keyboard_enhancement_enabled {
-        execute!(
-            stdout,
-            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
-    }
-
     execute!(stdout, EnterAlternateScreen)?;
+
+    let _guard = TerminalGuard;
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -41,12 +40,6 @@ pub fn run_tui(mut state: AppState) -> Result<()> {
     let _watcher = setup_database_watcher(db_tx);
 
     let result = run_app(&mut terminal, &mut state, db_rx);
-
-    disable_raw_mode()?;
-    if keyboard_enhancement_enabled {
-        execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags)?;
-    }
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     result

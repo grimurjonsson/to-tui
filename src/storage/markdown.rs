@@ -28,17 +28,12 @@ pub fn serialize_todo_list_clean(list: &TodoList) -> String {
         
         if let Some(ref desc) = item.description {
             for line in desc.lines() {
-                output.push_str(&format!("{}  > {}\n", indent, line));
+                output.push_str(&format!("{indent}  > {line}\n"));
             }
         }
     }
 
     output
-}
-
-#[allow(dead_code)]
-pub fn serialize_todo_list(list: &TodoList) -> String {
-    serialize_todo_list_clean(list)
 }
 
 pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Result<TodoList> {
@@ -52,12 +47,12 @@ pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Re
 
         let trimmed = line.trim_start();
         
-        if trimmed.starts_with('>') {
+        if let Some(stripped) = trimmed.strip_prefix('>') {
             if let Some(ref mut desc) = pending_description {
                 desc.push('\n');
-                desc.push_str(trimmed[1..].trim());
+                desc.push_str(stripped.trim());
             } else {
-                pending_description = Some(trimmed[1..].trim().to_string());
+                pending_description = Some(stripped.trim().to_string());
             }
             continue;
         }
@@ -113,7 +108,7 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
 
     let state_char = trimmed.chars().nth(3).ok_or_else(|| anyhow!("Missing state character"))?;
     let state = TodoState::from_char(state_char)
-        .ok_or_else(|| anyhow!("Invalid state character: {}", state_char))?;
+        .ok_or_else(|| anyhow!("Invalid state character: {state_char}"))?;
 
     let raw_content = if trimmed.len() > 5 {
         trimmed[5..].trim()
@@ -206,7 +201,7 @@ mod tests {
         let path = create_test_path();
         let list = TodoList::new(date, path);
 
-        let markdown = serialize_todo_list(&list);
+        let markdown = serialize_todo_list_clean(&list);
         assert!(markdown.contains("# Todo List - December 31, 2025"));
     }
 
@@ -219,7 +214,7 @@ mod tests {
         list.add_item("Task 1".to_string());
         list.add_item("Task 2".to_string());
 
-        let markdown = serialize_todo_list(&list);
+        let markdown = serialize_todo_list_clean(&list);
         assert!(markdown.contains("- [ ] Task 1"));
         assert!(markdown.contains("- [ ] Task 2"));
     }
@@ -239,7 +234,7 @@ mod tests {
         list.items[2].state = TodoState::Question;
         list.items[3].state = TodoState::Exclamation;
 
-        let markdown = serialize_todo_list(&list);
+        let markdown = serialize_todo_list_clean(&list);
         assert!(markdown.contains("- [ ] Empty task"));
         assert!(markdown.contains("- [x] Checked task"));
         assert!(markdown.contains("- [?] Question task"));
@@ -257,7 +252,7 @@ mod tests {
         list.add_item_with_indent("Grandchild".to_string(), 2);
         list.add_item_with_indent("Child 2".to_string(), 1);
 
-        let markdown = serialize_todo_list(&list);
+        let markdown = serialize_todo_list_clean(&list);
         assert!(markdown.contains("- [ ] Parent\n"));
         assert!(markdown.contains("\n  - [ ] Child 1\n"));
         assert!(markdown.contains("\n    - [ ] Grandchild\n"));
@@ -314,13 +309,13 @@ mod tests {
     fn test_round_trip() {
         let date = create_test_date();
         let path = create_test_path();
-        let mut list = TodoList::new(date.clone(), path.clone());
+        let mut list = TodoList::new(date, path.clone());
 
         list.add_item_with_indent("Parent".to_string(), 0);
         list.add_item_with_indent("Child".to_string(), 1);
         list.items[1].state = TodoState::Checked;
 
-        let markdown = serialize_todo_list(&list);
+        let markdown = serialize_todo_list_clean(&list);
         let parsed = parse_todo_list(&markdown, date, path).unwrap();
 
         assert_eq!(parsed.items.len(), 2);

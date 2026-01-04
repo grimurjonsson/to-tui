@@ -95,7 +95,7 @@ impl TodoMcpServer {
             .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format, e.g., 2025-01-02")))?;
 
         let list = load_list_with_rollover(date)
-            .map_err(|e| format_error(e))?;
+            .map_err(format_error)?;
 
         let items: Vec<TodoItemResponse> = list.items.iter().map(TodoItemResponse::from).collect();
         let response = TodoListResponse::new(
@@ -134,7 +134,7 @@ impl TodoMcpServer {
             .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
 
         let mut list = load_list_with_rollover(date)
-            .map_err(|e| format_error(e))?;
+            .map_err(format_error)?;
 
         let due_date = req.due_date
             .as_deref()
@@ -159,7 +159,7 @@ impl TodoMcpServer {
                 }
                 None => {
                     return Err(format_error(McpErrorDetail::not_found(
-                        format!("Parent todo with id '{}' not found", parent_id_str),
+                        format!("Parent todo with id '{parent_id_str}' not found"),
                         "Use list_todos to get valid parent IDs",
                     )));
                 }
@@ -209,7 +209,7 @@ impl TodoMcpServer {
             .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
 
         let mut list = load_list_with_rollover(date)
-            .map_err(|e| format_error(e))?;
+            .map_err(format_error)?;
 
         let item = list.items.iter_mut().find(|item| item.id == id)
             .ok_or_else(|| format_error(McpErrorDetail::not_found(
@@ -230,7 +230,7 @@ impl TodoMcpServer {
         if let Some(ref state_str) = req.state {
             let state = parse_state(state_str)
                 .ok_or_else(|| format_error(McpErrorDetail::invalid_state(
-                    format!("Invalid state '{}'. ", state_str),
+                    format!("Invalid state '{state_str}'. "),
                 )))?;
             item.state = state;
         }
@@ -272,7 +272,7 @@ impl TodoMcpServer {
             .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
 
         let mut list = load_list_with_rollover(date)
-            .map_err(|e| format_error(e))?;
+            .map_err(format_error)?;
 
         let idx = list.items.iter().position(|item| item.id == id)
             .ok_or_else(|| format_error(McpErrorDetail::not_found(
@@ -293,7 +293,7 @@ impl TodoMcpServer {
         info!(deleted_count = deleted_count, "delete_todo completed");
         Ok(Json(DeleteTodoResponse {
             deleted_count,
-            message: format!("Deleted {} item(s)", deleted_count),
+            message: format!("Deleted {deleted_count} item(s)"),
         }))
     }
 
@@ -315,7 +315,7 @@ impl TodoMcpServer {
             .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))?;
 
         let mut list = load_list_with_rollover(date)
-            .map_err(|e| format_error(e))?;
+            .map_err(format_error)?;
 
         let item = list.items.iter_mut().find(|item| item.id == id)
             .ok_or_else(|| format_error(McpErrorDetail::not_found(

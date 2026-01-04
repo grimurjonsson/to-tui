@@ -9,7 +9,7 @@ pub enum TodoState {
 }
 
 impl TodoState {
-    pub fn to_char(&self) -> char {
+    pub fn to_char(self) -> char {
         match self {
             Self::Empty => ' ',
             Self::Checked => 'x',

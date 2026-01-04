@@ -32,8 +32,11 @@ fn main() -> Result<()> {
         Some(Commands::Add { task }) => {
             handle_add(task)?;
         }
-        Some(Commands::Show) => {
-            handle_show()?;
+        Some(Commands::Show { date }) => {
+            handle_show(date)?;
+        }
+        Some(Commands::ImportArchive) => {
+            handle_import_archive()?;
         }
         Some(Commands::Serve { command, port }) => {
             handle_serve_command(command, port)?;
@@ -74,12 +77,12 @@ fn handle_serve_command(command: Option<ServeCommand>, port: u16) -> Result<()> 
 
 fn handle_serve_start(port: u16) -> Result<()> {
     if is_server_running(port) {
-        println!("Server is already running on port {}", port);
+        println!("Server is already running on port {port}");
         return Ok(());
     }
 
     start_server_background(port)?;
-    println!("Server started on port {}", port);
+    println!("Server started on port {port}");
     Ok(())
 }
 
@@ -89,7 +92,7 @@ fn handle_serve_stop() -> Result<()> {
     if let Some(pid) = pid {
         kill_process(pid)?;
         remove_pid_file()?;
-        println!("Server stopped (PID: {})", pid);
+        println!("Server stopped (PID: {pid})");
     } else {
         println!("Server is not running (no PID file found)");
     }
@@ -109,14 +112,14 @@ fn handle_serve_status(port: u16) -> Result<()> {
     
     match (pid, running) {
         (Some(pid), true) => {
-            println!("Server is running on port {} (PID: {})", port, pid);
+            println!("Server is running on port {port} (PID: {pid})");
         }
         (Some(pid), false) => {
-            println!("Server PID file exists ({}) but server is not responding on port {}", pid, port);
+            println!("Server PID file exists ({pid}) but server is not responding on port {port}");
             println!("Consider running 'todo serve stop' to clean up");
         }
         (None, true) => {
-            println!("Server is running on port {} but no PID file found", port);
+            println!("Server is running on port {port} but no PID file found");
         }
         (None, false) => {
             println!("Server is not running");
@@ -127,12 +130,11 @@ fn handle_serve_status(port: u16) -> Result<()> {
 }
 
 fn is_server_running(port: u16) -> bool {
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("127.0.0.1:{port}");
     match TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)) {
         Ok(mut stream) => {
             let request = format!(
-                "GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-                port
+                "GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
             );
             if stream.write_all(request.as_bytes()).is_ok() {
                 let mut response = String::new();
@@ -161,7 +163,7 @@ fn start_server_background(port: u16) -> Result<()> {
     std::thread::sleep(Duration::from_millis(500));
     
     if !is_server_running(port) {
-        return Err(anyhow!("Failed to start server - not responding on port {}", port));
+        return Err(anyhow!("Failed to start server - not responding on port {port}"));
     }
     
     Ok(())
@@ -169,7 +171,7 @@ fn start_server_background(port: u16) -> Result<()> {
 
 fn ensure_server_running(port: u16) -> Result<()> {
     if !is_server_running(port) {
-        println!("Starting API server on port {}...", port);
+        println!("Starting API server on port {port}...");
         start_server_background(port)?;
     }
     Ok(())
@@ -236,7 +238,7 @@ async fn run_server_foreground(port: u16) -> Result<()> {
         .init();
 
     let app = api::create_router();
-    let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("0.0.0.0:{port}");
 
     tracing::info!("Starting server on {}", addr);
 
@@ -260,25 +262,99 @@ fn handle_add(task: String) -> Result<()> {
     Ok(())
 }
 
-fn handle_show() -> Result<()> {
-    let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
+fn handle_show(date: Option<String>) -> Result<()> {
+    let (items, display_date, is_archived) = if let Some(date_str) = date {
+        let parsed_date = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+            .map_err(|_| anyhow!("Invalid date format. Use YYYY-MM-DD"))?;
+        
         let today = Local::now().date_naive();
-        todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
-    });
+        if parsed_date == today {
+            let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
+                todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
+            });
+            (list.items, today, false)
+        } else {
+            let items = storage::load_archived_todos_for_date(parsed_date)?;
+            (items, parsed_date, true)
+        }
+    } else {
+        let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
+            let today = Local::now().date_naive();
+            todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
+        });
+        let date = list.date;
+        (list.items, date, false)
+    };
 
-    if list.is_empty() {
-        println!("No todos for today!");
+    if items.is_empty() {
+        if is_archived {
+            println!("No archived todos for {}!", display_date.format("%B %d, %Y"));
+        } else {
+            println!("No todos for today!");
+        }
         return Ok(());
     }
 
-    println!("\n📋 Todo List - {}\n", list.date.format("%B %d, %Y"));
+    let label = if is_archived { "📦 Archived" } else { "📋 Todo List" };
+    println!("\n{} - {}\n", label, display_date.format("%B %d, %Y"));
 
-    for (idx, item) in list.items.iter().enumerate() {
+    for (idx, item) in items.iter().enumerate() {
         let indent = "  ".repeat(item.indent_level);
         println!("{}{}. {} {}", indent, idx + 1, item.state, item.content);
     }
 
     println!();
 
+    Ok(())
+}
+
+fn handle_import_archive() -> Result<()> {
+    use storage::database::{archive_todos_for_date, init_database};
+    use storage::markdown::parse_todo_list;
+    use utils::paths::get_dailies_dir;
+    
+    init_database()?;
+    
+    let dailies_dir = get_dailies_dir()?;
+    if !dailies_dir.exists() {
+        println!("No dailies directory found at {dailies_dir:?}");
+        return Ok(());
+    }
+    
+    let today = Local::now().date_naive();
+    let mut imported = 0;
+    
+    for entry in std::fs::read_dir(&dailies_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        
+        if path.extension().map(|e| e == "md").unwrap_or(false) {
+            let filename = path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            
+            if let Ok(date) = chrono::NaiveDate::parse_from_str(filename, "%Y-%m-%d") {
+                if date >= today {
+                    println!("Skipping {filename} (today or future)");
+                    continue;
+                }
+                
+                let content = std::fs::read_to_string(&path)?;
+                let list = parse_todo_list(&content, date, path.clone())?;
+                
+                if list.items.is_empty() {
+                    println!("Skipping {filename} (empty)");
+                    continue;
+                }
+                
+                storage::database::save_todo_list(&list)?;
+                let count = archive_todos_for_date(date)?;
+                println!("Imported {count} items from {filename}");
+                imported += count;
+            }
+        }
+    }
+    
+    println!("\nTotal: {imported} items imported to archive");
     Ok(())
 }

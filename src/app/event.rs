@@ -424,13 +424,11 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
             state.cursor_position = insert_position;
         }
         state.is_creating_new_item = false;
+    } else if state.cursor_position < state.todo_list.items.len() {
+        state.todo_list.items[state.cursor_position].content = state.edit_buffer.clone();
     } else {
-        if state.cursor_position < state.todo_list.items.len() {
-            state.todo_list.items[state.cursor_position].content = state.edit_buffer.clone();
-        } else {
-            state.todo_list.add_item_with_indent(state.edit_buffer.clone(), 0);
-            state.cursor_position = state.todo_list.items.len() - 1;
-        }
+        state.todo_list.add_item_with_indent(state.edit_buffer.clone(), 0);
+        state.cursor_position = state.todo_list.items.len() - 1;
     }
 
     state.edit_buffer.clear();

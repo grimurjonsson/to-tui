@@ -99,7 +99,7 @@ impl fmt::Display for Action {
             Action::EditIndent => "edit_indent",
             Action::EditOutdent => "edit_outdent",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -140,7 +140,7 @@ impl FromStr for Action {
             "edit_end" => Ok(Action::EditEnd),
             "edit_indent" => Ok(Action::EditIndent),
             "edit_outdent" => Ok(Action::EditOutdent),
-            _ => Err(format!("Unknown action: {}", s)),
+            _ => Err(format!("Unknown action: {s}")),
         }
     }
 }
@@ -198,7 +198,7 @@ impl fmt::Display for KeyBinding {
             KeyCode::Home => "Home".to_string(),
             KeyCode::End => "End".to_string(),
             KeyCode::Delete => "Del".to_string(),
-            KeyCode::F(n) => format!("F{}", n),
+            KeyCode::F(n) => format!("F{n}"),
             _ => format!("{:?}", self.code),
         };
         
@@ -207,7 +207,7 @@ impl fmt::Display for KeyBinding {
         if parts.len() > 1 || key_str.len() > 1 {
             write!(f, "<{}>", parts.join("-"))
         } else {
-            write!(f, "{}", key_str)
+            write!(f, "{key_str}")
         }
     }
 }
@@ -285,7 +285,7 @@ impl FromStr for KeyBinding {
             return Ok(KeyBinding::new(KeyCode::Char(c), KeyModifiers::NONE));
         }
         
-        Err(format!("Invalid key binding: {}", s))
+        Err(format!("Invalid key binding: {s}"))
     }
 }
 
@@ -304,7 +304,7 @@ fn parse_bracket_notation(s: &str) -> Result<KeyBinding, String> {
                 "C" | "CTRL" | "CONTROL" => modifiers |= KeyModifiers::CONTROL,
                 "A" | "ALT" | "M" | "META" => modifiers |= KeyModifiers::ALT,
                 "S" | "SHIFT" => modifiers |= KeyModifiers::SHIFT,
-                _ => return Err(format!("Unknown modifier: {}", part)),
+                _ => return Err(format!("Unknown modifier: {part}")),
             }
         }
     }
@@ -334,14 +334,14 @@ fn parse_key_code(s: &str) -> Result<KeyCode, String> {
         "pageup" | "pgup" => Ok(KeyCode::PageUp),
         "pagedown" | "pgdn" => Ok(KeyCode::PageDown),
         s if s.starts_with('f') && s.len() > 1 => {
-            let n: u8 = s[1..].parse().map_err(|_| format!("Invalid F key: {}", s))?;
+            let n: u8 = s[1..].parse().map_err(|_| format!("Invalid F key: {s}"))?;
             Ok(KeyCode::F(n))
         }
         s if s.len() == 1 => {
             let c = s.chars().next().unwrap();
             Ok(KeyCode::Char(c))
         }
-        _ => Err(format!("Unknown key: {}", s)),
+        _ => Err(format!("Unknown key: {s}")),
     }
 }
 

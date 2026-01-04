@@ -48,23 +48,6 @@ impl Config {
 
         Ok(config)
     }
-
-    #[allow(dead_code)]
-    pub fn save(&self) -> Result<()> {
-        let config_path = get_config_path()?;
-
-        // Ensure parent directory exists
-        if let Some(parent) = config_path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-
-        let content = toml::to_string_pretty(self)?;
-        fs::write(&config_path, content)?;
-
-        Ok(())
-    }
 }
 
 #[cfg(test)]

@@ -1,9 +1,12 @@
-use super::file::{file_exists, load_todo_list};
+use super::database::archive_todos_for_date;
+use super::file::{file_exists, load_todo_list, save_todo_list};
 use crate::todo::TodoList;
 use crate::utils::paths::get_daily_file_path;
 use anyhow::Result;
 use chrono::{Local, NaiveDate};
+use std::collections::HashMap;
 use std::io::{self, Write};
+use uuid::Uuid;
 
 pub fn check_and_prompt_rollover() -> Result<Option<TodoList>> {
     let today = Local::now().date_naive();
@@ -30,10 +33,12 @@ pub fn check_and_prompt_rollover() -> Result<Option<TodoList>> {
         }
     }
 
-    // If we found incomplete items, prompt for rollover
     if let Some((source_date, incomplete)) = most_recent_incomplete {
         if prompt_user_for_rollover(&incomplete, source_date)? {
-            return Ok(Some(create_rolled_over_list(today, incomplete)?));
+            archive_todos_for_date(source_date)?;
+            let list = create_rolled_over_list(today, incomplete)?;
+            save_todo_list(&list)?;
+            return Ok(Some(list));
         }
     }
 
@@ -41,8 +46,23 @@ pub fn check_and_prompt_rollover() -> Result<Option<TodoList>> {
     Ok(Some(TodoList::new(today, get_daily_file_path(today)?)))
 }
 
-pub fn create_rolled_over_list(date: NaiveDate, items: Vec<crate::todo::TodoItem>) -> Result<TodoList> {
+pub fn create_rolled_over_list(date: NaiveDate, mut items: Vec<crate::todo::TodoItem>) -> Result<TodoList> {
     let file_path = get_daily_file_path(date)?;
+    
+    let mut old_to_new_id: HashMap<Uuid, Uuid> = HashMap::new();
+    
+    for item in &mut items {
+        let new_id = Uuid::new_v4();
+        old_to_new_id.insert(item.id, new_id);
+        item.id = new_id;
+    }
+    
+    for item in &mut items {
+        if let Some(old_parent_id) = item.parent_id {
+            item.parent_id = old_to_new_id.get(&old_parent_id).copied();
+        }
+    }
+    
     Ok(TodoList::with_items(date, file_path, items))
 }
 
@@ -57,13 +77,9 @@ fn prompt_user_for_rollover(incomplete: &[crate::todo::TodoItem], source_date: N
     };
 
     println!("\n{} incomplete item(s) found from {}:", incomplete.len(), date_desc);
-    for (idx, item) in incomplete.iter().enumerate().take(5) {
+    for (idx, item) in incomplete.iter().enumerate() {
         let indent = "  ".repeat(item.indent_level);
         println!("  {}{}. {} {}", indent, idx + 1, item.state, item.content);
-    }
-
-    if incomplete.len() > 5 {
-        println!("  ... and {} more", incomplete.len() - 5);
     }
 
     print!("\nRoll over incomplete items to today? (Y/n): ");

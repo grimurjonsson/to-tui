@@ -181,8 +181,7 @@ pub async fn update_todo(
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse::new(format!(
-                        "Invalid state: {}. Use ' ', 'x', '?', or '!'",
-                        state_str
+                        "Invalid state: {state_str}. Use ' ', 'x', '?', or '!'"
                     ))),
                 )
                     .into_response()

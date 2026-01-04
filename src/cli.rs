@@ -16,7 +16,12 @@ pub enum Commands {
     Add {
         task: String,
     },
-    Show,
+    Show {
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+    /// Import old markdown files into the archive
+    ImportArchive,
     /// Manage the API server
     Serve {
         #[command(subcommand)]
