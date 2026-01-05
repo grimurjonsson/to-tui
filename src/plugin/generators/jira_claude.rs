@@ -35,6 +35,21 @@ impl JiraClaudeGenerator {
         Ok(JiraTicket::from(ticket))
     }
 
+    fn fetch_jira_base_url(&self) -> Result<String> {
+        let output = run_command("acli", &["jira", "auth", "status"])?;
+
+        for line in output.lines() {
+            if let Some(site) = line.trim().strip_prefix("Site:") {
+                let domain = site.trim();
+                return Ok(format!("https://{domain}"));
+            }
+        }
+
+        Err(anyhow!(
+            "Could not find Site in acli jira auth status output"
+        ))
+    }
+
     fn generate_todos_with_claude(&self, ticket: &JiraTicket) -> Result<Vec<GeneratedTodo>> {
         let prompt = self.build_prompt(ticket);
 
@@ -157,8 +172,20 @@ impl TodoGenerator for JiraClaudeGenerator {
             ));
         }
 
+        let ticket_url = self
+            .fetch_jira_base_url()
+            .map(|base| format!("{base}/browse/{}", ticket.key))
+            .ok();
+
+        let description = match (&ticket_url, &ticket.description) {
+            (Some(url), Some(desc)) => Some(format!("{url}\n---\n{desc}")),
+            (Some(url), None) => Some(url.clone()),
+            (None, Some(desc)) => Some(desc.clone()),
+            (None, None) => None,
+        };
+
         let mut root = TodoItem::new(format!("{} : {}", ticket.key, ticket.summary), 0);
-        root.description = ticket.description;
+        root.description = description;
 
         let children: Vec<TodoItem> = generated
             .into_iter()

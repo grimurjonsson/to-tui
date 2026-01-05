@@ -452,28 +452,36 @@ fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
     }
 
     let mut lines = Vec::new();
-    let mut current_line = String::new();
-    let mut current_width = 0;
 
-    for word in text.split_whitespace() {
-        let word_width = word.width();
-
-        if current_line.is_empty() {
-            current_line = word.to_string();
-            current_width = word_width;
-        } else if current_width + 1 + word_width <= max_width {
-            current_line.push(' ');
-            current_line.push_str(word);
-            current_width += 1 + word_width;
-        } else {
-            lines.push(current_line);
-            current_line = word.to_string();
-            current_width = word_width;
+    for paragraph in text.split('\n') {
+        if paragraph.is_empty() {
+            lines.push(String::new());
+            continue;
         }
-    }
 
-    if !current_line.is_empty() {
-        lines.push(current_line);
+        let mut current_line = String::new();
+        let mut current_width = 0;
+
+        for word in paragraph.split_whitespace() {
+            let word_width = word.width();
+
+            if current_line.is_empty() {
+                current_line = word.to_string();
+                current_width = word_width;
+            } else if current_width + 1 + word_width <= max_width {
+                current_line.push(' ');
+                current_line.push_str(word);
+                current_width += 1 + word_width;
+            } else {
+                lines.push(current_line);
+                current_line = word.to_string();
+                current_width = word_width;
+            }
+        }
+
+        if !current_line.is_empty() {
+            lines.push(current_line);
+        }
     }
 
     if lines.is_empty() {
