@@ -2,7 +2,9 @@ use super::mode::Mode;
 use super::state::AppState;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::storage::{save_todo_list, soft_delete_todo};
-use crate::utils::unicode::{next_char_boundary, prev_char_boundary};
+use crate::utils::unicode::{
+    next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
+};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
@@ -420,6 +422,14 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
                         next_char_boundary(&state.edit_buffer, state.edit_cursor_pos);
                 }
             }
+            Action::EditWordLeft => {
+                state.edit_cursor_pos =
+                    prev_word_boundary(&state.edit_buffer, state.edit_cursor_pos);
+            }
+            Action::EditWordRight => {
+                state.edit_cursor_pos =
+                    next_word_boundary(&state.edit_buffer, state.edit_cursor_pos);
+            }
             Action::EditHome => {
                 state.edit_cursor_pos = 0;
             }
@@ -435,15 +445,21 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
                     if state.pending_indent_level < max_indent {
                         state.pending_indent_level += 1;
                     }
-                } else if state.todo_list.indent_item(state.cursor_position).is_ok() {
-                    state.unsaved_changes = true;
+                } else {
+                    state.save_undo();
+                    if state.todo_list.indent_item(state.cursor_position).is_ok() {
+                        state.unsaved_changes = true;
+                    }
                 }
             }
             Action::EditOutdent => {
                 if state.is_creating_new_item {
                     state.pending_indent_level = state.pending_indent_level.saturating_sub(1);
-                } else if state.todo_list.outdent_item(state.cursor_position).is_ok() {
-                    state.unsaved_changes = true;
+                } else {
+                    state.save_undo();
+                    if state.todo_list.outdent_item(state.cursor_position).is_ok() {
+                        state.unsaved_changes = true;
+                    }
                 }
             }
             _ => {}
@@ -523,6 +539,8 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
         state.insert_above = false;
         return Ok(());
     }
+
+    state.save_undo();
 
     if state.is_creating_new_item {
         if state.todo_list.items.is_empty() {

@@ -63,6 +63,8 @@ pub enum Action {
     EditBackspace,
     EditLeft,
     EditRight,
+    EditWordLeft,
+    EditWordRight,
     EditHome,
     EditEnd,
     EditIndent,
@@ -104,6 +106,8 @@ impl fmt::Display for Action {
             Action::EditBackspace => "edit_backspace",
             Action::EditLeft => "edit_left",
             Action::EditRight => "edit_right",
+            Action::EditWordLeft => "edit_word_left",
+            Action::EditWordRight => "edit_word_right",
             Action::EditHome => "edit_home",
             Action::EditEnd => "edit_end",
             Action::EditIndent => "edit_indent",
@@ -150,6 +154,8 @@ impl FromStr for Action {
             "edit_backspace" => Ok(Action::EditBackspace),
             "edit_left" => Ok(Action::EditLeft),
             "edit_right" => Ok(Action::EditRight),
+            "edit_word_left" => Ok(Action::EditWordLeft),
+            "edit_word_right" => Ok(Action::EditWordRight),
             "edit_home" => Ok(Action::EditHome),
             "edit_end" => Ok(Action::EditEnd),
             "edit_indent" => Ok(Action::EditIndent),
@@ -336,6 +342,7 @@ fn parse_bracket_notation(s: &str) -> Result<KeyBinding, String> {
                 "C" | "CTRL" | "CONTROL" => modifiers |= KeyModifiers::CONTROL,
                 "A" | "ALT" | "M" | "META" => modifiers |= KeyModifiers::ALT,
                 "S" | "SHIFT" => modifiers |= KeyModifiers::SHIFT,
+                "D" | "SUPER" | "CMD" | "WIN" => modifiers |= KeyModifiers::SUPER,
                 _ => return Err(format!("Unknown modifier: {part}")),
             }
         }
@@ -592,8 +599,14 @@ fn default_edit_bindings() -> HashMap<String, String> {
     m.insert("<BS>".to_string(), "edit_backspace".to_string());
     m.insert("<Left>".to_string(), "edit_left".to_string());
     m.insert("<Right>".to_string(), "edit_right".to_string());
+    m.insert("<A-b>".to_string(), "edit_word_left".to_string());
+    m.insert("<A-f>".to_string(), "edit_word_right".to_string());
+    m.insert("<A-Left>".to_string(), "edit_word_left".to_string());
+    m.insert("<A-Right>".to_string(), "edit_word_right".to_string());
     m.insert("<Home>".to_string(), "edit_home".to_string());
     m.insert("<End>".to_string(), "edit_end".to_string());
+    m.insert("<C-a>".to_string(), "edit_home".to_string());
+    m.insert("<C-e>".to_string(), "edit_end".to_string());
     m.insert("<Tab>".to_string(), "edit_indent".to_string());
     m.insert("<BackTab>".to_string(), "edit_outdent".to_string());
 
