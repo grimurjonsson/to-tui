@@ -1,25 +1,33 @@
 pub mod components;
 pub mod theme;
 
-use crate::app::{AppState, event::handle_key_event};
+use crate::app::{event::handle_key_event, AppState};
 use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyEventKind},
+    event::{
+        self, Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+        PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use ratatui::{Terminal, backend::CrosstermBackend};
+use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
 use std::sync::mpsc;
 use std::time::Duration;
 
-struct TerminalGuard;
+struct TerminalGuard {
+    keyboard_enhancement: bool,
+}
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let mut stdout = io::stdout();
+        if self.keyboard_enhancement {
+            let _ = execute!(stdout, PopKeyboardEnhancementFlags);
+        }
         let _ = disable_raw_mode();
         let _ = execute!(stdout, LeaveAlternateScreen);
         let _ = stdout.flush();
@@ -31,7 +39,15 @@ pub fn run_tui(mut state: AppState) -> Result<()> {
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
-    let _guard = TerminalGuard;
+    let supports_keyboard_enhancement = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    )
+    .is_ok();
+
+    let _guard = TerminalGuard {
+        keyboard_enhancement: supports_keyboard_enhancement,
+    };
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;

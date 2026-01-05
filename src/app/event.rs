@@ -58,6 +58,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             | Action::Delete
             | Action::NewItem
             | Action::NewItemSameLevel
+            | Action::InsertItemAbove
             | Action::EnterEditMode
             | Action::Indent
             | Action::Outdent
@@ -119,6 +120,9 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::NewItemSameLevel => {
             new_item_at_same_level(state);
+        }
+        Action::InsertItemAbove => {
+            insert_item_above(state);
         }
         Action::EnterEditMode => {
             enter_edit_mode(state);
@@ -434,6 +438,7 @@ fn new_item_below(state: &mut AppState) {
     state.edit_cursor_pos = 0;
     state.mode = Mode::Edit;
     state.is_creating_new_item = true;
+    state.insert_above = false;
     state.pending_indent_level = state
         .selected_item()
         .map(|item| item.indent_level)
@@ -445,6 +450,19 @@ fn new_item_at_same_level(state: &mut AppState) {
     state.edit_cursor_pos = 0;
     state.mode = Mode::Edit;
     state.is_creating_new_item = true;
+    state.insert_above = false;
+    state.pending_indent_level = state
+        .selected_item()
+        .map(|item| item.indent_level)
+        .unwrap_or(0);
+}
+
+fn insert_item_above(state: &mut AppState) {
+    state.edit_buffer.clear();
+    state.edit_cursor_pos = 0;
+    state.mode = Mode::Edit;
+    state.is_creating_new_item = true;
+    state.insert_above = true;
     state.pending_indent_level = state
         .selected_item()
         .map(|item| item.indent_level)
@@ -470,6 +488,7 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
         state.edit_buffer.clear();
         state.edit_cursor_pos = 0;
         state.is_creating_new_item = false;
+        state.insert_above = false;
         return Ok(());
     }
 
@@ -480,15 +499,24 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
                 .add_item_with_indent(state.edit_buffer.clone(), state.pending_indent_level);
             state.cursor_position = 0;
         } else {
-            let insert_position = state.cursor_position + 1;
+            let insert_position = if state.insert_above {
+                state.cursor_position
+            } else {
+                state.cursor_position + 1
+            };
             state.todo_list.insert_item(
                 insert_position,
                 state.edit_buffer.clone(),
                 state.pending_indent_level,
             )?;
-            state.cursor_position = insert_position;
+            if state.insert_above {
+                state.cursor_position += 1;
+            } else {
+                state.cursor_position = insert_position;
+            }
         }
         state.is_creating_new_item = false;
+        state.insert_above = false;
     } else if state.cursor_position < state.todo_list.items.len() {
         state.todo_list.items[state.cursor_position].content = state.edit_buffer.clone();
     } else {

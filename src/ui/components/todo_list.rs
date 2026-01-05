@@ -2,11 +2,11 @@ use crate::app::{AppState, Mode};
 use crate::todo::TodoState;
 use crate::utils::unicode::{after_first_char, first_char_as_str};
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem},
+    Frame,
 };
 use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
@@ -25,7 +25,11 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         let has_children = state.todo_list.has_children(idx);
 
         let fold_icon = if has_children {
-            if item.collapsed { "▶ " } else { "▼ " }
+            if item.collapsed {
+                "▶ "
+            } else {
+                "▼ "
+            }
         } else {
             "  "
         };
@@ -88,6 +92,16 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         let is_editing_this_item =
             state.mode == Mode::Edit && !state.is_creating_new_item && idx == state.cursor_position;
 
+        let should_show_new_item_above = state.is_creating_new_item
+            && state.mode == Mode::Edit
+            && idx == state.cursor_position
+            && state.insert_above;
+
+        if should_show_new_item_above {
+            let new_item_lines = build_wrapped_edit_lines(state, available_width);
+            items.push(ListItem::new(new_item_lines));
+        }
+
         if is_editing_this_item {
             let edit_lines =
                 build_wrapped_edit_lines_for_existing(state, available_width, item.indent_level);
@@ -144,7 +158,12 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
             }
         }
 
-        if state.is_creating_new_item && state.mode == Mode::Edit && idx == state.cursor_position {
+        let should_show_new_item_below = state.is_creating_new_item
+            && state.mode == Mode::Edit
+            && idx == state.cursor_position
+            && !state.insert_above;
+
+        if should_show_new_item_below {
             let new_item_lines = build_wrapped_edit_lines(state, available_width);
             items.push(ListItem::new(new_item_lines));
         }
@@ -199,7 +218,11 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         }
     }
 
-    let title_suffix = if state.is_readonly() { " (Archived)" } else { "" };
+    let title_suffix = if state.is_readonly() {
+        " (Archived)"
+    } else {
+        ""
+    };
     let title = format!(
         " Todo List - {}{} ",
         state.viewing_date.format("%B %d, %Y"),

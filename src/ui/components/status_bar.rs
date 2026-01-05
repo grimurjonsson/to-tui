@@ -1,10 +1,10 @@
 use crate::app::AppState;
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
+    Frame,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -45,9 +45,9 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         save_indicator
     );
 
-    let padding = area
-        .width
-        .saturating_sub(left_content.len() as u16 + nav_hint.len() as u16 + version_text.len() as u16 + 3);
+    let padding = area.width.saturating_sub(
+        left_content.len() as u16 + nav_hint.len() as u16 + version_text.len() as u16 + 3,
+    );
 
     let base_style = Style::default()
         .fg(state.theme.status_bar_fg)

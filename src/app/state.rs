@@ -26,6 +26,7 @@ pub struct AppState {
     pub unsaved_changes: bool,
     pub last_save_time: Option<Instant>,
     pub is_creating_new_item: bool,
+    pub insert_above: bool,
     pub pending_indent_level: usize,
     pub undo_stack: Vec<(TodoList, usize)>,
     pub selection_anchor: Option<usize>,
@@ -58,6 +59,7 @@ impl AppState {
             unsaved_changes: false,
             last_save_time: None,
             is_creating_new_item: false,
+            insert_above: false,
             pending_indent_level: 0,
             undo_stack: Vec::new(),
             selection_anchor: None,
@@ -83,6 +85,7 @@ impl AppState {
         self.edit_buffer.clear();
         self.edit_cursor_pos = 0;
         self.is_creating_new_item = false;
+        self.insert_above = false;
         Ok(())
     }
 

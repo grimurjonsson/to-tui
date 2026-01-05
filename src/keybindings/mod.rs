@@ -22,6 +22,7 @@ pub enum Action {
     Delete,
     NewItem,
     NewItemSameLevel,
+    InsertItemAbove,
 
     // Editing
     EnterEditMode,
@@ -80,6 +81,7 @@ impl fmt::Display for Action {
             Action::Delete => "delete",
             Action::NewItem => "new_item",
             Action::NewItemSameLevel => "new_item_same_level",
+            Action::InsertItemAbove => "insert_item_above",
             Action::EnterEditMode => "enter_edit_mode",
             Action::Indent => "indent",
             Action::Outdent => "outdent",
@@ -125,6 +127,7 @@ impl FromStr for Action {
             "delete" => Ok(Action::Delete),
             "new_item" => Ok(Action::NewItem),
             "new_item_same_level" => Ok(Action::NewItemSameLevel),
+            "insert_item_above" => Ok(Action::InsertItemAbove),
             "enter_edit_mode" => Ok(Action::EnterEditMode),
             "indent" => Ok(Action::Indent),
             "outdent" => Ok(Action::Outdent),
@@ -186,12 +189,10 @@ impl KeyBinding {
                     modifiers: event.modifiers - KeyModifiers::SHIFT,
                 }
             }
-            KeyCode::Char(c) if c.is_ascii_uppercase() || c == '<' || c == '>' => {
-                Self {
-                    code: event.code,
-                    modifiers: event.modifiers - KeyModifiers::SHIFT,
-                }
-            }
+            KeyCode::Char(c) if c.is_ascii_uppercase() || c == '<' || c == '>' => Self {
+                code: event.code,
+                modifiers: event.modifiers - KeyModifiers::SHIFT,
+            },
             _ => Self {
                 code: event.code,
                 modifiers: event.modifiers,
@@ -549,7 +550,11 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("<Space>".to_string(), "cycle_state".to_string());
     m.insert("dd".to_string(), "delete".to_string());
     m.insert("n".to_string(), "new_item".to_string());
+    m.insert("o".to_string(), "new_item".to_string());
     m.insert("<Enter>".to_string(), "new_item_same_level".to_string());
+    m.insert("O".to_string(), "insert_item_above".to_string());
+    m.insert("<S-Enter>".to_string(), "insert_item_above".to_string());
+    m.insert("<C-j>".to_string(), "insert_item_above".to_string());
     m.insert("i".to_string(), "enter_edit_mode".to_string());
     m.insert("<Tab>".to_string(), "indent".to_string());
     m.insert("<BackTab>".to_string(), "outdent".to_string());
