@@ -581,7 +581,19 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
             let insert_position = if state.insert_above {
                 state.cursor_position
             } else {
-                state.cursor_position + 1
+                let current_item = &state.todo_list.items[state.cursor_position];
+                let has_hidden_children =
+                    current_item.collapsed && state.todo_list.has_children(state.cursor_position);
+
+                if has_hidden_children {
+                    let (_, after_all_children) = state
+                        .todo_list
+                        .get_item_range(state.cursor_position)
+                        .unwrap_or((state.cursor_position, state.cursor_position + 1));
+                    after_all_children
+                } else {
+                    state.cursor_position + 1
+                }
             };
             state.todo_list.insert_item(
                 insert_position,
