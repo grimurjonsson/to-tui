@@ -1,13 +1,13 @@
 pub mod components;
 pub mod theme;
 
-use crate::app::{event::handle_key_event, AppState};
+use crate::app::{event::handle_key_event, event::handle_mouse_event, AppState};
 use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
-        PushKeyboardEnhancementFlags,
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+        KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
@@ -29,7 +29,7 @@ impl Drop for TerminalGuard {
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         }
         let _ = disable_raw_mode();
-        let _ = execute!(stdout, LeaveAlternateScreen);
+        let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
         let _ = stdout.flush();
     }
 }
@@ -37,7 +37,7 @@ impl Drop for TerminalGuard {
 pub fn run_tui(mut state: AppState) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     let supports_keyboard_enhancement = execute!(
         stdout,
@@ -104,10 +104,14 @@ fn run_app(
         })?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     handle_key_event(key, state)?;
                 }
+                Event::Mouse(mouse) => {
+                    handle_mouse_event(mouse, state)?;
+                }
+                _ => {}
             }
         }
 

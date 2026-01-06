@@ -7,7 +7,7 @@ use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use std::sync::mpsc;
 use std::thread;
 
@@ -20,6 +20,157 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
         Mode::Plugin => handle_plugin_mode(key, state)?,
     }
     Ok(())
+}
+
+pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
+    if state.mode != Mode::Navigate || state.is_readonly() {
+        return Ok(());
+    }
+
+    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+        let clicked_row = mouse.row as usize;
+        let clicked_col = mouse.column as usize;
+
+        if let Some((item_idx, click_zone)) = map_click_to_item(state, clicked_row, clicked_col) {
+            match click_zone {
+                ClickZone::FoldIcon => {
+                    let has_children = state.todo_list.has_children(item_idx);
+                    let has_description = state
+                        .todo_list
+                        .items
+                        .get(item_idx)
+                        .map(|i| i.description.is_some())
+                        .unwrap_or(false);
+
+                    if has_children || has_description {
+                        state.save_undo();
+                        if let Some(item) = state.todo_list.items.get_mut(item_idx) {
+                            item.collapsed = !item.collapsed;
+                            state.unsaved_changes = true;
+                        }
+                    }
+                    state.cursor_position = item_idx;
+                }
+                ClickZone::Checkbox => {
+                    state.save_undo();
+                    if let Some(item) = state.todo_list.items.get_mut(item_idx) {
+                        item.toggle_state();
+                        state.unsaved_changes = true;
+                    }
+                    state.cursor_position = item_idx;
+                }
+                ClickZone::Content => {
+                    state.cursor_position = item_idx;
+                }
+            }
+        }
+    }
+
+    if state.unsaved_changes {
+        save_todo_list(&state.todo_list)?;
+        state.unsaved_changes = false;
+        state.last_save_time = Some(std::time::Instant::now());
+    }
+
+    Ok(())
+}
+
+enum ClickZone {
+    FoldIcon,
+    Checkbox,
+    Content,
+}
+
+fn map_click_to_item(
+    state: &AppState,
+    clicked_row: usize,
+    clicked_col: usize,
+) -> Option<(usize, ClickZone)> {
+    let list_start_row = 1;
+
+    if clicked_row < list_start_row {
+        return None;
+    }
+
+    let visual_row = clicked_row - list_start_row;
+    let mut current_visual_row = 0;
+
+    let hidden_indices = build_hidden_indices(state);
+
+    for (idx, item) in state.todo_list.items.iter().enumerate() {
+        if hidden_indices.contains(&idx) {
+            continue;
+        }
+
+        let item_height = calculate_item_visual_height(state, idx, item);
+
+        if visual_row >= current_visual_row && visual_row < current_visual_row + item_height {
+            let indent_width = item.indent_level * 2;
+            let fold_icon_end = indent_width + 2;
+            let checkbox_end = fold_icon_end + 4;
+
+            let zone = if clicked_col < fold_icon_end {
+                ClickZone::FoldIcon
+            } else if clicked_col < checkbox_end {
+                ClickZone::Checkbox
+            } else {
+                ClickZone::Content
+            };
+
+            return Some((idx, zone));
+        }
+
+        current_visual_row += item_height;
+    }
+
+    None
+}
+
+fn build_hidden_indices(state: &AppState) -> std::collections::HashSet<usize> {
+    let mut hidden = std::collections::HashSet::new();
+    let items = &state.todo_list.items;
+
+    let mut i = 0;
+    while i < items.len() {
+        if items[i].collapsed {
+            let base_indent = items[i].indent_level;
+            let mut j = i + 1;
+            while j < items.len() && items[j].indent_level > base_indent {
+                hidden.insert(j);
+                j += 1;
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+
+    hidden
+}
+
+fn calculate_item_visual_height(
+    state: &AppState,
+    idx: usize,
+    item: &crate::todo::TodoItem,
+) -> usize {
+    let mut height = 1;
+
+    let has_description = item.description.is_some();
+    let is_collapsed = item.collapsed;
+
+    if has_description && !is_collapsed {
+        if let Some(ref desc) = item.description {
+            let line_count = desc.lines().count().max(1);
+            height += line_count + 2;
+        }
+    }
+
+    let has_children = state.todo_list.has_children(idx);
+    if is_collapsed && has_children {
+        return 1;
+    }
+
+    height
 }
 
 fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
