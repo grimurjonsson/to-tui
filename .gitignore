@@ -1,1 +1,5 @@
 /target
+
+# Local planning docs
+DB_DESIGN.md
+IMPLEMENTATION_PLAN.md
