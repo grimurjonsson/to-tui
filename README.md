@@ -29,23 +29,18 @@ A terminal-based todo list manager with daily rolling lists, hierarchical tasks,
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/todo-cli.git
+git clone https://github.com/grimurjonsson/todo-cli.git
 cd todo-cli
 
 # Build and install
-cargo build --release
-
-# Option 1: Copy binary to your PATH
-cp target/release/todo ~/.local/bin/
-
-# Option 2: Use the justfile (creates symlink to /usr/local/bin)
 just install
+
 ```
 
 ### Using Cargo
 
 ```bash
-cargo install --git https://github.com/yourusername/todo-cli.git
+cargo install --git https://github.com/grimurjonsson/todo-cli.git
 ```
 
 ## Usage
@@ -118,12 +113,17 @@ API endpoints:
 
 The MCP server allows AI assistants like Claude to manage your todos:
 
+For ClaudeCode
+```bash
+just install-mcp-claude
+```
+
+
+or manually: 
 ```bash
 # Run the MCP server
 cargo run --release --bin todo-mcp
 
-# Or use the justfile
-just start-mcp-server
 ```
 
 Configure in your LLM tool (e.g., Claude Desktop, OpenCode):
