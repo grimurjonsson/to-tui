@@ -1,0 +1,7 @@
+{
+  "name": "todo-mcp",
+  "description": "MCP server for todo-cli - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
+  "author": {
+    "name": "todo-cli"
+  }
+}

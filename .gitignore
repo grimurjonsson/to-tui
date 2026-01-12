@@ -1,4 +1,5 @@
 /target
+.claude/
 
 # Local planning docs
 DB_DESIGN.md

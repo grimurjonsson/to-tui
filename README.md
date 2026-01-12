@@ -13,7 +13,7 @@ A terminal-based todo list manager with daily rolling lists, hierarchical tasks,
 - **Terminal UI (TUI)** - Beautiful interface with vim-style keybindings
 - **Daily Rolling Lists** - Automatic rollover of incomplete tasks to the next day
 - **Hierarchical Todos** - Nest tasks under parent items with Tab/Shift+Tab
-- **Multiple States** - `[ ]` pending, `[x]` done, `[?]` question, `[!]` important
+- **Multiple States** - `[ ]` pending, `[*]` in progress (animated spinner), `[x]` done, `[?]` question, `[!]` important
 - **REST API** - HTTP server for external integrations
 - **MCP Server** - Model Context Protocol support for LLM tools (Claude, etc.)
 - **SQLite Archive** - Historical todos stored in a searchable database
@@ -61,7 +61,7 @@ todo
 | `n` | New todo |
 | `i` | Edit todo |
 | `x` | Toggle done |
-| `Space` | Cycle state (empty → done → question → important) |
+| `Space` | Cycle state (empty → in progress → done → question → important) |
 | `Tab` | Indent (make child) |
 | `Shift+Tab` | Outdent (make parent) |
 | `dd` | Delete |
@@ -111,22 +111,60 @@ API endpoints:
 
 ### MCP Server (for LLMs)
 
-The MCP server allows AI assistants like Claude to manage your todos:
+The MCP server allows AI assistants like Claude to manage your todos.
 
-For ClaudeCode
+#### Installation as Claude Code Plugin
+
+**Recommended for Claude Code users:**
+
+1. Open Claude Code
+2. Type `/plugin` to open the plugin manager
+3. Go to the "Discover" or "Marketplaces" tab
+4. Click "Add from URL" or enter a GitHub URL
+5. Enter: `https://github.com/grimurjonsson/todo-cli.git`
+6. After installation, build the MCP server (one-time setup):
+   ```bash
+   cd ~/.claude/plugins/cache/<marketplace-id>/todo-mcp/<version>
+   cargo build --release --bin todo-mcp
+   ```
+7. Restart Claude Code
+
+The MCP server will now be available in **all** Claude Code instances.
+
+**One-time Build Requirement:**
+
+After installation, you need to build the MCP server binary once because:
+- The plugin is installed from source (Git repository)
+- The Rust binary needs to be compiled for your system
+- Future updates can reuse the built binary
+
+**Updating the Plugin:**
+
+When updates are available:
+1. Update through the plugin UI
+2. Rebuild the binary: `cd ~/.claude/plugins/cache/.../todo-mcp/... && cargo build --release --bin todo-mcp`
+3. Restart Claude Code
+
+#### Local Development Setup
+
+For developing the plugin locally:
+
 ```bash
-just install-mcp-claude
+just setup-mcp-claude-dev
 ```
 
+This creates a symlink from `~/.claude/plugins/repos/todo-mcp` to your project directory, allowing you to test changes without reinstalling.
 
-or manually: 
+#### Manual MCP Server Setup
+
+For other LLM tools (e.g., Claude Desktop, OpenCode):
+
 ```bash
 # Run the MCP server
 cargo run --release --bin todo-mcp
-
 ```
 
-Configure in your LLM tool (e.g., Claude Desktop, OpenCode):
+Configure in your LLM tool:
 
 ```json
 {

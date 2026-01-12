@@ -1,0 +1,6 @@
+{
+  "todo-mcp": {
+    "command": "{{PLUGIN_DIR}}/target/release/todo-mcp",
+    "args": []
+  }
+}

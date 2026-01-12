@@ -97,45 +97,45 @@ inspect-mcp:
 tui:
     cargo run --release
 
-# Configure todo-mcp for Claude CLI
-setup-mcp-claude:
+# Setup MCP for local Claude Code development
+setup-mcp-claude-dev:
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # Check if claude CLI is available
-    if ! command -v claude &> /dev/null; then
-        echo "❌ claude CLI not found"
-        echo ""
-        echo "Install Claude CLI from: https://docs.anthropic.com/claude/docs/claude-cli"
-        exit 1
-    fi
-    echo "✓ claude CLI found"
-
-    # Build release binary
+    echo "Setting up todo-mcp for local Claude Code development..."
     echo ""
+
+    # Build the binary
     echo "Building MCP server binary..."
     cargo build --release --bin todo-mcp
 
-    BINARY_PATH="$(pwd)/target/release/todo-mcp"
-
-    if [ ! -f "$BINARY_PATH" ]; then
-        echo "❌ Build failed: $BINARY_PATH not found"
+    if [ ! -f "target/release/todo-mcp" ]; then
+        echo "❌ Build failed"
         exit 1
     fi
 
     echo "✓ Binary built successfully"
     echo ""
-    echo "Adding todo-mcp to Claude CLI..."
 
-    if claude mcp add todo-mcp "$BINARY_PATH" 2>&1 | grep -q "already exists"; then
-        echo "✓ todo-mcp already configured, updating..."
-        claude mcp remove todo-mcp || true
-        claude mcp add todo-mcp "$BINARY_PATH"
+    # Create symlink in .claude/plugins/repos for local development
+    PLUGIN_DIR="$HOME/.claude/plugins/repos/todo-mcp"
+    PROJECT_DIR="$(pwd)"
+
+    if [ -L "$PLUGIN_DIR" ]; then
+        echo "✓ Symlink already exists: $PLUGIN_DIR -> $(readlink $PLUGIN_DIR)"
+    else
+        mkdir -p "$HOME/.claude/plugins/repos"
+        ln -s "$PROJECT_DIR" "$PLUGIN_DIR"
+        echo "✓ Created symlink: $PLUGIN_DIR -> $PROJECT_DIR"
     fi
 
     echo ""
-    echo "✓ todo-mcp configured for Claude CLI"
-    echo "  Binary: $BINARY_PATH"
+    echo "✓ Local development setup complete"
+    echo ""
+    echo "Restart Claude Code to load the plugin."
+    echo ""
+    echo "For production use, install via GitHub URL in Claude Code:"
+    echo "  /plugin -> Add from URL -> https://github.com/grimurjonsson/todo-cli.git"
 
 # Add todo-mcp to OpenCode config
 configure-mcp-opencode:
