@@ -1,7 +1,7 @@
 # to-tui
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.85+-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/Rust-1.92+-orange.svg)](https://www.rust-lang.org/)
 
 A terminal-based todo list manager with daily rolling lists, hierarchical tasks, and LLM integration.
 
@@ -36,7 +36,7 @@ The installer will prompt you to choose what to install:
 
 ### From Source
 
-Requires [Rust](https://rustup.rs/) 1.85 or later:
+Requires [Rust](https://rustup.rs/) 1.92 or later:
 
 ```bash
 git clone https://github.com/grimurjonsson/to-tui.git

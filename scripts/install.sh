@@ -93,8 +93,15 @@ echo -e "  ${CYAN}1)${RESET} totui only ${DIM}(TUI app)${RESET}"
 echo -e "  ${CYAN}2)${RESET} totui-mcp only ${DIM}(MCP server for Claude/LLMs)${RESET}"
 echo -e "  ${CYAN}3)${RESET} Both totui and totui-mcp"
 echo ""
-read -p "Choose [1/2/3] (default: 3): " -n 1 -r CHOICE
-echo ""
+
+# Read from /dev/tty to handle curl pipe correctly
+if [ -t 0 ]; then
+    read -p "Choose [1/2/3] (default: 3): " -n 1 -r CHOICE
+    echo ""
+else
+    read -p "Choose [1/2/3] (default: 3): " -n 1 -r CHOICE </dev/tty
+    echo ""
+fi
 
 case "$CHOICE" in
     1) BINARIES=("totui") ;;
@@ -148,7 +155,11 @@ if [ ${#EXISTING_BINARIES[@]} -gt 0 ]; then
     echo -e "  ${CYAN}3)${RESET} Keep both ${DIM}(install to $INSTALL_DIR anyway)${RESET}"
     echo -e "  ${CYAN}4)${RESET} Cancel installation"
     echo ""
-    read -p "Choose [1/2/3/4] (default: 1): " -n 1 -r EXISTING_CHOICE
+    if [ -t 0 ]; then
+        read -p "Choose [1/2/3/4] (default: 1): " -n 1 -r EXISTING_CHOICE
+    else
+        read -p "Choose [1/2/3/4] (default: 1): " -n 1 -r EXISTING_CHOICE </dev/tty
+    fi
     echo ""
     echo ""
 
