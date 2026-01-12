@@ -95,6 +95,26 @@ impl TodoList {
         Ok(self.items.remove(index))
     }
 
+    /// Returns the set of indices that should be hidden due to collapsed parents
+    pub fn build_hidden_indices(&self) -> HashSet<usize> {
+        let mut hidden = HashSet::new();
+        let mut i = 0;
+        while i < self.items.len() {
+            if self.items[i].collapsed {
+                let base_indent = self.items[i].indent_level;
+                let mut j = i + 1;
+                while j < self.items.len() && self.items[j].indent_level > base_indent {
+                    hidden.insert(j);
+                    j += 1;
+                }
+                i = j;
+            } else {
+                i += 1;
+            }
+        }
+        hidden
+    }
+
     pub fn remove_item_range(&mut self, start: usize, end: usize) -> Result<Vec<TodoItem>> {
         if start >= self.items.len() || end > self.items.len() || start >= end {
             return Err(anyhow!("Invalid range"));

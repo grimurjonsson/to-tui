@@ -31,6 +31,24 @@ install:
     echo "✓ rustc found: $(rustc --version)"
 
     echo ""
+
+    # Get current version and create dev version with timestamp
+    ORIGINAL_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    DEV_TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+    DEV_VERSION="${ORIGINAL_VERSION}-dev-${DEV_TIMESTAMP}"
+
+    echo "Building dev version: v${DEV_VERSION}"
+    echo ""
+
+    # Temporarily modify Cargo.toml with dev version
+    sed -i '' "s/^version = \".*\"/version = \"$DEV_VERSION\"/" Cargo.toml
+
+    # Ensure we restore the original version even if build fails
+    cleanup() {
+        sed -i '' "s/^version = \".*\"/version = \"$ORIGINAL_VERSION\"/" Cargo.toml
+    }
+    trap cleanup EXIT
+
     echo "Building release binaries..."
     cargo build --release
 

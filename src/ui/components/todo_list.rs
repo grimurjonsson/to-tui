@@ -8,12 +8,11 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
     Frame,
 };
-use std::collections::HashSet;
 use unicode_width::UnicodeWidthStr;
 
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
-    let hidden_indices = build_hidden_indices(state);
+    let hidden_indices = state.todo_list.build_hidden_indices();
     let available_width = area.width.saturating_sub(2) as usize;
 
     for (idx, item) in state.todo_list.items.iter().enumerate() {
@@ -447,28 +446,6 @@ fn find_cursor_line(text: &str, cursor_pos: usize, max_width: usize) -> usize {
     }
 
     current_line
-}
-
-fn build_hidden_indices(state: &AppState) -> HashSet<usize> {
-    let mut hidden = HashSet::new();
-    let items = &state.todo_list.items;
-
-    let mut i = 0;
-    while i < items.len() {
-        if items[i].collapsed {
-            let base_indent = items[i].indent_level;
-            let mut j = i + 1;
-            while j < items.len() && items[j].indent_level > base_indent {
-                hidden.insert(j);
-                j += 1;
-            }
-            i = j;
-        } else {
-            i += 1;
-        }
-    }
-
-    hidden
 }
 
 fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {

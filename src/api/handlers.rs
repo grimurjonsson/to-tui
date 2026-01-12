@@ -11,8 +11,8 @@ use crate::storage::file::{load_todo_list, save_todo_list};
 use crate::todo::TodoItem;
 
 use super::models::{
-    CreateTodoRequest, DateQuery, ErrorResponse, TodoListResponse, TodoResponse, UpdateTodoRequest,
-    parse_state,
+    CreateTodoRequest, DateQuery, ErrorResponse, TodoListResponse, TodoResponse,
+    UpdateTodoRequest, parse_state,
 };
 
 pub async fn list_todos(Query(query): Query<DateQuery>) -> impl IntoResponse {
@@ -26,11 +26,7 @@ pub async fn list_todos(Query(query): Query<DateQuery>) -> impl IntoResponse {
             };
             (StatusCode::OK, Json(response)).into_response()
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-            .into_response(),
+        Err(e) => ErrorResponse::internal(e),
     }
 }
 
@@ -42,13 +38,7 @@ pub async fn create_todo(
 
     let mut list = match load_todo_list(date) {
         Ok(l) => l,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response();
-        }
+        Err(e) => return ErrorResponse::internal(e),
     };
 
     let (indent_level, insert_index) = if let Some(parent_id) = req.parent_id {
@@ -63,13 +53,7 @@ pub async fn create_todo(
                 }
                 (parent_indent + 1, insert_at)
             }
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse::new("Parent not found")),
-                )
-                    .into_response();
-            }
+            None => return ErrorResponse::bad_request("Parent not found"),
         }
     } else {
         (0, list.items.len())
@@ -84,11 +68,7 @@ pub async fn create_todo(
     list.items.insert(insert_index, item);
 
     if let Err(e) = save_todo_list(&list) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-            .into_response();
+        return ErrorResponse::internal(e);
     }
 
     (StatusCode::CREATED, Json(response)).into_response()
@@ -102,43 +82,23 @@ pub async fn delete_todo(
 
     let mut list = match load_todo_list(date) {
         Ok(l) => l,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response();
-        }
+        Err(e) => return ErrorResponse::internal(e),
     };
 
     let Some(idx) = list.items.iter().position(|item| item.id == id) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Todo not found")),
-        )
-            .into_response();
+        return ErrorResponse::not_found("Todo not found");
     };
 
     let (start, end) = match list.get_item_range(idx) {
         Ok(range) => range,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response();
-        }
+        Err(e) => return ErrorResponse::internal(e),
     };
 
     list.items.drain(start..end);
     list.recalculate_parent_ids();
 
     if let Err(e) = save_todo_list(&list) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-            .into_response();
+        return ErrorResponse::internal(e);
     }
 
     StatusCode::NO_CONTENT.into_response()
@@ -153,21 +113,11 @@ pub async fn update_todo(
 
     let mut list = match load_todo_list(date) {
         Ok(l) => l,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse::new(e.to_string())),
-            )
-                .into_response();
-        }
+        Err(e) => return ErrorResponse::internal(e),
     };
 
     let Some(item) = list.items.iter_mut().find(|item| item.id == id) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(ErrorResponse::new("Todo not found")),
-        )
-            .into_response();
+        return ErrorResponse::not_found("Todo not found");
     };
 
     if let Some(content) = req.content {
@@ -178,13 +128,9 @@ pub async fn update_todo(
         match parse_state(&state_str) {
             Some(state) => item.state = state,
             None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(ErrorResponse::new(format!(
-                        "Invalid state: {state_str}. Use ' ', 'x', '?', or '!'"
-                    ))),
-                )
-                    .into_response();
+                return ErrorResponse::bad_request(format!(
+                    "Invalid state: {state_str}. Use ' ', 'x', '?', or '!'"
+                ));
             }
         }
     }
@@ -204,11 +150,7 @@ pub async fn update_todo(
     let response = TodoResponse::from(&*item);
 
     if let Err(e) = save_todo_list(&list) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ErrorResponse::new(e.to_string())),
-        )
-            .into_response();
+        return ErrorResponse::internal(e);
     }
 
     (StatusCode::OK, Json(response)).into_response()

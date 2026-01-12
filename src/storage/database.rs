@@ -11,6 +11,83 @@ fn get_db_path() -> Result<PathBuf> {
     Ok(dir.join("todos.db"))
 }
 
+/// Raw data extracted from a database row before conversion to TodoItem
+struct TodoRowData {
+    id_str: String,
+    content: String,
+    state_str: String,
+    indent_level: usize,
+    parent_id_str: Option<String>,
+    due_date_str: Option<String>,
+    description: Option<String>,
+    collapsed: i32,
+    created_at_str: Option<String>,
+    updated_at_str: Option<String>,
+    completed_at_str: Option<String>,
+    deleted_at_str: Option<String>,
+}
+
+impl TodoRowData {
+    fn from_row(row: &rusqlite::Row) -> rusqlite::Result<Self> {
+        let indent_level: i64 = row.get(3)?;
+        Ok(Self {
+            id_str: row.get(0)?,
+            content: row.get(1)?,
+            state_str: row.get(2)?,
+            indent_level: indent_level as usize,
+            parent_id_str: row.get(4)?,
+            due_date_str: row.get(5)?,
+            description: row.get(6)?,
+            collapsed: row.get(7).unwrap_or(0),
+            created_at_str: row.get(8).ok(),
+            updated_at_str: row.get(9).ok(),
+            completed_at_str: row.get(10).ok().flatten(),
+            deleted_at_str: row.get(11).ok().flatten(),
+        })
+    }
+
+    fn into_todo_item(self) -> TodoItem {
+        let id = Uuid::parse_str(&self.id_str).unwrap_or_else(|_| Uuid::new_v4());
+        let state = TodoState::from_char(self.state_str.chars().next().unwrap_or(' '))
+            .unwrap_or(TodoState::Empty);
+        let parent_id = self.parent_id_str.and_then(|s| Uuid::parse_str(&s).ok());
+        let due_date = self
+            .due_date_str
+            .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
+
+        let mut todo = TodoItem::new(self.content, self.indent_level);
+        todo.id = id;
+        todo.state = state;
+        todo.parent_id = parent_id;
+        todo.due_date = due_date;
+        todo.description = self.description;
+        todo.collapsed = self.collapsed != 0;
+
+        if let Some(s) = self.created_at_str {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+                todo.created_at = dt.with_timezone(&chrono::Utc);
+            }
+        }
+        if let Some(s) = self.updated_at_str {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+                todo.modified_at = dt.with_timezone(&chrono::Utc);
+            }
+        }
+        if let Some(s) = self.completed_at_str {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+                todo.completed_at = Some(dt.with_timezone(&chrono::Utc));
+            }
+        }
+        if let Some(s) = self.deleted_at_str {
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
+                todo.deleted_at = Some(dt.with_timezone(&chrono::Utc));
+            }
+        }
+
+        todo
+    }
+}
+
 pub fn get_connection() -> Result<Connection> {
     let db_path = get_db_path()?;
     let conn = Connection::open(&db_path)
@@ -106,96 +183,17 @@ pub fn load_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
-        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed, created_at, updated_at, completed_at, deleted_at 
-         FROM todos 
+        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed, created_at, updated_at, completed_at, deleted_at
+         FROM todos
          WHERE date = ?1 AND deleted_at IS NULL
          ORDER BY position ASC",
     )?;
 
-    let items = stmt.query_map([&date_str], |row| {
-        let id_str: String = row.get(0)?;
-        let content: String = row.get(1)?;
-        let state_str: String = row.get(2)?;
-        let indent_level: i64 = row.get(3)?;
-        let indent_level = indent_level as usize;
-        let parent_id_str: Option<String> = row.get(4)?;
-        let due_date_str: Option<String> = row.get(5)?;
-        let description: Option<String> = row.get(6)?;
-        let collapsed: i32 = row.get(7).unwrap_or(0);
-        let created_at_str: Option<String> = row.get(8).ok();
-        let updated_at_str: Option<String> = row.get(9).ok();
-        let completed_at_str: Option<String> = row.get(10).ok().flatten();
-        let deleted_at_str: Option<String> = row.get(11).ok().flatten();
-
-        Ok((
-            id_str,
-            content,
-            state_str,
-            indent_level,
-            parent_id_str,
-            due_date_str,
-            description,
-            collapsed,
-            created_at_str,
-            updated_at_str,
-            completed_at_str,
-            deleted_at_str,
-        ))
-    })?;
+    let items = stmt.query_map([&date_str], TodoRowData::from_row)?;
 
     let mut result = Vec::new();
     for item in items {
-        let (
-            id_str,
-            content,
-            state_str,
-            indent_level,
-            parent_id_str,
-            due_date_str,
-            description,
-            collapsed,
-            created_at_str,
-            updated_at_str,
-            completed_at_str,
-            deleted_at_str,
-        ) = item?;
-
-        let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
-        let state = TodoState::from_char(state_str.chars().next().unwrap_or(' '))
-            .unwrap_or(TodoState::Empty);
-        let parent_id = parent_id_str.and_then(|s| Uuid::parse_str(&s).ok());
-        let due_date = due_date_str.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
-
-        let mut todo = TodoItem::new(content, indent_level);
-        todo.id = id;
-        todo.state = state;
-        todo.parent_id = parent_id;
-        todo.due_date = due_date;
-        todo.description = description;
-        todo.collapsed = collapsed != 0;
-
-        if let Some(s) = created_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.created_at = dt.with_timezone(&chrono::Utc);
-            }
-        }
-        if let Some(s) = updated_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.modified_at = dt.with_timezone(&chrono::Utc);
-            }
-        }
-        if let Some(s) = completed_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.completed_at = Some(dt.with_timezone(&chrono::Utc));
-            }
-        }
-        if let Some(s) = deleted_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.deleted_at = Some(dt.with_timezone(&chrono::Utc));
-            }
-        }
-
-        result.push(todo);
+        result.push(item?.into_todo_item());
     }
 
     Ok(result)
@@ -302,96 +300,17 @@ pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
-        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed, created_at, updated_at, completed_at, deleted_at 
-         FROM archived_todos 
+        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed, created_at, updated_at, completed_at, deleted_at
+         FROM archived_todos
          WHERE original_date = ?1 AND deleted_at IS NULL
          ORDER BY position ASC",
     )?;
 
-    let items = stmt.query_map([&date_str], |row| {
-        let id_str: String = row.get(0)?;
-        let content: String = row.get(1)?;
-        let state_str: String = row.get(2)?;
-        let indent_level: i64 = row.get(3)?;
-        let indent_level = indent_level as usize;
-        let parent_id_str: Option<String> = row.get(4)?;
-        let due_date_str: Option<String> = row.get(5)?;
-        let description: Option<String> = row.get(6)?;
-        let collapsed: i32 = row.get(7).unwrap_or(0);
-        let created_at_str: Option<String> = row.get(8).ok();
-        let updated_at_str: Option<String> = row.get(9).ok();
-        let completed_at_str: Option<String> = row.get(10).ok().flatten();
-        let deleted_at_str: Option<String> = row.get(11).ok().flatten();
-
-        Ok((
-            id_str,
-            content,
-            state_str,
-            indent_level,
-            parent_id_str,
-            due_date_str,
-            description,
-            collapsed,
-            created_at_str,
-            updated_at_str,
-            completed_at_str,
-            deleted_at_str,
-        ))
-    })?;
+    let items = stmt.query_map([&date_str], TodoRowData::from_row)?;
 
     let mut result = Vec::new();
     for item in items {
-        let (
-            id_str,
-            content,
-            state_str,
-            indent_level,
-            parent_id_str,
-            due_date_str,
-            description,
-            collapsed,
-            created_at_str,
-            updated_at_str,
-            completed_at_str,
-            deleted_at_str,
-        ) = item?;
-
-        let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
-        let state = TodoState::from_char(state_str.chars().next().unwrap_or(' '))
-            .unwrap_or(TodoState::Empty);
-        let parent_id = parent_id_str.and_then(|s| Uuid::parse_str(&s).ok());
-        let due_date = due_date_str.and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
-
-        let mut todo = TodoItem::new(content, indent_level);
-        todo.id = id;
-        todo.state = state;
-        todo.parent_id = parent_id;
-        todo.due_date = due_date;
-        todo.description = description;
-        todo.collapsed = collapsed != 0;
-
-        if let Some(s) = created_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.created_at = dt.with_timezone(&chrono::Utc);
-            }
-        }
-        if let Some(s) = updated_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.modified_at = dt.with_timezone(&chrono::Utc);
-            }
-        }
-        if let Some(s) = completed_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.completed_at = Some(dt.with_timezone(&chrono::Utc));
-            }
-        }
-        if let Some(s) = deleted_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.deleted_at = Some(dt.with_timezone(&chrono::Utc));
-            }
-        }
-
-        result.push(todo);
+        result.push(item?.into_todo_item());
     }
 
     Ok(result)

@@ -1,3 +1,4 @@
+use axum::{Json, body::Body, http::StatusCode, response::{IntoResponse, Response}};
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -66,6 +67,18 @@ impl ErrorResponse {
         Self {
             error: message.into(),
         }
+    }
+
+    pub fn internal(e: impl std::fmt::Display) -> Response<Body> {
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(Self::new(e.to_string()))).into_response()
+    }
+
+    pub fn not_found(message: impl Into<String>) -> Response<Body> {
+        (StatusCode::NOT_FOUND, Json(Self::new(message))).into_response()
+    }
+
+    pub fn bad_request(message: impl Into<String>) -> Response<Body> {
+        (StatusCode::BAD_REQUEST, Json(Self::new(message))).into_response()
     }
 }
 

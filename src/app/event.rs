@@ -95,7 +95,7 @@ fn map_click_to_item(
     let visual_row = clicked_row - list_start_row;
     let mut current_visual_row = 0;
 
-    let hidden_indices = build_hidden_indices(state);
+    let hidden_indices = state.todo_list.build_hidden_indices();
 
     for (idx, item) in state.todo_list.items.iter().enumerate() {
         if hidden_indices.contains(&idx) {
@@ -124,28 +124,6 @@ fn map_click_to_item(
     }
 
     None
-}
-
-fn build_hidden_indices(state: &AppState) -> std::collections::HashSet<usize> {
-    let mut hidden = std::collections::HashSet::new();
-    let items = &state.todo_list.items;
-
-    let mut i = 0;
-    while i < items.len() {
-        if items[i].collapsed {
-            let base_indent = items[i].indent_level;
-            let mut j = i + 1;
-            while j < items.len() && items[j].indent_level > base_indent {
-                hidden.insert(j);
-                j += 1;
-            }
-            i = j;
-        } else {
-            i += 1;
-        }
-    }
-
-    hidden
 }
 
 fn calculate_item_visual_height(
@@ -666,15 +644,7 @@ fn new_item_below(state: &mut AppState) {
 }
 
 fn new_item_at_same_level(state: &mut AppState) {
-    state.edit_buffer.clear();
-    state.edit_cursor_pos = 0;
-    state.mode = Mode::Edit;
-    state.is_creating_new_item = true;
-    state.insert_above = false;
-    state.pending_indent_level = state
-        .selected_item()
-        .map(|item| item.indent_level)
-        .unwrap_or(0);
+    new_item_below(state);
 }
 
 fn insert_item_above(state: &mut AppState) {
@@ -872,17 +842,9 @@ fn handle_plugin_input(
                 plugins,
                 selected_index: 0,
             });
+            return Ok(());
         }
-        KeyCode::Enter => {
-            if input_buffer.trim().is_empty() {
-                state.plugin_state = Some(PluginSubState::InputPrompt {
-                    plugin_name,
-                    input_buffer,
-                    cursor_pos,
-                });
-                return Ok(());
-            }
-
+        KeyCode::Enter if !input_buffer.trim().is_empty() => {
             state.plugin_state = Some(PluginSubState::Executing {
                 plugin_name: plugin_name.clone(),
             });
@@ -903,72 +865,34 @@ fn handle_plugin_input(
                 };
                 let _ = tx.send(result);
             });
+            return Ok(());
         }
-        KeyCode::Backspace => {
-            if cursor_pos > 0 {
-                let prev = prev_char_boundary(&input_buffer, cursor_pos);
-                input_buffer.drain(prev..cursor_pos);
-                cursor_pos = prev;
-            }
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
+        KeyCode::Backspace if cursor_pos > 0 => {
+            let prev = prev_char_boundary(&input_buffer, cursor_pos);
+            input_buffer.drain(prev..cursor_pos);
+            cursor_pos = prev;
         }
-        KeyCode::Left => {
-            if cursor_pos > 0 {
-                cursor_pos = prev_char_boundary(&input_buffer, cursor_pos);
-            }
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
+        KeyCode::Left if cursor_pos > 0 => {
+            cursor_pos = prev_char_boundary(&input_buffer, cursor_pos);
         }
-        KeyCode::Right => {
-            if cursor_pos < input_buffer.len() {
-                cursor_pos = next_char_boundary(&input_buffer, cursor_pos);
-            }
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
+        KeyCode::Right if cursor_pos < input_buffer.len() => {
+            cursor_pos = next_char_boundary(&input_buffer, cursor_pos);
         }
-        KeyCode::Home => {
-            cursor_pos = 0;
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
-        }
-        KeyCode::End => {
-            cursor_pos = input_buffer.len();
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
-        }
+        KeyCode::Home => cursor_pos = 0,
+        KeyCode::End => cursor_pos = input_buffer.len(),
         KeyCode::Char(c) => {
             input_buffer.insert(cursor_pos, c);
             cursor_pos += c.len_utf8();
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
         }
-        _ => {
-            state.plugin_state = Some(PluginSubState::InputPrompt {
-                plugin_name,
-                input_buffer,
-                cursor_pos,
-            });
-        }
+        _ => {}
     }
+
+    // Restore InputPrompt state with potentially modified input_buffer and cursor_pos
+    state.plugin_state = Some(PluginSubState::InputPrompt {
+        plugin_name,
+        input_buffer,
+        cursor_pos,
+    });
     Ok(())
 }
 

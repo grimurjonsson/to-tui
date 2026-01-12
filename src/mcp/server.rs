@@ -85,6 +85,18 @@ fn format_error(detail: McpErrorDetail) -> String {
     serde_json::to_string(&detail).unwrap_or(detail.message)
 }
 
+fn parse_date_or_err(date_str: Option<&str>) -> Result<chrono::NaiveDate, String> {
+    parse_date(date_str).map_err(|msg| {
+        format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
+    })
+}
+
+fn parse_uuid_or_err(id_str: &str) -> Result<uuid::Uuid, String> {
+    parse_uuid(id_str).map_err(|msg| {
+        format_error(McpErrorDetail::invalid_input(&msg, "Use list_todos to get valid IDs"))
+    })
+}
+
 #[tool_router]
 impl TodoMcpServer {
     #[tool(
@@ -97,12 +109,7 @@ impl TodoMcpServer {
     ) -> Result<Json<TodoListResponse>, String> {
         info!(date = ?params.0.date, "list_todos called");
 
-        let date = parse_date(params.0.date.as_deref()).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(
-                &msg,
-                "Use YYYY-MM-DD format, e.g., 2025-01-02",
-            ))
-        })?;
+        let date = parse_date_or_err(params.0.date.as_deref())?;
 
         let list = load_list_with_rollover(date).map_err(format_error)?;
 
@@ -136,31 +143,18 @@ impl TodoMcpServer {
             )));
         }
 
-        let date = parse_date(req.date.as_deref()).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
-        })?;
+        let date = parse_date_or_err(req.date.as_deref())?;
 
         let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
         let due_date = req
             .due_date
             .as_deref()
-            .map(|s| parse_date(Some(s)))
-            .transpose()
-            .map_err(|msg| {
-                format_error(McpErrorDetail::invalid_input(
-                    &msg,
-                    "Use YYYY-MM-DD format for due_date",
-                ))
-            })?;
+            .map(|s| parse_date_or_err(Some(s)))
+            .transpose()?;
 
         let (indent_level, insert_index) = if let Some(ref parent_id_str) = req.parent_id {
-            let parent_id = parse_uuid(parent_id_str).map_err(|msg| {
-                format_error(McpErrorDetail::invalid_input(
-                    &msg,
-                    "Use list_todos to get valid parent IDs",
-                ))
-            })?;
+            let parent_id = parse_uuid_or_err(parent_id_str)?;
 
             match list.items.iter().position(|item| item.id == parent_id) {
                 Some(parent_idx) => {
@@ -216,16 +210,8 @@ impl TodoMcpServer {
             "update_todo called"
         );
 
-        let id = parse_uuid(&req.id).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(
-                &msg,
-                "Use list_todos to get valid IDs",
-            ))
-        })?;
-
-        let date = parse_date(req.date.as_deref()).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
-        })?;
+        let id = parse_uuid_or_err(&req.id)?;
+        let date = parse_date_or_err(req.date.as_deref())?;
 
         let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
@@ -260,12 +246,7 @@ impl TodoMcpServer {
         }
 
         if let Some(ref due_date_str) = req.due_date {
-            let due_date = parse_date(Some(due_date_str)).map_err(|msg| {
-                format_error(McpErrorDetail::invalid_input(
-                    &msg,
-                    "Use YYYY-MM-DD format for due_date",
-                ))
-            })?;
+            let due_date = parse_date_or_err(Some(due_date_str))?;
             item.due_date = Some(due_date);
         }
 
@@ -297,16 +278,8 @@ impl TodoMcpServer {
         let req = params.0;
         info!(id = %req.id, date = ?req.date, "delete_todo called");
 
-        let id = parse_uuid(&req.id).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(
-                &msg,
-                "Use list_todos to get valid IDs",
-            ))
-        })?;
-
-        let date = parse_date(req.date.as_deref()).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
-        })?;
+        let id = parse_uuid_or_err(&req.id)?;
+        let date = parse_date_or_err(req.date.as_deref())?;
 
         let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
@@ -355,16 +328,8 @@ impl TodoMcpServer {
         let req = params.0;
         info!(id = %req.id, date = ?req.date, "mark_complete called");
 
-        let id = parse_uuid(&req.id).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(
-                &msg,
-                "Use list_todos to get valid IDs",
-            ))
-        })?;
-
-        let date = parse_date(req.date.as_deref()).map_err(|msg| {
-            format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
-        })?;
+        let id = parse_uuid_or_err(&req.id)?;
+        let date = parse_date_or_err(req.date.as_deref())?;
 
         let mut list = load_list_with_rollover(date).map_err(format_error)?;
 
