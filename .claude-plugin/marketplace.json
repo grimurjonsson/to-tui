@@ -1,6 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "todo-mcp",
+  "version": "0.1.15",
   "description": "Terminal todo list manager with MCP server integration",
   "owner": {
     "name": "todo-cli"
@@ -13,9 +14,8 @@
       "author": {
         "name": "todo-cli"
       },
-      "source": ".",
-      "category": "productivity",
-      "homepage": "https://github.com/grimurjonsson/todo-cli"
+      "source": "./",
+      "category": "productivity"
     }
   ]
 }

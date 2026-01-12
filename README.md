@@ -119,12 +119,17 @@ The MCP server allows AI assistants like Claude to manage your todos.
 
 1. Open Claude Code
 2. Type `/plugin` to open the plugin manager
-3. Go to the "Discover" or "Marketplaces" tab
-4. Click "Add from URL" or enter a GitHub URL
-5. Enter: `https://github.com/grimurjonsson/todo-cli.git`
+3. Go to the "Installed" tab
+4. Look for an option to add a plugin from URL (may be a button or text input)
+5. Enter the GitHub URL: `https://github.com/grimurjonsson/todo-cli.git`
 6. After installation, build the MCP server (one-time setup):
    ```bash
-   cd ~/.claude/plugins/cache/<marketplace-id>/todo-mcp/<version>
+   # Find the installed plugin directory
+   cd ~/.claude/plugins/repos/todo-mcp
+   # Or if installed via cache:
+   # cd ~/.claude/plugins/cache/*/todo-mcp/*
+
+   # Build the binary
    cargo build --release --bin todo-mcp
    ```
 7. Restart Claude Code
