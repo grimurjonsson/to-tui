@@ -98,12 +98,13 @@ fn run_app(
     loop {
         state.clear_expired_status_message();
         state.check_plugin_result();
+        state.tick_spinner();
 
         terminal.draw(|f| {
             components::render(f, state);
         })?;
 
-        if event::poll(Duration::from_millis(1000))? {
+        if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     handle_key_event(key, state)?;

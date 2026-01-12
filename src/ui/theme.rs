@@ -7,6 +7,7 @@ pub struct Theme {
     pub foreground: Color,
     pub question: Color,
     pub exclamation: Color,
+    pub in_progress: Color,
     pub status_bar_bg: Color,
     pub status_bar_fg: Color,
 }
@@ -18,6 +19,7 @@ impl Theme {
             foreground: Color::White,
             question: Color::Yellow,
             exclamation: Color::Red,
+            in_progress: Color::Cyan,
             status_bar_bg: Color::DarkGray,
             status_bar_fg: Color::White,
         }
@@ -29,6 +31,7 @@ impl Theme {
             foreground: Color::White,
             question: Color::Yellow,
             exclamation: Color::Red,
+            in_progress: Color::Cyan,
             status_bar_bg: Color::DarkGray,
             status_bar_fg: Color::White,
         }
@@ -40,6 +43,7 @@ impl Theme {
             foreground: Color::Black,
             question: Color::Yellow,
             exclamation: Color::Red,
+            in_progress: Color::Blue,
             status_bar_bg: Color::LightBlue,
             status_bar_fg: Color::Black,
         }

@@ -37,7 +37,9 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
             "  "
         };
 
-        let checkbox = if item.state == TodoState::Empty && has_children {
+        let checkbox = if item.state == TodoState::InProgress {
+            format!("[{}]", state.get_spinner_char())
+        } else if item.state == TodoState::Empty && has_children {
             let (completed, _) = state.todo_list.count_children_stats(idx);
             if completed > 0 {
                 "[-]".to_string()
@@ -74,6 +76,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
             TodoState::Checked => ratatui::style::Color::DarkGray,
             TodoState::Question => state.theme.question,
             TodoState::Exclamation => state.theme.exclamation,
+            TodoState::InProgress => state.theme.in_progress,
             _ => ratatui::style::Color::White,
         };
 
@@ -102,6 +105,7 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
                 TodoState::Checked => Style::default().fg(ratatui::style::Color::DarkGray),
                 TodoState::Question => Style::default().fg(state.theme.question),
                 TodoState::Exclamation => Style::default().fg(state.theme.exclamation),
+                TodoState::InProgress => Style::default().fg(state.theme.in_progress),
                 _ => Style::default().fg(state.theme.foreground),
             }
         };

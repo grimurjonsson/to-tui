@@ -201,7 +201,7 @@ impl TodoMcpServer {
 
     #[tool(
         name = "update_todo",
-        description = "Update an existing todo's content, state, due date, or description. State values: ' ' (empty/pending), 'x' (done), '?' (question), '!' (important)"
+        description = "Update an existing todo's content, state, due date, or description. State values: ' ' (empty/pending), '*' (in progress), 'x' (done), '?' (question), '!' (important)"
     )]
     async fn update_todo(
         &self,

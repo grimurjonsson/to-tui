@@ -89,6 +89,7 @@ impl From<&TodoItem> for TodoItemResponse {
                 TodoState::Checked => "done".to_string(),
                 TodoState::Question => "question".to_string(),
                 TodoState::Exclamation => "important".to_string(),
+                TodoState::InProgress => "in_progress".to_string(),
             },
             indent_level: item.indent_level,
             parent_id: item.parent_id.map(|id| id.to_string()),

@@ -6,6 +6,7 @@ pub enum TodoState {
     Checked,     // [x]
     Question,    // [?]
     Exclamation, // [!]
+    InProgress,  // [*]
 }
 
 impl TodoState {
@@ -15,6 +16,7 @@ impl TodoState {
             Self::Checked => 'x',
             Self::Question => '?',
             Self::Exclamation => '!',
+            Self::InProgress => '*',
         }
     }
 
@@ -24,13 +26,15 @@ impl TodoState {
             'x' | 'X' => Some(Self::Checked),
             '?' => Some(Self::Question),
             '!' => Some(Self::Exclamation),
+            '*' => Some(Self::InProgress),
             _ => None,
         }
     }
 
     pub fn cycle(&self) -> Self {
         match self {
-            Self::Empty => Self::Checked,
+            Self::Empty => Self::InProgress,
+            Self::InProgress => Self::Checked,
             Self::Checked => Self::Question,
             Self::Question => Self::Exclamation,
             Self::Exclamation => Self::Empty,
@@ -65,6 +69,7 @@ mod tests {
         assert_eq!(TodoState::Checked.to_char(), 'x');
         assert_eq!(TodoState::Question.to_char(), '?');
         assert_eq!(TodoState::Exclamation.to_char(), '!');
+        assert_eq!(TodoState::InProgress.to_char(), '*');
     }
 
     #[test]
@@ -74,12 +79,14 @@ mod tests {
         assert_eq!(TodoState::from_char('X'), Some(TodoState::Checked));
         assert_eq!(TodoState::from_char('?'), Some(TodoState::Question));
         assert_eq!(TodoState::from_char('!'), Some(TodoState::Exclamation));
+        assert_eq!(TodoState::from_char('*'), Some(TodoState::InProgress));
         assert_eq!(TodoState::from_char('z'), None);
     }
 
     #[test]
     fn test_cycle() {
-        assert_eq!(TodoState::Empty.cycle(), TodoState::Checked);
+        assert_eq!(TodoState::Empty.cycle(), TodoState::InProgress);
+        assert_eq!(TodoState::InProgress.cycle(), TodoState::Checked);
         assert_eq!(TodoState::Checked.cycle(), TodoState::Question);
         assert_eq!(TodoState::Question.cycle(), TodoState::Exclamation);
         assert_eq!(TodoState::Exclamation.cycle(), TodoState::Empty);
@@ -91,6 +98,7 @@ mod tests {
         assert!(TodoState::Checked.is_complete());
         assert!(!TodoState::Question.is_complete());
         assert!(!TodoState::Exclamation.is_complete());
+        assert!(!TodoState::InProgress.is_complete());
     }
 
     #[test]
@@ -99,5 +107,6 @@ mod tests {
         assert_eq!(format!("{}", TodoState::Checked), "[x]");
         assert_eq!(format!("{}", TodoState::Question), "[?]");
         assert_eq!(format!("{}", TodoState::Exclamation), "[!]");
+        assert_eq!(format!("{}", TodoState::InProgress), "[*]");
     }
 }

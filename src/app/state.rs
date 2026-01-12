@@ -61,6 +61,7 @@ pub struct AppState {
     pub plugin_state: Option<PluginSubState>,
     pub status_message: Option<(String, Instant)>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
+    pub spinner_frame: usize,
 }
 
 impl AppState {
@@ -100,6 +101,7 @@ impl AppState {
             plugin_state: None,
             status_message: None,
             plugin_result_rx: None,
+            spinner_frame: 0,
         }
     }
 
@@ -332,5 +334,14 @@ impl AppState {
                 }
             }
         }
+    }
+
+    pub fn tick_spinner(&mut self) {
+        self.spinner_frame = (self.spinner_frame + 1) % 8;
+    }
+
+    pub fn get_spinner_char(&self) -> char {
+        const SPINNER_FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
+        SPINNER_FRAMES[self.spinner_frame]
     }
 }

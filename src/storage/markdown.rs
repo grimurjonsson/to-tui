@@ -225,16 +225,19 @@ mod tests {
         list.add_item("Checked task".to_string());
         list.add_item("Question task".to_string());
         list.add_item("Important task".to_string());
+        list.add_item("InProgress task".to_string());
 
         list.items[1].state = TodoState::Checked;
         list.items[2].state = TodoState::Question;
         list.items[3].state = TodoState::Exclamation;
+        list.items[4].state = TodoState::InProgress;
 
         let markdown = serialize_todo_list_clean(&list);
         assert!(markdown.contains("- [ ] Empty task"));
         assert!(markdown.contains("- [x] Checked task"));
         assert!(markdown.contains("- [?] Question task"));
         assert!(markdown.contains("- [!] Important task"));
+        assert!(markdown.contains("- [*] InProgress task"));
     }
 
     #[test]
@@ -263,13 +266,14 @@ mod tests {
 - [x] Task 2
 - [?] Task 3
 - [!] Task 4
+- [*] Task 5
 "#;
 
         let date = create_test_date();
         let path = create_test_path();
         let list = parse_todo_list(content, date, path).unwrap();
 
-        assert_eq!(list.items.len(), 4);
+        assert_eq!(list.items.len(), 5);
         assert_eq!(list.items[0].content, "Task 1");
         assert_eq!(list.items[0].state, TodoState::Empty);
         assert_eq!(list.items[1].content, "Task 2");
@@ -278,6 +282,8 @@ mod tests {
         assert_eq!(list.items[2].state, TodoState::Question);
         assert_eq!(list.items[3].content, "Task 4");
         assert_eq!(list.items[3].state, TodoState::Exclamation);
+        assert_eq!(list.items[4].content, "Task 5");
+        assert_eq!(list.items[4].state, TodoState::InProgress);
     }
 
     #[test]

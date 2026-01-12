@@ -75,6 +75,7 @@ pub fn parse_state(s: &str) -> Option<TodoState> {
         "x" | "X" => Some(TodoState::Checked),
         "?" => Some(TodoState::Question),
         "!" => Some(TodoState::Exclamation),
+        "*" => Some(TodoState::InProgress),
         _ => None,
     }
 }
