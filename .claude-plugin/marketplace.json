@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "todo-mcp",
+  "description": "Terminal todo list manager with MCP server integration",
+  "owner": {
+    "name": "todo-cli"
+  },
+  "plugins": [
+    {
+      "name": "todo-mcp",
+      "description": "MCP server for todo-cli - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
+      "version": "0.1.15",
+      "author": {
+        "name": "todo-cli"
+      },
+      "source": ".",
+      "category": "productivity",
+      "homepage": "https://github.com/grimurjonsson/todo-cli"
+    }
+  ]
+}
