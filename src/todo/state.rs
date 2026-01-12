@@ -51,6 +51,20 @@ impl TodoState {
     pub fn is_complete(&self) -> bool {
         matches!(self, Self::Checked)
     }
+
+    /// Parse a state from a string representation.
+    /// Accepts: " " or "" for Empty, "x"/"X" for Checked, "?" for Question, "!" for Exclamation, "*" for InProgress
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim() {
+            " " | "" => Some(Self::Empty),
+            "x" | "X" => Some(Self::Checked),
+            "?" => Some(Self::Question),
+            "!" => Some(Self::Exclamation),
+            "*" => Some(Self::InProgress),
+            _ => None,
+        }
+    }
+
 }
 
 impl fmt::Display for TodoState {

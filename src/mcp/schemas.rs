@@ -85,12 +85,13 @@ impl From<&TodoItem> for TodoItemResponse {
             content: item.content.clone(),
             state: item.state.to_char().to_string(),
             state_description: match item.state {
-                TodoState::Empty => "pending".to_string(),
-                TodoState::Checked => "done".to_string(),
-                TodoState::Question => "question".to_string(),
-                TodoState::Exclamation => "important".to_string(),
-                TodoState::InProgress => "in_progress".to_string(),
-            },
+                TodoState::Empty => "pending",
+                TodoState::Checked => "done",
+                TodoState::Question => "question",
+                TodoState::Exclamation => "important",
+                TodoState::InProgress => "in_progress",
+            }
+            .to_string(),
             indent_level: item.indent_level,
             parent_id: item.parent_id.map(|id| id.to_string()),
             due_date: item.due_date.map(|d| d.format("%Y-%m-%d").to_string()),
@@ -198,11 +199,5 @@ pub fn parse_uuid(id_str: &str) -> Result<Uuid, String> {
 }
 
 pub fn parse_state(state_str: &str) -> Option<TodoState> {
-    match state_str.trim() {
-        " " | "" => Some(TodoState::Empty),
-        "x" | "X" => Some(TodoState::Checked),
-        "?" => Some(TodoState::Question),
-        "!" => Some(TodoState::Exclamation),
-        _ => None,
-    }
+    TodoState::parse(state_str)
 }

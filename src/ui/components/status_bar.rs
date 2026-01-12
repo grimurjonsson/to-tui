@@ -16,12 +16,11 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         return;
     }
 
-    if let Some((message, time)) = &state.status_message {
-        if time.elapsed().as_secs() <= 3 {
+    if let Some((message, time)) = &state.status_message
+        && time.elapsed().as_secs() <= 3 {
             render_status_message(f, message, area);
             return;
         }
-    }
 
     let mode_text = format!("{}", state.mode);
     let readonly_indicator = if state.is_readonly() {

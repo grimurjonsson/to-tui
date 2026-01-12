@@ -1,8 +1,10 @@
 pub mod status_bar;
 pub mod todo_list;
 
+use crate::app::mode::Mode;
 use crate::app::state::PluginSubState;
 use crate::app::AppState;
+use chrono::{Local, NaiveDate};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -33,6 +35,10 @@ pub fn render(f: &mut Frame, state: &AppState) {
 
     if let Some(ref plugin_state) = state.plugin_state {
         render_plugin_overlay(f, state, plugin_state);
+    }
+
+    if state.mode == Mode::Rollover {
+        render_rollover_overlay(f, state);
     }
 }
 
@@ -310,4 +316,78 @@ fn render_plugin_preview(f: &mut Frame, state: &AppState, items: &[crate::todo::
 
     f.render_widget(Clear, area);
     f.render_widget(list, area);
+}
+
+fn format_date_description(source_date: NaiveDate) -> String {
+    let today = Local::now().date_naive();
+    let days_ago = (today - source_date).num_days();
+
+    if days_ago == 1 {
+        "yesterday".to_string()
+    } else {
+        format!(
+            "{} ({} days ago)",
+            source_date.format("%B %d, %Y"),
+            days_ago
+        )
+    }
+}
+
+fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
+    let Some(ref pending) = state.pending_rollover else {
+        return;
+    };
+
+    let area = centered_rect(60, 50, f.area());
+
+    let date_desc = format_date_description(pending.source_date);
+    let title = format!(
+        " Rollover {} incomplete item(s) from {} ",
+        pending.items.len(),
+        date_desc
+    );
+
+    // Build list items from pending rollover
+    let list_items: Vec<ListItem> = pending
+        .items
+        .iter()
+        .map(|item| {
+            let indent = "  ".repeat(item.indent_level);
+            let state_char = item.state.to_char();
+            let line = format!("{}[{}] {}", indent, state_char, item.content);
+            ListItem::new(Line::from(Span::styled(
+                line,
+                Style::default().fg(state.theme.foreground),
+            )))
+        })
+        .collect();
+
+    let list = List::new(list_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(list, area);
+
+    // Render footer with options
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("[Y]", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw("es - Rollover now    "),
+        Span::styled("[L]", Style::default().fg(ratatui::style::Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::raw("ater - Dismiss (press R anytime to reopen)"),
+    ]));
+
+    f.render_widget(footer, footer_area);
 }

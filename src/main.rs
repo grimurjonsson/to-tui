@@ -21,9 +21,21 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use storage::{check_and_prompt_rollover, save_todo_list};
+use storage::{find_rollover_candidates, save_todo_list};
+use storage::file::{file_exists, load_todo_list};
 use ui::theme::Theme;
 use utils::paths::get_pid_file_path;
+
+/// Load today's todo list without prompting for rollover.
+/// Creates an empty list if no existing todos are found.
+fn load_today_list() -> Result<todo::TodoList> {
+    let today = Local::now().date_naive();
+    if file_exists(today)? {
+        load_todo_list(today)
+    } else {
+        Ok(todo::TodoList::new(today, utils::paths::get_daily_file_path(today)?))
+    }
+}
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -53,16 +65,18 @@ fn main() -> Result<()> {
         None => {
             ensure_server_running(DEFAULT_API_PORT)?;
 
-            let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
-                let today = Local::now().date_naive();
-                todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
-            });
+            let list = load_today_list()?;
 
             let theme = Theme::from_config(&config);
             let keybindings = KeybindingCache::from_config(&config.keybindings);
             let plugin_registry = plugin::PluginRegistry::new();
-            let state =
+            let mut state =
                 app::AppState::new(list, theme, keybindings, config.timeoutlen, plugin_registry);
+
+            // Check for rollover candidates and show modal on startup if found
+            if let Ok(Some((source_date, items))) = find_rollover_candidates() {
+                state.open_rollover_modal(source_date, items);
+            }
 
             ui::run_tui(state)?;
         }
@@ -205,11 +219,10 @@ fn read_pid_file() -> Result<Option<u32>> {
 fn write_pid_file(pid: u32) -> Result<()> {
     let pid_path = get_pid_file_path()?;
 
-    if let Some(parent) = pid_path.parent() {
-        if !parent.exists() {
+    if let Some(parent) = pid_path.parent()
+        && !parent.exists() {
             fs::create_dir_all(parent)?;
         }
-    }
 
     fs::write(&pid_path, pid.to_string())?;
     Ok(())
@@ -262,10 +275,7 @@ async fn run_server_foreground(port: u16) -> Result<()> {
 }
 
 fn handle_add(task: String) -> Result<()> {
-    let mut list = check_and_prompt_rollover()?.unwrap_or_else(|| {
-        let today = Local::now().date_naive();
-        todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
-    });
+    let mut list = load_today_list()?;
 
     list.add_item(task);
     save_todo_list(&list)?;
@@ -282,19 +292,14 @@ fn handle_show(date: Option<String>) -> Result<()> {
 
         let today = Local::now().date_naive();
         if parsed_date == today {
-            let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
-                todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
-            });
+            let list = load_today_list()?;
             (list.items, today, false)
         } else {
             let items = storage::load_archived_todos_for_date(parsed_date)?;
             (items, parsed_date, true)
         }
     } else {
-        let list = check_and_prompt_rollover()?.unwrap_or_else(|| {
-            let today = Local::now().date_naive();
-            todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
-        });
+        let list = load_today_list()?;
         let date = list.date;
         (list.items, date, false)
     };
@@ -439,10 +444,7 @@ fn handle_generate(
 }
 
 fn add_items_to_today(items: Vec<todo::TodoItem>) -> Result<()> {
-    let mut list = check_and_prompt_rollover()?.unwrap_or_else(|| {
-        let today = Local::now().date_naive();
-        todo::TodoList::new(today, utils::paths::get_daily_file_path(today).unwrap())
-    });
+    let mut list = load_today_list()?;
 
     for item in items {
         list.items.push(item);

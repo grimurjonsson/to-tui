@@ -42,17 +42,8 @@ pub async fn create_todo(
     };
 
     let (indent_level, insert_index) = if let Some(parent_id) = req.parent_id {
-        match list.items.iter().position(|item| item.id == parent_id) {
-            Some(parent_idx) => {
-                let parent_indent = list.items[parent_idx].indent_level;
-                let mut insert_at = parent_idx + 1;
-                while insert_at < list.items.len()
-                    && list.items[insert_at].indent_level > parent_indent
-                {
-                    insert_at += 1;
-                }
-                (parent_indent + 1, insert_at)
-            }
+        match list.find_insert_position_for_child(parent_id) {
+            Some((indent, idx)) => (indent, idx),
             None => return ErrorResponse::bad_request("Parent not found"),
         }
     } else {

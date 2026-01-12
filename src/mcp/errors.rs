@@ -59,3 +59,14 @@ impl McpErrorDetail {
         }
     }
 }
+
+/// Extension trait to simplify converting anyhow::Result to McpErrorDetail
+pub trait IntoMcpError<T> {
+    fn into_mcp_storage_error(self) -> Result<T, McpErrorDetail>;
+}
+
+impl<T, E: std::fmt::Display> IntoMcpError<T> for Result<T, E> {
+    fn into_mcp_storage_error(self) -> Result<T, McpErrorDetail> {
+        self.map_err(|e| McpErrorDetail::storage_error(e.to_string()))
+    }
+}

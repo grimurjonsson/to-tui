@@ -69,11 +69,10 @@ fn setup_database_watcher(tx: mpsc::Sender<()>) -> Option<RecommendedWatcher> {
 
     let watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                if event.kind.is_modify() {
+            if let Ok(event) = res
+                && event.kind.is_modify() {
                     let _ = tx.send(());
                 }
-            }
         },
         Config::default(),
     );

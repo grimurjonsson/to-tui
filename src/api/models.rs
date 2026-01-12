@@ -83,12 +83,5 @@ impl ErrorResponse {
 }
 
 pub fn parse_state(s: &str) -> Option<TodoState> {
-    match s.trim() {
-        " " | "" => Some(TodoState::Empty),
-        "x" | "X" => Some(TodoState::Checked),
-        "?" => Some(TodoState::Question),
-        "!" => Some(TodoState::Exclamation),
-        "*" => Some(TodoState::InProgress),
-        _ => None,
-    }
+    TodoState::parse(s)
 }

@@ -2,7 +2,7 @@ use super::mode::Mode;
 use super::state::{AppState, PluginSubState};
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::PluginRegistry;
-use crate::storage::{save_todo_list, soft_delete_todos};
+use crate::storage::{execute_rollover, find_rollover_candidates, save_todo_list, soft_delete_todos};
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
@@ -18,6 +18,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
         Mode::Edit => handle_edit_mode(key, state)?,
         Mode::ConfirmDelete => handle_confirm_delete_mode(key, state)?,
         Mode::Plugin => handle_plugin_mode(key, state)?,
+        Mode::Rollover => handle_rollover_mode(key, state)?,
     }
     Ok(())
 }
@@ -136,12 +137,11 @@ fn calculate_item_visual_height(
     let has_description = item.description.is_some();
     let is_collapsed = item.collapsed;
 
-    if has_description && !is_collapsed {
-        if let Some(ref desc) = item.description {
+    if has_description && !is_collapsed
+        && let Some(ref desc) = item.description {
             let line_count = desc.lines().count().max(1);
             height += line_count + 2;
         }
-    }
 
     let has_children = state.todo_list.has_children(idx);
     if is_collapsed && has_children {
@@ -225,22 +225,10 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::ExitVisual => {}
         Action::ToggleState => {
-            if state.selected_item().is_some() {
-                state.save_undo();
-                if let Some(item) = state.selected_item_mut() {
-                    item.toggle_state();
-                    state.unsaved_changes = true;
-                }
-            }
+            state.toggle_current_item_state();
         }
         Action::CycleState => {
-            if state.selected_item().is_some() {
-                state.save_undo();
-                if let Some(item) = state.selected_item_mut() {
-                    item.cycle_state();
-                    state.unsaved_changes = true;
-                }
-            }
+            state.cycle_current_item_state();
         }
         Action::Delete => {
             if !state.todo_list.items.is_empty() {
@@ -346,63 +334,13 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             }
         }
         Action::ToggleCollapse => {
-            let has_children = state.todo_list.has_children(state.cursor_position);
-            let has_description = state
-                .todo_list
-                .items
-                .get(state.cursor_position)
-                .map(|item| item.description.is_some())
-                .unwrap_or(false);
-
-            if has_children || has_description {
-                state.save_undo();
-                if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
-                    item.collapsed = !item.collapsed;
-                    state.unsaved_changes = true;
-                }
-            }
+            state.toggle_current_item_collapse();
         }
         Action::Expand => {
-            let has_children = state.todo_list.has_children(state.cursor_position);
-            let item_info = state
-                .todo_list
-                .items
-                .get(state.cursor_position)
-                .map(|item| (item.collapsed, item.description.is_some()));
-
-            let should_expand = match item_info {
-                Some((true, has_desc)) => has_children || has_desc,
-                _ => false,
-            };
-
-            if should_expand {
-                state.save_undo();
-                if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
-                    item.collapsed = false;
-                    state.unsaved_changes = true;
-                }
-            }
+            state.expand_current_item();
         }
         Action::CollapseOrParent => {
-            let has_children = state.todo_list.has_children(state.cursor_position);
-            let item_info = state
-                .todo_list
-                .items
-                .get(state.cursor_position)
-                .map(|item| (item.collapsed, item.description.is_some()));
-
-            let (is_collapsed, has_description) = item_info.unwrap_or((false, false));
-            let is_collapsible = has_children || has_description;
-
-            if is_collapsible && !is_collapsed {
-                state.save_undo();
-                if let Some(item) = state.todo_list.items.get_mut(state.cursor_position) {
-                    item.collapsed = true;
-                    state.unsaved_changes = true;
-                }
-            } else {
-                state.move_to_parent();
-            }
+            state.collapse_or_move_to_parent();
         }
         Action::Undo => {
             if state.undo() {
@@ -436,6 +374,16 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::OpenPluginMenu => {
             state.open_plugin_menu();
+        }
+        Action::OpenRolloverModal => {
+            // Check if we have pending rollover data, or try to find new candidates
+            if state.has_pending_rollover() {
+                state.mode = Mode::Rollover;
+            } else if let Ok(Some((source_date, items))) = find_rollover_candidates() {
+                state.open_rollover_modal(source_date, items);
+            } else {
+                state.set_status_message("No incomplete items to rollover".to_string());
+            }
         }
         _ => {}
     }
@@ -533,6 +481,27 @@ fn handle_confirm_delete_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
             state.pending_delete_subtask_count = None;
             state.mode = Mode::Navigate;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            // Execute rollover
+            if let Some(pending) = state.pending_rollover.take() {
+                let new_list = execute_rollover(pending.source_date, pending.items)?;
+                state.todo_list = new_list;
+                state.cursor_position = 0;
+                state.set_status_message("Rolled over incomplete items".to_string());
+            }
+            state.mode = Mode::Navigate;
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Esc => {
+            // Close modal but keep pending_rollover for later
+            state.close_rollover_modal();
         }
         _ => {}
     }

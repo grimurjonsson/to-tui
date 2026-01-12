@@ -60,6 +60,9 @@ pub enum Action {
     // Plugin
     OpenPluginMenu,
 
+    // Rollover
+    OpenRolloverModal,
+
     // Edit mode specific
     EditCancel,
     EditConfirm,
@@ -105,6 +108,7 @@ impl fmt::Display for Action {
             Action::NextDay => "next_day",
             Action::GoToToday => "go_to_today",
             Action::OpenPluginMenu => "open_plugin_menu",
+            Action::OpenRolloverModal => "open_rollover_modal",
             Action::EditCancel => "edit_cancel",
             Action::EditConfirm => "edit_confirm",
             Action::EditBackspace => "edit_backspace",
@@ -154,6 +158,7 @@ impl FromStr for Action {
             "next_day" => Ok(Action::NextDay),
             "go_to_today" => Ok(Action::GoToToday),
             "open_plugin_menu" => Ok(Action::OpenPluginMenu),
+            "open_rollover_modal" => Ok(Action::OpenRolloverModal),
             "edit_cancel" => Ok(Action::EditCancel),
             "edit_confirm" => Ok(Action::EditConfirm),
             "edit_backspace" => Ok(Action::EditBackspace),
@@ -436,22 +441,18 @@ impl KeybindingCache {
         for (key_str, action_str) in &config.edit {
             if let (Ok(seq), Ok(action)) =
                 (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
-            {
-                if seq.is_single() {
+                && seq.is_single() {
                     edit_single.insert(seq.0[0], action);
                 }
-            }
         }
 
         let mut visual_single = HashMap::new();
         for (key_str, action_str) in &config.visual {
             if let (Ok(seq), Ok(action)) =
                 (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
-            {
-                if seq.is_single() {
+                && seq.is_single() {
                     visual_single.insert(seq.0[0], action);
                 }
-            }
         }
 
         Self {
@@ -471,11 +472,10 @@ impl KeybindingCache {
         let binding = KeyBinding::from_event(event);
 
         if let Some(first_key) = pending {
-            if let Some(second_map) = self.navigate_sequences.get(&first_key) {
-                if let Some(&action) = second_map.get(&binding) {
+            if let Some(second_map) = self.navigate_sequences.get(&first_key)
+                && let Some(&action) = second_map.get(&binding) {
                     return KeyLookupResult::Action(action);
                 }
-            }
             return KeyLookupResult::None;
         }
 
@@ -593,6 +593,7 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert(">".to_string(), "next_day".to_string());
     m.insert("T".to_string(), "go_to_today".to_string());
     m.insert("p".to_string(), "open_plugin_menu".to_string());
+    m.insert("R".to_string(), "open_rollover_modal".to_string());
 
     m
 }

@@ -1,14 +1,48 @@
 use crate::app::{AppState, Mode};
 use crate::todo::TodoState;
+use crate::ui::theme::Theme;
 use crate::utils::unicode::{after_first_char, first_char_as_str};
 use ratatui::{
     layout::Rect,
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
+
+/// Compute the style for a todo item based on its state and cursor position
+fn compute_item_style(
+    state: TodoState,
+    theme: &Theme,
+    is_cursor: bool,
+    is_in_selection: bool,
+) -> Style {
+    if is_cursor {
+        let cursor_color = match state {
+            TodoState::Checked => Color::DarkGray,
+            TodoState::Question => theme.question,
+            TodoState::Exclamation => theme.exclamation,
+            TodoState::InProgress => theme.in_progress,
+            _ => Color::White,
+        };
+        Style::default()
+            .fg(cursor_color)
+            .add_modifier(Modifier::REVERSED)
+    } else if is_in_selection {
+        Style::default()
+            .bg(Color::DarkGray)
+            .fg(theme.foreground)
+    } else {
+        match state {
+            TodoState::Checked => Style::default().fg(Color::DarkGray),
+            TodoState::Question => Style::default().fg(theme.question),
+            TodoState::Exclamation => Style::default().fg(theme.exclamation),
+            TodoState::InProgress => Style::default().fg(theme.in_progress),
+            _ => Style::default().fg(theme.foreground),
+        }
+    }
+}
 
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
@@ -71,43 +105,20 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         let is_visual_cursor = idx == state.cursor_position && state.mode == Mode::Visual;
         let is_in_selection = state.is_selected(idx) && state.mode == Mode::Visual;
 
-        let cursor_color = match item.state {
-            TodoState::Checked => ratatui::style::Color::DarkGray,
-            TodoState::Question => state.theme.question,
-            TodoState::Exclamation => state.theme.exclamation,
-            TodoState::InProgress => state.theme.in_progress,
-            _ => ratatui::style::Color::White,
-        };
+        // For prefix, we use foreground color when not highlighted (cursor/selection)
+        let prefix_style = compute_item_style(
+            TodoState::Empty, // Use Empty to get foreground color for prefix
+            &state.theme,
+            is_cursor || is_visual_cursor,
+            is_in_selection,
+        );
 
-        let prefix_style = if is_cursor || is_visual_cursor {
-            Style::default()
-                .fg(cursor_color)
-                .add_modifier(Modifier::REVERSED)
-        } else if is_in_selection {
-            Style::default()
-                .bg(ratatui::style::Color::DarkGray)
-                .fg(state.theme.foreground)
-        } else {
-            Style::default().fg(state.theme.foreground)
-        };
-
-        let content_style = if is_cursor || is_visual_cursor {
-            Style::default()
-                .fg(cursor_color)
-                .add_modifier(Modifier::REVERSED)
-        } else if is_in_selection {
-            Style::default()
-                .bg(ratatui::style::Color::DarkGray)
-                .fg(state.theme.foreground)
-        } else {
-            match item.state {
-                TodoState::Checked => Style::default().fg(ratatui::style::Color::DarkGray),
-                TodoState::Question => Style::default().fg(state.theme.question),
-                TodoState::Exclamation => Style::default().fg(state.theme.exclamation),
-                TodoState::InProgress => Style::default().fg(state.theme.in_progress),
-                _ => Style::default().fg(state.theme.foreground),
-            }
-        };
+        let content_style = compute_item_style(
+            item.state,
+            &state.theme,
+            is_cursor || is_visual_cursor,
+            is_in_selection,
+        );
 
         let content_max_width = available_width.saturating_sub(prefix_width + checkbox_width);
 
@@ -169,8 +180,8 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
             }
         }
 
-        if !item.collapsed {
-            if let Some(ref desc) = item.description {
+        if !item.collapsed
+            && let Some(ref desc) = item.description {
                 let base_indent = "  ".repeat(item.indent_level);
                 let border_color = ratatui::style::Color::Rgb(100, 100, 120);
                 let text_color = ratatui::style::Color::Rgb(180, 180, 190);
@@ -229,7 +240,6 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
 
                 items.push(ListItem::new(desc_lines));
             }
-        }
 
         let should_show_new_item_below = state.is_creating_new_item
             && state.mode == Mode::Edit
@@ -424,8 +434,8 @@ fn find_cursor_line(text: &str, cursor_pos: usize, max_width: usize) -> usize {
         }
 
         if current_width + char_width > max_width && current_width > 0 {
-            if let Some(space_byte) = last_space_byte {
-                if space_byte > line_start_byte {
+            if let Some(space_byte) = last_space_byte
+                && space_byte > line_start_byte {
                     if cursor_pos <= space_byte {
                         return current_line;
                     }
@@ -435,7 +445,6 @@ fn find_cursor_line(text: &str, cursor_pos: usize, max_width: usize) -> usize {
                     last_space_byte = None;
                     continue;
                 }
-            }
             current_line += 1;
             line_start_byte = byte_idx;
             current_width = char_width;

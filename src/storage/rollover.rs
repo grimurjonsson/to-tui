@@ -5,45 +5,46 @@ use crate::utils::paths::get_daily_file_path;
 use anyhow::Result;
 use chrono::{Local, NaiveDate};
 use std::collections::HashMap;
-use std::io::{self, Write};
 use uuid::Uuid;
 
-pub fn check_and_prompt_rollover() -> Result<Option<TodoList>> {
+/// Find incomplete items from the most recent previous day (up to 30 days back).
+/// Returns (source_date, incomplete_items) if found, None otherwise.
+pub fn find_rollover_candidates() -> Result<Option<(NaiveDate, Vec<crate::todo::TodoItem>)>> {
     let today = Local::now().date_naive();
 
-    // Check if today's file already exists
+    // Check if today's file already exists - no rollover needed
     if file_exists(today)? {
-        return Ok(Some(load_todo_list(today)?));
+        return Ok(None);
     }
 
     // Look back up to 30 days for the most recent file with incomplete items
-    let mut most_recent_incomplete: Option<(NaiveDate, Vec<crate::todo::TodoItem>)> = None;
-
     for days_back in 1..=30 {
-        if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back)) {
-            if file_exists(check_date)? {
+        if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back))
+            && file_exists(check_date)? {
                 let list = load_todo_list(check_date)?;
                 let incomplete = list.get_incomplete_items();
 
                 if !incomplete.is_empty() {
-                    most_recent_incomplete = Some((check_date, incomplete));
-                    break; // Found the most recent, stop searching
+                    return Ok(Some((check_date, incomplete)));
                 }
+                // Found a file but no incomplete items, stop searching
+                break;
             }
-        }
     }
 
-    if let Some((source_date, incomplete)) = most_recent_incomplete {
-        if prompt_user_for_rollover(&incomplete, source_date)? {
-            archive_todos_for_date(source_date)?;
-            let list = create_rolled_over_list(today, incomplete)?;
-            save_todo_list(&list)?;
-            return Ok(Some(list));
-        }
-    }
+    Ok(None)
+}
 
-    // No rollover needed, create empty list for today
-    Ok(Some(TodoList::new(today, get_daily_file_path(today)?)))
+/// Execute the rollover: archive old todos and create new list with rolled-over items.
+pub fn execute_rollover(
+    source_date: NaiveDate,
+    items: Vec<crate::todo::TodoItem>,
+) -> Result<TodoList> {
+    let today = Local::now().date_naive();
+    archive_todos_for_date(source_date)?;
+    let list = create_rolled_over_list(today, items)?;
+    save_todo_list(&list)?;
+    Ok(list)
 }
 
 pub fn create_rolled_over_list(
@@ -67,43 +68,6 @@ pub fn create_rolled_over_list(
     }
 
     Ok(TodoList::with_items(date, file_path, items))
-}
-
-fn prompt_user_for_rollover(
-    incomplete: &[crate::todo::TodoItem],
-    source_date: NaiveDate,
-) -> Result<bool> {
-    let today = Local::now().date_naive();
-    let days_ago = (today - source_date).num_days();
-
-    let date_desc = if days_ago == 1 {
-        "yesterday".to_string()
-    } else {
-        format!(
-            "{} ({} days ago)",
-            source_date.format("%B %d, %Y"),
-            days_ago
-        )
-    };
-
-    println!(
-        "\n{} incomplete item(s) found from {}:",
-        incomplete.len(),
-        date_desc
-    );
-    for (idx, item) in incomplete.iter().enumerate() {
-        let indent = "  ".repeat(item.indent_level);
-        println!("  {}{}. {} {}", indent, idx + 1, item.state, item.content);
-    }
-
-    print!("\nRoll over incomplete items to today? (Y/n): ");
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    let input = input.trim().to_lowercase();
-    Ok(input.is_empty() || input == "y" || input == "yes")
 }
 
 #[cfg(test)]

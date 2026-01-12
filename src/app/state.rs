@@ -34,6 +34,13 @@ pub enum PluginSubState {
     },
 }
 
+/// Holds data for pending rollover from a previous day
+#[derive(Debug, Clone)]
+pub struct PendingRollover {
+    pub source_date: NaiveDate,
+    pub items: Vec<TodoItem>,
+}
+
 pub struct AppState {
     pub todo_list: TodoList,
     pub cursor_position: usize,
@@ -62,6 +69,7 @@ pub struct AppState {
     pub status_message: Option<(String, Instant)>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
     pub spinner_frame: usize,
+    pub pending_rollover: Option<PendingRollover>,
 }
 
 impl AppState {
@@ -102,6 +110,7 @@ impl AppState {
             status_message: None,
             plugin_result_rx: None,
             spinner_frame: 0,
+            pending_rollover: None,
         }
     }
 
@@ -301,11 +310,10 @@ impl AppState {
     }
 
     pub fn clear_expired_status_message(&mut self) {
-        if let Some((_, time)) = &self.status_message {
-            if time.elapsed().as_secs() > 3 {
+        if let Some((_, time)) = &self.status_message
+            && time.elapsed().as_secs() > 3 {
                 self.status_message = None;
             }
-        }
     }
 
     pub fn check_plugin_result(&mut self) {
@@ -343,5 +351,124 @@ impl AppState {
     pub fn get_spinner_char(&self) -> char {
         const SPINNER_FRAMES: [char; 8] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'];
         SPINNER_FRAMES[self.spinner_frame]
+    }
+
+    /// Toggle the current item's state (checked/unchecked) with undo support.
+    /// Returns true if a change was made.
+    pub fn toggle_current_item_state(&mut self) -> bool {
+        if self.selected_item().is_some() {
+            self.save_undo();
+            if let Some(item) = self.selected_item_mut() {
+                item.toggle_state();
+                self.unsaved_changes = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Cycle the current item's state with undo support.
+    /// Returns true if a change was made.
+    pub fn cycle_current_item_state(&mut self) -> bool {
+        if self.selected_item().is_some() {
+            self.save_undo();
+            if let Some(item) = self.selected_item_mut() {
+                item.cycle_state();
+                self.unsaved_changes = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Toggle collapse state of the current item if it's collapsible.
+    /// Returns true if a change was made.
+    pub fn toggle_current_item_collapse(&mut self) -> bool {
+        let has_children = self.todo_list.has_children(self.cursor_position);
+        let has_description = self
+            .todo_list
+            .items
+            .get(self.cursor_position)
+            .map(|item| item.description.is_some())
+            .unwrap_or(false);
+
+        if has_children || has_description {
+            self.save_undo();
+            if let Some(item) = self.todo_list.items.get_mut(self.cursor_position) {
+                item.collapsed = !item.collapsed;
+                self.unsaved_changes = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Expand the current item if it's collapsed and collapsible.
+    /// Returns true if a change was made.
+    pub fn expand_current_item(&mut self) -> bool {
+        let has_children = self.todo_list.has_children(self.cursor_position);
+        let item_info = self
+            .todo_list
+            .items
+            .get(self.cursor_position)
+            .map(|item| (item.collapsed, item.description.is_some()));
+
+        let should_expand = match item_info {
+            Some((true, has_desc)) => has_children || has_desc,
+            _ => false,
+        };
+
+        if should_expand {
+            self.save_undo();
+            if let Some(item) = self.todo_list.items.get_mut(self.cursor_position) {
+                item.collapsed = false;
+                self.unsaved_changes = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Collapse the current item or move to parent if already collapsed/not collapsible.
+    /// Returns true if collapsed (false means moved to parent or no action).
+    pub fn collapse_or_move_to_parent(&mut self) -> bool {
+        let has_children = self.todo_list.has_children(self.cursor_position);
+        let item_info = self
+            .todo_list
+            .items
+            .get(self.cursor_position)
+            .map(|item| (item.collapsed, item.description.is_some()));
+
+        let (is_collapsed, has_description) = item_info.unwrap_or((false, false));
+        let is_collapsible = has_children || has_description;
+
+        if is_collapsible && !is_collapsed {
+            self.save_undo();
+            if let Some(item) = self.todo_list.items.get_mut(self.cursor_position) {
+                item.collapsed = true;
+                self.unsaved_changes = true;
+                return true;
+            }
+        } else {
+            self.move_to_parent();
+        }
+        false
+    }
+
+    /// Open the rollover modal with the given pending items
+    pub fn open_rollover_modal(&mut self, source_date: NaiveDate, items: Vec<TodoItem>) {
+        self.pending_rollover = Some(PendingRollover { source_date, items });
+        self.mode = Mode::Rollover;
+    }
+
+    /// Close the rollover modal without executing rollover
+    pub fn close_rollover_modal(&mut self) {
+        self.mode = Mode::Navigate;
+        // Note: we keep pending_rollover so user can re-trigger with R key
+    }
+
+    /// Check if there's pending rollover data available
+    pub fn has_pending_rollover(&self) -> bool {
+        self.pending_rollover.is_some()
     }
 }

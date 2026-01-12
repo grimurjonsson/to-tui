@@ -240,6 +240,21 @@ impl TodoList {
         self.recalculate_parent_ids();
         Ok(())
     }
+
+    /// Find the insert position for a new child under a parent.
+    /// Returns (indent_level, insert_index) for the new child, or None if parent not found.
+    pub fn find_insert_position_for_child(&self, parent_id: uuid::Uuid) -> Option<(usize, usize)> {
+        let parent_idx = self.items.iter().position(|item| item.id == parent_id)?;
+        let parent_indent = self.items[parent_idx].indent_level;
+
+        // Find the position after all existing children of this parent
+        let mut insert_at = parent_idx + 1;
+        while insert_at < self.items.len() && self.items[insert_at].indent_level > parent_indent {
+            insert_at += 1;
+        }
+
+        Some((parent_indent + 1, insert_at))
+    }
 }
 
 #[cfg(test)]

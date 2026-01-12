@@ -12,7 +12,7 @@ use crate::storage::file::{file_exists, load_todo_list, save_todo_list};
 use crate::storage::rollover::create_rolled_over_list;
 use crate::todo::{TodoItem, TodoList};
 
-use super::errors::McpErrorDetail;
+use super::errors::{IntoMcpError, McpErrorDetail};
 use super::schemas::{
     CreateTodoRequest, DeleteTodoRequest, DeleteTodoResponse, ListTodosRequest,
     MarkCompleteRequest, TodoItemResponse, TodoListResponse, UpdateTodoRequest, parse_date,
@@ -41,17 +41,12 @@ impl Default for TodoMcpServer {
 fn load_list_with_rollover(date: chrono::NaiveDate) -> Result<TodoList, McpErrorDetail> {
     let today = Local::now().date_naive();
 
-    if date == today
-        && !file_exists(date).map_err(|e| McpErrorDetail::storage_error(e.to_string()))?
-    {
+    if date == today && !file_exists(date).into_mcp_storage_error()? {
         debug!(date = %date, "No todos for today, checking for rollover candidates");
         for days_back in 1..=30 {
-            if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back)) {
-                if file_exists(check_date)
-                    .map_err(|e| McpErrorDetail::storage_error(e.to_string()))?
-                {
-                    let list = load_todo_list(check_date)
-                        .map_err(|e| McpErrorDetail::storage_error(e.to_string()))?;
+            if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back))
+                && file_exists(check_date).into_mcp_storage_error()? {
+                    let list = load_todo_list(check_date).into_mcp_storage_error()?;
                     let incomplete = list.get_incomplete_items();
 
                     if !incomplete.is_empty() {
@@ -61,19 +56,17 @@ fn load_list_with_rollover(date: chrono::NaiveDate) -> Result<TodoList, McpError
                             count = incomplete.len(),
                             "Rolling over incomplete todos"
                         );
-                        let rolled_list = create_rolled_over_list(today, incomplete)
-                            .map_err(|e| McpErrorDetail::storage_error(e.to_string()))?;
-                        save_todo_list(&rolled_list)
-                            .map_err(|e| McpErrorDetail::storage_error(e.to_string()))?;
+                        let rolled_list =
+                            create_rolled_over_list(today, incomplete).into_mcp_storage_error()?;
+                        save_todo_list(&rolled_list).into_mcp_storage_error()?;
                         return Ok(rolled_list);
                     }
                     break;
                 }
-            }
         }
     }
 
-    load_todo_list(date).map_err(|e| McpErrorDetail::storage_error(e.to_string()))
+    load_todo_list(date).into_mcp_storage_error()
 }
 
 fn format_error(detail: McpErrorDetail) -> String {
@@ -156,17 +149,8 @@ impl TodoMcpServer {
         let (indent_level, insert_index) = if let Some(ref parent_id_str) = req.parent_id {
             let parent_id = parse_uuid_or_err(parent_id_str)?;
 
-            match list.items.iter().position(|item| item.id == parent_id) {
-                Some(parent_idx) => {
-                    let parent_indent = list.items[parent_idx].indent_level;
-                    let mut insert_at = parent_idx + 1;
-                    while insert_at < list.items.len()
-                        && list.items[insert_at].indent_level > parent_indent
-                    {
-                        insert_at += 1;
-                    }
-                    (parent_indent + 1, insert_at)
-                }
+            match list.find_insert_position_for_child(parent_id) {
+                Some((indent, idx)) => (indent, idx),
                 None => {
                     return Err(format_error(McpErrorDetail::not_found(
                         format!("Parent todo with id '{parent_id_str}' not found"),
@@ -187,7 +171,7 @@ impl TodoMcpServer {
         list.items.insert(insert_index, item);
 
         save_todo_list(&list)
-            .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
+            .into_mcp_storage_error().map_err(format_error)?;
 
         info!(id = %response.id, content = %response.content, "create_todo completed");
         Ok(Json(response))
@@ -261,7 +245,7 @@ impl TodoMcpServer {
         let response = TodoItemResponse::from(&*item);
 
         save_todo_list(&list)
-            .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
+            .into_mcp_storage_error().map_err(format_error)?;
 
         info!(id = %response.id, state = %response.state, "update_todo completed");
         Ok(Json(response))
@@ -296,19 +280,19 @@ impl TodoMcpServer {
 
         let (start, end) = list
             .get_item_range(idx)
-            .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
+            .into_mcp_storage_error().map_err(format_error)?;
 
         let deleted_count = end - start;
 
         let ids: Vec<_> = list.items[start..end].iter().map(|item| item.id).collect();
         soft_delete_todos(&ids, date)
-            .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
+            .into_mcp_storage_error().map_err(format_error)?;
 
         list.items.drain(start..end);
         list.recalculate_parent_ids();
 
         save_todo_list(&list)
-            .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
+            .into_mcp_storage_error().map_err(format_error)?;
 
         info!(deleted_count = deleted_count, "delete_todo completed");
         Ok(Json(DeleteTodoResponse {
@@ -348,7 +332,7 @@ impl TodoMcpServer {
         let response = TodoItemResponse::from(&*item);
 
         save_todo_list(&list)
-            .map_err(|e| format_error(McpErrorDetail::storage_error(e.to_string())))?;
+            .into_mcp_storage_error().map_err(format_error)?;
 
         info!(id = %response.id, new_state = %response.state, "mark_complete completed");
         Ok(Json(response))

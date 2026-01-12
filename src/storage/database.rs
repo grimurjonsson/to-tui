@@ -1,10 +1,17 @@
 use crate::todo::{TodoItem, TodoList, TodoState};
 use crate::utils::paths::get_to_tui_dir;
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use uuid::Uuid;
+
+/// Parse an RFC3339 timestamp string into a DateTime<Utc>
+fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.with_timezone(&Utc))
+}
 
 fn get_db_path() -> Result<PathBuf> {
     let dir = get_to_tui_dir()?;
@@ -63,25 +70,19 @@ impl TodoRowData {
         todo.description = self.description;
         todo.collapsed = self.collapsed != 0;
 
-        if let Some(s) = self.created_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.created_at = dt.with_timezone(&chrono::Utc);
+        if let Some(s) = self.created_at_str
+            && let Some(dt) = parse_rfc3339(&s) {
+                todo.created_at = dt;
             }
-        }
-        if let Some(s) = self.updated_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.modified_at = dt.with_timezone(&chrono::Utc);
+        if let Some(s) = self.updated_at_str
+            && let Some(dt) = parse_rfc3339(&s) {
+                todo.modified_at = dt;
             }
-        }
         if let Some(s) = self.completed_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.completed_at = Some(dt.with_timezone(&chrono::Utc));
-            }
+            todo.completed_at = parse_rfc3339(&s);
         }
         if let Some(s) = self.deleted_at_str {
-            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&s) {
-                todo.deleted_at = Some(dt.with_timezone(&chrono::Utc));
-            }
+            todo.deleted_at = parse_rfc3339(&s);
         }
 
         todo

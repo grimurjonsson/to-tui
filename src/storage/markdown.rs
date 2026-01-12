@@ -58,11 +58,10 @@ pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Re
             continue;
         }
 
-        if let Some(desc) = pending_description.take() {
-            if let Some(last_item) = items.last_mut() {
+        if let Some(desc) = pending_description.take()
+            && let Some(last_item) = items.last_mut() {
                 last_item.description = Some(desc);
             }
-        }
 
         if let Some(mut item) = parse_todo_line(line)? {
             let parent_id = find_parent_id(&items, item.indent_level);
@@ -71,11 +70,10 @@ pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Re
         }
     }
 
-    if let Some(desc) = pending_description.take() {
-        if let Some(last_item) = items.last_mut() {
+    if let Some(desc) = pending_description.take()
+        && let Some(last_item) = items.last_mut() {
             last_item.description = Some(desc);
         }
-    }
 
     Ok(TodoList::with_items(date, file_path, items))
 }
@@ -133,8 +131,8 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
 }
 
 fn parse_id(content: &str) -> (String, Option<uuid::Uuid>) {
-    if let Some(start) = content.find("@id(") {
-        if let Some(end) = content[start..].find(')') {
+    if let Some(start) = content.find("@id(")
+        && let Some(end) = content[start..].find(')') {
             let id_str = &content[start + 4..start + end];
             let id = uuid::Uuid::parse_str(id_str).ok();
 
@@ -151,13 +149,12 @@ fn parse_id(content: &str) -> (String, Option<uuid::Uuid>) {
             }
             return (cleaned, id);
         }
-    }
     (content.to_string(), None)
 }
 
 fn parse_due_date(content: &str) -> (String, Option<NaiveDate>) {
-    if let Some(start) = content.find("@due(") {
-        if let Some(end) = content[start..].find(')') {
+    if let Some(start) = content.find("@due(")
+        && let Some(end) = content[start..].find(')') {
             let date_str = &content[start + 5..start + end];
             let due_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
 
@@ -174,7 +171,6 @@ fn parse_due_date(content: &str) -> (String, Option<NaiveDate>) {
             }
             return (cleaned, due_date);
         }
-    }
     (content.to_string(), None)
 }
 
