@@ -6,7 +6,7 @@ Add clipboard support to to-tui, enabling users to copy todo text to the system 
 
 ## Phases
 
-- [ ] **Phase 1: Clipboard Support** - Implement `y` key to copy current todo text to system clipboard
+- [x] **Phase 1: Clipboard Support** - Implement `y` key to copy current todo text to system clipboard
 
 ## Phase Details
 
@@ -23,11 +23,11 @@ Add clipboard support to to-tui, enabling users to copy todo text to the system 
 **Plans**: 2 plans in 2 waves
 
 Plans:
-- [ ] 01-01: Add arboard dependency and clipboard module (Wave 1)
-- [ ] 01-02: Implement copy action and keybinding (Wave 2)
+- [x] 01-01: Add arboard dependency and clipboard module (Wave 1)
+- [x] 01-02: Implement copy action and keybinding (Wave 2)
 
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Clipboard Support | 0/2 | Planned | - |
+| 1. Clipboard Support | 2/2 | ✓ Complete | 2026-01-17 |

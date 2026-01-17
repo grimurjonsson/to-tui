@@ -9,10 +9,10 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Clipboard
 
-- [ ] **CLIP-01**: User can copy current todo text to system clipboard
-- [ ] **CLIP-02**: User can press `y` key in Navigate mode to trigger copy
-- [ ] **CLIP-03**: User sees status bar confirmation after successful copy
-- [ ] **CLIP-04**: User sees error message when clipboard is unavailable
+- [x] **CLIP-01**: User can copy current todo text to system clipboard
+- [x] **CLIP-02**: User can press `y` key in Navigate mode to trigger copy
+- [x] **CLIP-03**: User sees status bar confirmation after successful copy
+- [x] **CLIP-04**: User sees error message when clipboard is unavailable
 
 ## v2 Requirements
 
@@ -46,10 +46,10 @@ Which phases cover which requirements. Updated by create-roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| CLIP-01 | Phase 1 | Pending |
-| CLIP-02 | Phase 1 | Pending |
-| CLIP-03 | Phase 1 | Pending |
-| CLIP-04 | Phase 1 | Pending |
+| CLIP-01 | Phase 1 | Complete |
+| CLIP-02 | Phase 1 | Complete |
+| CLIP-03 | Phase 1 | Complete |
+| CLIP-04 | Phase 1 | Complete |
 
 **Coverage:**
 - v1 requirements: 4 total
@@ -58,4 +58,4 @@ Which phases cover which requirements. Updated by create-roadmap.
 
 ---
 *Requirements defined: 2026-01-17*
-*Last updated: 2026-01-17 after roadmap creation*
+*Last updated: 2026-01-17 after Phase 1 completion*
