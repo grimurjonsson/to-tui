@@ -1,5 +1,6 @@
 use super::mode::Mode;
 use super::state::{AppState, PluginSubState};
+use crate::clipboard::copy_to_clipboard;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::PluginRegistry;
 use crate::storage::{execute_rollover, find_rollover_candidates, save_todo_list, soft_delete_todos};
@@ -383,6 +384,25 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 state.open_rollover_modal(source_date, items);
             } else {
                 state.set_status_message("No incomplete items to rollover".to_string());
+            }
+        }
+        Action::Yank => {
+            if let Some(item) = state.selected_item() {
+                let text = item.content.clone();
+                match copy_to_clipboard(&text) {
+                    Ok(()) => {
+                        // Truncate display text if too long
+                        let display_text = if text.len() > 40 {
+                            format!("{}...", &text[..37])
+                        } else {
+                            text.clone()
+                        };
+                        state.set_status_message(format!("Copied: {}", display_text));
+                    }
+                    Err(e) => {
+                        state.set_status_message(format!("Clipboard error: {}", e));
+                    }
+                }
             }
         }
         _ => {}
