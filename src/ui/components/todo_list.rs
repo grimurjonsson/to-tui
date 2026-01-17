@@ -3,33 +3,18 @@ use crate::todo::TodoState;
 use crate::ui::theme::Theme;
 use crate::utils::unicode::{after_first_char, first_char_as_str};
 use ratatui::{
-    layout::Rect,
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState},
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
-/// Compute the style for a todo item based on its state and cursor position
-fn compute_item_style(
-    state: TodoState,
-    theme: &Theme,
-    is_cursor: bool,
-    is_in_selection: bool,
-) -> Style {
-    if is_cursor {
-        let cursor_color = match state {
-            TodoState::Checked => Color::DarkGray,
-            TodoState::Question => theme.question,
-            TodoState::Exclamation => theme.exclamation,
-            TodoState::InProgress => theme.in_progress,
-            _ => Color::White,
-        };
-        Style::default()
-            .fg(cursor_color)
-            .add_modifier(Modifier::REVERSED)
-    } else if is_in_selection {
+/// Compute the style for a todo item based on its state and selection
+/// Note: Cursor highlighting is now handled by ListState's highlight_style
+fn compute_item_style(state: TodoState, theme: &Theme, is_in_selection: bool) -> Style {
+    if is_in_selection {
         Style::default()
             .bg(Color::DarkGray)
             .fg(theme.foreground)
@@ -44,7 +29,7 @@ fn compute_item_style(
     }
 }
 
-pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
+pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
     let hidden_indices = state.todo_list.build_hidden_indices();
     let available_width = area.width.saturating_sub(2) as usize;
@@ -101,24 +86,16 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         let checkbox_width = checkbox_with_space.width();
         let content_with_extras = format!("{}{}{}", item.content, due_date_str, collapse_indicator);
 
-        let is_cursor = idx == state.cursor_position && state.mode == Mode::Navigate;
-        let is_visual_cursor = idx == state.cursor_position && state.mode == Mode::Visual;
         let is_in_selection = state.is_selected(idx) && state.mode == Mode::Visual;
 
-        // For prefix, we use foreground color when not highlighted (cursor/selection)
+        // For prefix, we use foreground color when not in selection
         let prefix_style = compute_item_style(
             TodoState::Empty, // Use Empty to get foreground color for prefix
             &state.theme,
-            is_cursor || is_visual_cursor,
             is_in_selection,
         );
 
-        let content_style = compute_item_style(
-            item.state,
-            &state.theme,
-            is_cursor || is_visual_cursor,
-            is_in_selection,
-        );
+        let content_style = compute_item_style(item.state, &state.theme, is_in_selection);
 
         let content_max_width = available_width.saturating_sub(prefix_width + checkbox_width);
 
@@ -306,17 +283,51 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     } else {
         ""
     };
+
+    // Calculate scroll position indicator
+    let total_visible_items = state.visible_item_count();
+    let viewport_height = area.height.saturating_sub(2) as usize; // minus borders
+    let scroll_info = if total_visible_items > viewport_height {
+        let scroll_offset = state.list_state.offset();
+        let end_idx = (scroll_offset + viewport_height).min(total_visible_items);
+        format!(" [{}-{}/{}]", scroll_offset + 1, end_idx, total_visible_items)
+    } else {
+        String::new()
+    };
+
     let title = format!(
-        " Todo List - {}{} ",
+        " Todo List - {}{}{} ",
         state.viewing_date.format("%B %d, %Y"),
-        title_suffix
+        title_suffix,
+        scroll_info
     );
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::ALL).title(title))
-        .style(Style::default().fg(state.theme.foreground));
+        .style(Style::default().fg(state.theme.foreground))
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-    f.render_widget(list, area);
+    f.render_stateful_widget(list, area, &mut state.list_state);
+
+    // Render scrollbar only when content exceeds viewport
+    if total_visible_items > viewport_height {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+
+        let mut scrollbar_state = ScrollbarState::new(total_visible_items)
+            .viewport_content_length(viewport_height)
+            .position(state.list_state.offset());
+
+        f.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
 }
 
 fn build_wrapped_edit_lines(state: &AppState, available_width: usize) -> Vec<Line<'static>> {

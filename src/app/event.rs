@@ -1,5 +1,6 @@
 use super::mode::Mode;
 use super::state::{AppState, PluginSubState};
+use crate::clipboard::copy_to_clipboard;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::PluginRegistry;
 use crate::storage::{execute_rollover, find_rollover_candidates, save_todo_list, soft_delete_todos};
@@ -24,7 +25,29 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
-    if state.mode != Mode::Navigate || state.is_readonly() {
+    if state.mode != Mode::Navigate {
+        return Ok(());
+    }
+
+    // Handle scroll events (allowed even in readonly mode for viewing archived dates)
+    match mouse.kind {
+        MouseEventKind::ScrollUp => {
+            for _ in 0..3 {
+                state.move_cursor_up();
+            }
+            return Ok(());
+        }
+        MouseEventKind::ScrollDown => {
+            for _ in 0..3 {
+                state.move_cursor_down();
+            }
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    // Block other mouse interactions in readonly mode
+    if state.is_readonly() {
         return Ok(());
     }
 
@@ -64,6 +87,8 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
                     state.cursor_position = item_idx;
                 }
             }
+            // Sync list_state to update visual highlight
+            state.sync_list_state();
         }
     }
 
@@ -93,13 +118,29 @@ fn map_click_to_item(
         return None;
     }
 
+    // Calculate scroll offset based on current selection, not list_state.offset()
+    // which may be stale (only updated during render)
+    let scroll_offset = calculate_expected_offset(state);
+
     let visual_row = clicked_row - list_start_row;
     let mut current_visual_row = 0;
+    let mut list_item_count = 0;
 
     let hidden_indices = state.todo_list.build_hidden_indices();
 
     for (idx, item) in state.todo_list.items.iter().enumerate() {
         if hidden_indices.contains(&idx) {
+            continue;
+        }
+
+        // Skip ListItems that are scrolled past (above viewport)
+        // Each todo is 1 ListItem, plus 1 more if it has an expanded description
+        if list_item_count < scroll_offset {
+            list_item_count += 1;
+            // Account for expanded description as separate ListItem
+            if !item.collapsed && item.description.is_some() {
+                list_item_count += 1;
+            }
             continue;
         }
 
@@ -122,9 +163,49 @@ fn map_click_to_item(
         }
 
         current_visual_row += item_height;
+        list_item_count += 1;
+
+        // Account for expanded description box as separate ListItem with its own visual height
+        if !item.collapsed && item.description.is_some() {
+            let desc_height = calculate_description_visual_height(state, item);
+            // Click on description box area - treat as clicking the parent item
+            if visual_row >= current_visual_row && visual_row < current_visual_row + desc_height {
+                return Some((idx, ClickZone::Content));
+            }
+            current_visual_row += desc_height;
+            list_item_count += 1;
+        }
     }
 
     None
+}
+
+/// Calculate the expected scroll offset based on current selection.
+/// This mirrors what ratatui would calculate during render.
+fn calculate_expected_offset(state: &AppState) -> usize {
+    let selected = match state.list_state.selected() {
+        Some(s) => s,
+        None => return 0,
+    };
+
+    // Viewport height = terminal height - borders (2) - status bar (1)
+    let viewport_height = state.terminal_height.saturating_sub(3).max(1) as usize;
+
+    // Current offset from list_state (may be stale but gives us a starting point)
+    let current_offset = state.list_state.offset();
+
+    // If selected item is above current viewport, offset should be at selected
+    if selected < current_offset {
+        return selected;
+    }
+
+    // If selected item is below current viewport, scroll to show it
+    if selected >= current_offset + viewport_height {
+        return selected.saturating_sub(viewport_height - 1);
+    }
+
+    // Selected item is within viewport, keep current offset
+    current_offset
 }
 
 fn calculate_item_visual_height(
@@ -132,23 +213,76 @@ fn calculate_item_visual_height(
     idx: usize,
     item: &crate::todo::TodoItem,
 ) -> usize {
-    let mut height = 1;
+    // Calculate available width for content (terminal - borders)
+    let available_width = state.terminal_width.saturating_sub(2) as usize;
 
-    let has_description = item.description.is_some();
-    let is_collapsed = item.collapsed;
+    // Calculate prefix width: indent + fold_icon + checkbox
+    let indent_width = item.indent_level * 2;
+    let fold_icon_width = 2; // "▶ " or "▼ " or "  "
+    let checkbox_width = 4; // "[x] "
+    let prefix_width = indent_width + fold_icon_width + checkbox_width;
 
-    if has_description && !is_collapsed
-        && let Some(ref desc) = item.description {
-            let line_count = desc.lines().count().max(1);
-            height += line_count + 2;
-        }
+    // Content area width
+    let content_max_width = available_width.saturating_sub(prefix_width);
+
+    // Calculate wrapped height for the todo content
+    let due_date_len = item
+        .due_date
+        .map(|_| 13) // " [YYYY-MM-DD]"
+        .unwrap_or(0);
 
     let has_children = state.todo_list.has_children(idx);
-    if is_collapsed && has_children {
-        return 1;
-    }
+    let collapse_indicator_len = if item.collapsed && has_children {
+        8 // " (X/Y)" rough estimate
+    } else {
+        0
+    };
 
+    let content_len = item.content.len() + due_date_len + collapse_indicator_len;
+    let wrapped_lines = if content_max_width > 0 {
+        (content_len + content_max_width - 1) / content_max_width
+    } else {
+        1
+    };
+    let height = wrapped_lines.max(1);
+
+    // Note: Description boxes are handled separately via calculate_description_visual_height
     height
+}
+
+/// Calculate the visual height of an expanded description box.
+/// Description boxes have: top border (1) + content lines + bottom border (1)
+fn calculate_description_visual_height(
+    state: &AppState,
+    item: &crate::todo::TodoItem,
+) -> usize {
+    if let Some(ref desc) = item.description {
+        // Calculate box width similar to rendering
+        let available_width = state.terminal_width.saturating_sub(2) as usize;
+        let box_indent_width = item.indent_level * 2 + 4; // base indent + "    "
+        let inner_width = available_width.saturating_sub(box_indent_width + 4); // 4 for borders and padding
+
+        // Count wrapped lines
+        let mut line_count = 0;
+        for paragraph in desc.split('\n') {
+            if paragraph.is_empty() {
+                line_count += 1;
+            } else {
+                let para_len = paragraph.len();
+                let wrapped = if inner_width > 0 {
+                    (para_len + inner_width - 1) / inner_width
+                } else {
+                    1
+                };
+                line_count += wrapped.max(1);
+            }
+        }
+
+        // top border + content lines + bottom border
+        line_count + 2
+    } else {
+        0
+    }
 }
 
 fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
@@ -383,6 +517,25 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 state.open_rollover_modal(source_date, items);
             } else {
                 state.set_status_message("No incomplete items to rollover".to_string());
+            }
+        }
+        Action::Yank => {
+            if let Some(item) = state.selected_item() {
+                let text = item.content.clone();
+                match copy_to_clipboard(&text) {
+                    Ok(()) => {
+                        // Truncate display text if too long
+                        let display_text = if text.len() > 40 {
+                            format!("{}...", &text[..37])
+                        } else {
+                            text.clone()
+                        };
+                        state.set_status_message(format!("Copied: {}", display_text));
+                    }
+                    Err(e) => {
+                        state.set_status_message(format!("Clipboard error: {}", e));
+                    }
+                }
             }
         }
         _ => {}

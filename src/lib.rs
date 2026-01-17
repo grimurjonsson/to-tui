@@ -1,3 +1,4 @@
+pub mod clipboard;
 pub mod mcp;
 pub mod plugin;
 pub mod storage;

@@ -14,7 +14,11 @@ use ratatui::{
     Frame,
 };
 
-pub fn render(f: &mut Frame, state: &AppState) {
+pub fn render(f: &mut Frame, state: &mut AppState) {
+    // Update terminal dimensions for click and scroll calculations
+    state.terminal_width = f.area().width;
+    state.terminal_height = f.area().height;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

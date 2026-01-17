@@ -7,6 +7,7 @@ use crate::todo::{TodoItem, TodoList};
 use crate::ui::theme::Theme;
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
+use ratatui::widgets::ListState;
 use std::sync::mpsc;
 use std::time::Instant;
 
@@ -70,6 +71,11 @@ pub struct AppState {
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
     pub spinner_frame: usize,
     pub pending_rollover: Option<PendingRollover>,
+    pub list_state: ListState,
+    /// Terminal width, updated on each render for click calculations
+    pub terminal_width: u16,
+    /// Terminal height, updated on each render for scroll calculations
+    pub terminal_height: u16,
 }
 
 impl AppState {
@@ -111,11 +117,70 @@ impl AppState {
             plugin_result_rx: None,
             spinner_frame: 0,
             pending_rollover: None,
+            list_state: ListState::default(),
+            terminal_width: 80,  // Default, updated on first render
+            terminal_height: 24, // Default, updated on first render
         }
     }
 
     pub fn is_readonly(&self) -> bool {
         self.viewing_date != self.today
+    }
+
+    /// Returns the count of list items rendered (excluding hidden collapsed children,
+    /// but including expanded description boxes which are separate ListItems).
+    /// Used for scroll position indicator and scrollbar.
+    pub fn visible_item_count(&self) -> usize {
+        let hidden = self.todo_list.build_hidden_indices();
+        let mut count = 0;
+        for (i, item) in self.todo_list.items.iter().enumerate() {
+            if hidden.contains(&i) {
+                continue;
+            }
+            count += 1;
+            // Expanded descriptions render as a separate ListItem
+            if !item.collapsed && item.description.is_some() {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Sync list_state selection with cursor_position among visible items only.
+    /// This calculates the visible index (excluding hidden collapsed children,
+    /// but accounting for expanded description boxes which are separate ListItems).
+    /// Also adjusts scroll offset to keep selected item visible.
+    pub fn sync_list_state(&mut self) {
+        let hidden_indices = self.todo_list.build_hidden_indices();
+        let mut visible_index = 0;
+        for i in 0..self.cursor_position {
+            if hidden_indices.contains(&i) {
+                continue;
+            }
+            visible_index += 1;
+            // Expanded descriptions render as a separate ListItem
+            if !self.todo_list.items[i].collapsed && self.todo_list.items[i].description.is_some() {
+                visible_index += 1;
+            }
+        }
+        // Only set selection if cursor is on a visible item
+        if !hidden_indices.contains(&self.cursor_position) {
+            self.list_state.select(Some(visible_index));
+
+            // Adjust offset to ensure selected item is visible
+            // Viewport height = terminal height - borders (2) - status bar (1)
+            let viewport_height = self.terminal_height.saturating_sub(3).max(1) as usize;
+            let current_offset = self.list_state.offset();
+
+            // If selected item is above viewport, scroll up
+            if visible_index < current_offset {
+                *self.list_state.offset_mut() = visible_index;
+            }
+            // If selected item is below viewport, scroll down
+            else if visible_index >= current_offset + viewport_height {
+                *self.list_state.offset_mut() = visible_index.saturating_sub(viewport_height - 1);
+            }
+        }
     }
 
     pub fn navigate_to_date(&mut self, date: NaiveDate) -> Result<()> {
@@ -132,6 +197,7 @@ impl AppState {
         self.edit_cursor_pos = 0;
         self.is_creating_new_item = false;
         self.insert_above = false;
+        self.sync_list_state();
         Ok(())
     }
 
@@ -176,6 +242,7 @@ impl AppState {
                 self.cursor_position -= 1;
             }
         }
+        self.sync_list_state();
     }
 
     pub fn move_cursor_down(&mut self) {
@@ -194,6 +261,7 @@ impl AppState {
                 }
             }
         }
+        self.sync_list_state();
     }
 
     fn is_item_hidden(&self, index: usize) -> bool {
@@ -233,6 +301,7 @@ impl AppState {
         } else {
             self.cursor_position = 0;
         }
+        self.sync_list_state();
     }
 
     pub fn clear_selection(&mut self) {

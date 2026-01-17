@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod cli;
+mod clipboard;
 mod config;
 mod keybindings;
 mod plugin;
