@@ -78,6 +78,8 @@ pub struct AppState {
     pub terminal_width: u16,
     /// Terminal height, updated on each render for scroll calculations
     pub terminal_height: u16,
+    /// Help overlay scroll offset
+    pub help_scroll: u16,
 }
 
 impl AppState {
@@ -131,6 +133,7 @@ impl AppState {
             list_state: ListState::default(),
             terminal_width: 80,  // Default, updated on first render
             terminal_height: 24, // Default, updated on first render
+            help_scroll: 0,
         };
         // Sync list state with cursor position
         state.sync_list_state();

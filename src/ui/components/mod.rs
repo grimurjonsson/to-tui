@@ -7,10 +7,10 @@ use crate::app::AppState;
 use chrono::{Local, NaiveDate};
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
 
@@ -47,55 +47,267 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 }
 
 fn render_help_overlay(f: &mut Frame, state: &AppState) {
-    let help_text = r#"
-    TODO-CLI Help
+    let key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(state.theme.foreground);
+    let section_style = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let dim_style = Style::default().fg(Color::DarkGray);
 
-    Navigate Mode:
-      ↑/↓ or j/k            Move cursor
-      x                     Toggle checked/unchecked
-      Space                 Cycle state ([ ] → [x] → [?] → [!])
-      Alt/Option+Shift+↑/↓  Move item with children
-      Alt/Option+Shift+←/→  Indent/outdent with children
-      Tab / Shift+Tab       Indent/outdent single item
-      i                     Enter Insert mode
-      Enter / n             New item
-      dd                    Delete item
-      c                     Collapse/expand children
-      p                     Open plugins menu
-      u                     Undo
-      ?                     Toggle help
-      Esc                   Close help
-      q                     Quit (or close help)
+    let mut lines: Vec<Line> = vec![];
 
-    Day Navigation:
-      <                     Previous day (archived, readonly)
-      >                     Next day
-      T                     Go to today
+    // Title
+    lines.push(Line::from(vec![
+        Span::styled("  TO-TUI Help", Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)),
+    ]));
+    lines.push(Line::from(""));
 
-    Insert Mode:
-      Esc                   Save and exit to Navigate
-      Enter                 Save and create new item
-      Tab / Shift+Tab       Indent/outdent item
-      ←/→                   Move cursor
-      Home/End              Jump to start/end
-      Backspace             Delete character
-    "#;
+    // Navigation section
+    lines.push(Line::from(Span::styled("  ── Navigation ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    j / ↓           ", key_style),
+        Span::styled("Move cursor down", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    k / ↑           ", key_style),
+        Span::styled("Move cursor up", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    h / ←           ", key_style),
+        Span::styled("Collapse item or go to parent", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    l / →           ", key_style),
+        Span::styled("Expand collapsed item", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    c               ", key_style),
+        Span::styled("Toggle collapse/expand", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Item State section
+    lines.push(Line::from(Span::styled("  ── Item State ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    x               ", key_style),
+        Span::styled("Toggle done/undone", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Space           ", key_style),
+        Span::styled("Cycle state: [ ]→[x]→[*]→[?]→[!]", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Item Management section
+    lines.push(Line::from(Span::styled("  ── Item Management ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    n / o           ", key_style),
+        Span::styled("New item below", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    O               ", key_style),
+        Span::styled("New item above", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Enter           ", key_style),
+        Span::styled("New item at same indent level", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    i               ", key_style),
+        Span::styled("Edit current item", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    dd              ", key_style),
+        Span::styled("Delete item (with children)", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    y               ", key_style),
+        Span::styled("Yank (copy) item to clipboard", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    u               ", key_style),
+        Span::styled("Undo last action", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Indentation section
+    lines.push(Line::from(Span::styled("  ── Indentation ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    Tab             ", key_style),
+        Span::styled("Indent item", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Shift+Tab       ", key_style),
+        Span::styled("Outdent item", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Alt+Shift+→     ", key_style),
+        Span::styled("Indent with children", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Alt+Shift+←     ", key_style),
+        Span::styled("Outdent with children", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Move Items section
+    lines.push(Line::from(Span::styled("  ── Move Items ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    Alt+Shift+↑     ", key_style),
+        Span::styled("Move item up (with children)", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Alt+Shift+↓     ", key_style),
+        Span::styled("Move item down (with children)", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Visual Mode section
+    lines.push(Line::from(Span::styled("  ── Visual Mode ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    v               ", key_style),
+        Span::styled("Enter visual mode (select multiple)", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Esc / v / q     ", key_style),
+        Span::styled("Exit visual mode", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("    "),
+        Span::styled("In visual: ", dim_style),
+        Span::styled("j/k", key_style),
+        Span::styled(" extend selection, ", dim_style),
+        Span::styled("Tab/Shift+Tab", key_style),
+        Span::styled(" indent/outdent", dim_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Day Navigation section
+    lines.push(Line::from(Span::styled("  ── Day Navigation ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    <               ", key_style),
+        Span::styled("Previous day (archived, readonly)", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    >               ", key_style),
+        Span::styled("Next day", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    T               ", key_style),
+        Span::styled("Go to today", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    R               ", key_style),
+        Span::styled("Open rollover modal", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Other section
+    lines.push(Line::from(Span::styled("  ── Other ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    p               ", key_style),
+        Span::styled("Open plugins menu", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    ?               ", key_style),
+        Span::styled("Toggle this help", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    q               ", key_style),
+        Span::styled("Quit", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Edit Mode section
+    lines.push(Line::from(Span::styled("  ── Edit Mode ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    Esc             ", key_style),
+        Span::styled("Save and exit edit mode", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Enter           ", key_style),
+        Span::styled("Save and create new item below", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    ← / →           ", key_style),
+        Span::styled("Move cursor", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Alt+← / Alt+→   ", key_style),
+        Span::styled("Move by word", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Home / Ctrl+a   ", key_style),
+        Span::styled("Go to start of line", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    End / Ctrl+e    ", key_style),
+        Span::styled("Go to end of line", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Tab / Shift+Tab ", key_style),
+        Span::styled("Indent/outdent while editing", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Backspace       ", key_style),
+        Span::styled("Delete character", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
+    // Footer hint
+    lines.push(Line::from(vec![
+        Span::styled("  ↑/↓ or j/k to scroll • Esc or ? to close", dim_style),
+    ]));
+
+    let total_lines = lines.len() as u16;
 
     // Center the help popup
-    let area = centered_rect(60, 60, f.area());
+    let area = centered_rect(65, 80, f.area());
+    let inner_height = area.height.saturating_sub(2); // Account for borders
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Help ")
-        .style(Style::default().bg(state.theme.background));
+    // Clamp scroll to valid range
+    let max_scroll = total_lines.saturating_sub(inner_height);
+    let scroll_offset = state.help_scroll.min(max_scroll) as usize;
 
-    let paragraph = Paragraph::new(help_text)
-        .block(block)
-        .style(Style::default().fg(state.theme.foreground))
-        .wrap(Wrap { trim: true });
+    // Create list items from visible lines only
+    let visible_items: Vec<ListItem> = lines
+        .into_iter()
+        .skip(scroll_offset)
+        .take(inner_height as usize)
+        .map(ListItem::new)
+        .collect();
+
+    let list_widget = List::new(visible_items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Help ")
+                .title_bottom(Line::from(" ↑↓ scroll ").centered())
+                .style(Style::default().bg(state.theme.background)),
+        );
 
     f.render_widget(Clear, area);
-    f.render_widget(paragraph, area);
+    f.render_widget(list_widget, area);
+
+    // Render scrollbar if content exceeds viewport
+    if total_lines > inner_height {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+
+        // For scrollbar: content_length is the scrollable range (max_scroll + 1),
+        // and position is where we are in that range
+        let max_scroll = total_lines.saturating_sub(inner_height) as usize;
+        let mut scrollbar_state = ScrollbarState::new(max_scroll + 1)
+            .position(scroll_offset);
+
+        f.render_stateful_widget(
+            scrollbar,
+            area.inner(Margin {
+                vertical: 1,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {

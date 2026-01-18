@@ -12,7 +12,38 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use std::sync::mpsc;
 use std::thread;
 
+/// Total number of lines in the help content (must match render_help_overlay)
+const HELP_TOTAL_LINES: u16 = 57;
+
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    // Handle help overlay scrolling when help is visible
+    if state.show_help {
+        // Calculate max scroll based on terminal height
+        // Help popup is 80% of terminal height, minus 2 for borders
+        let popup_height = (state.terminal_height * 80) / 100;
+        let inner_height = popup_height.saturating_sub(2);
+        let max_scroll = HELP_TOTAL_LINES.saturating_sub(inner_height);
+
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.help_scroll = state.help_scroll.saturating_sub(1);
+                return Ok(());
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if state.help_scroll < max_scroll {
+                    state.help_scroll = state.help_scroll.saturating_add(1);
+                }
+                return Ok(());
+            }
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                state.show_help = false;
+                state.help_scroll = 0;
+                return Ok(());
+            }
+            _ => return Ok(()),
+        }
+    }
+
     match state.mode {
         Mode::Navigate => handle_navigate_mode(key, state)?,
         Mode::Visual => handle_visual_mode(key, state)?,
@@ -25,6 +56,24 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
+    // Handle scroll events in help overlay
+    if state.show_help {
+        let popup_height = (state.terminal_height * 80) / 100;
+        let inner_height = popup_height.saturating_sub(2);
+        let max_scroll = HELP_TOTAL_LINES.saturating_sub(inner_height);
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                state.help_scroll = state.help_scroll.saturating_sub(3);
+            }
+            MouseEventKind::ScrollDown => {
+                state.help_scroll = state.help_scroll.saturating_add(3).min(max_scroll);
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     if state.mode != Mode::Navigate {
         return Ok(());
     }

@@ -296,7 +296,11 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
     // Calculate scroll position indicator
     let total_visible_items = state.visible_item_count();
     let viewport_height = area.height.saturating_sub(2) as usize; // minus borders
-    let scroll_info = if total_visible_items > viewport_height {
+
+    // Count actual rendered lines (ListItems may have multiple lines each for wrapped text)
+    let total_rendered_lines: usize = items.iter().map(|item| item.height()).sum();
+
+    let scroll_info = if total_rendered_lines > viewport_height {
         let scroll_offset = state.list_state.offset();
         let end_idx = (scroll_offset + viewport_height).min(total_visible_items);
         format!(" [{}-{}/{}]", scroll_offset + 1, end_idx, total_visible_items)
@@ -319,7 +323,7 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
     f.render_stateful_widget(list, area, &mut state.list_state);
 
     // Render scrollbar only when content exceeds viewport
-    if total_visible_items > viewport_height {
+    if total_rendered_lines > viewport_height {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
