@@ -88,7 +88,7 @@ impl AppState {
     ) -> Self {
         let today = Local::now().date_naive();
         let viewing_date = todo_list.date;
-        Self {
+        let mut state = Self {
             todo_list,
             cursor_position: 0,
             mode: Mode::Navigate,
@@ -120,7 +120,10 @@ impl AppState {
             list_state: ListState::default(),
             terminal_width: 80,  // Default, updated on first render
             terminal_height: 24, // Default, updated on first render
-        }
+        };
+        // Select the first item on startup
+        state.sync_list_state();
+        state
     }
 
     pub fn is_readonly(&self) -> bool {
