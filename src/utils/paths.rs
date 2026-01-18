@@ -28,6 +28,11 @@ pub fn get_pid_file_path() -> Result<PathBuf> {
     Ok(todo_dir.join("server.pid"))
 }
 
+pub fn get_ui_cache_path() -> Result<PathBuf> {
+    let todo_dir = get_to_tui_dir()?;
+    Ok(todo_dir.join("ui_cache.json"))
+}
+
 pub fn get_daily_file_path(date: NaiveDate) -> Result<PathBuf> {
     let dailies_dir = get_dailies_dir()?;
     let filename = format!("{}.md", date.format("%Y-%m-%d"));

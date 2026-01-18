@@ -3,6 +3,7 @@ use crate::keybindings::{KeyBinding, KeybindingCache};
 use crate::plugin::{GeneratorInfo, PluginRegistry};
 use crate::storage::file::load_todo_list;
 use crate::storage::load_todos_for_viewing;
+use crate::storage::UiCache;
 use crate::todo::{TodoItem, TodoList};
 use crate::ui::theme::Theme;
 use anyhow::Result;
@@ -10,6 +11,7 @@ use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
 use std::sync::mpsc;
 use std::time::Instant;
+use uuid::Uuid;
 
 const MAX_UNDO_HISTORY: usize = 50;
 
@@ -85,12 +87,21 @@ impl AppState {
         keybindings: KeybindingCache,
         timeoutlen: u64,
         plugin_registry: PluginRegistry,
+        ui_cache: Option<UiCache>,
     ) -> Self {
         let today = Local::now().date_naive();
         let viewing_date = todo_list.date;
+
+        // Find cursor position from cached selected_todo_id
+        let cursor_position = ui_cache
+            .as_ref()
+            .and_then(|cache| cache.selected_todo_id)
+            .and_then(|id| Self::find_item_index_by_id(&todo_list, id))
+            .unwrap_or(0);
+
         let mut state = Self {
             todo_list,
-            cursor_position: 0,
+            cursor_position,
             mode: Mode::Navigate,
             edit_buffer: String::new(),
             edit_cursor_pos: 0,
@@ -121,9 +132,18 @@ impl AppState {
             terminal_width: 80,  // Default, updated on first render
             terminal_height: 24, // Default, updated on first render
         };
-        // Select the first item on startup
+        // Sync list state with cursor position
         state.sync_list_state();
         state
+    }
+
+    fn find_item_index_by_id(todo_list: &TodoList, id: Uuid) -> Option<usize> {
+        todo_list.items.iter().position(|item| item.id == id)
+    }
+
+    /// Get the currently selected todo's ID for caching
+    pub fn get_selected_todo_id(&self) -> Option<Uuid> {
+        self.todo_list.items.get(self.cursor_position).map(|item| item.id)
     }
 
     pub fn is_readonly(&self) -> bool {

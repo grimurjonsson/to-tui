@@ -22,7 +22,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use storage::{find_rollover_candidates, save_todo_list};
+use storage::{UiCache, find_rollover_candidates, save_todo_list};
 use storage::file::{file_exists, load_todo_list};
 use ui::theme::Theme;
 use utils::paths::get_pid_file_path;
@@ -68,11 +68,20 @@ fn main() -> Result<()> {
 
             let list = load_today_list()?;
 
+            // Load UI cache for restoring cursor position
+            let ui_cache = UiCache::load().ok();
+
             let theme = Theme::from_config(&config);
             let keybindings = KeybindingCache::from_config(&config.keybindings);
             let plugin_registry = plugin::PluginRegistry::new();
-            let mut state =
-                app::AppState::new(list, theme, keybindings, config.timeoutlen, plugin_registry);
+            let mut state = app::AppState::new(
+                list,
+                theme,
+                keybindings,
+                config.timeoutlen,
+                plugin_registry,
+                ui_cache,
+            );
 
             // Check for rollover candidates and show modal on startup if found
             if let Ok(Some((source_date, items))) = find_rollover_candidates() {

@@ -2,6 +2,7 @@ pub mod components;
 pub mod theme;
 
 use crate::app::{event::handle_key_event, event::handle_mouse_event, AppState};
+use crate::storage::UiCache;
 use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
@@ -124,6 +125,11 @@ fn run_app(
         }
 
         if state.should_quit {
+            // Save UI cache before quitting
+            let cache = UiCache {
+                selected_todo_id: state.get_selected_todo_id(),
+            };
+            let _ = cache.save(); // Ignore errors on save
             break;
         }
     }
