@@ -312,6 +312,44 @@ for BINARY_NAME in "${BINARIES[@]}"; do
 done
 
 echo ""
+
+# Migrate data from .todo-cli to .to-tui if needed
+LEGACY_DIR="$HOME/.todo-cli"
+NEW_DIR="$HOME/.to-tui"
+
+if [ -d "$LEGACY_DIR" ] && [ ! -f "$NEW_DIR/todos.db" ]; then
+    # Check if legacy dir has data worth migrating
+    if [ -f "$LEGACY_DIR/todos.db" ] || [ -d "$LEGACY_DIR/dailies" ]; then
+        echo -e "${BLUE}→${RESET} Migrating data from ${DIM}$LEGACY_DIR${RESET} to ${DIM}$NEW_DIR${RESET}..."
+
+        # Create new directory
+        mkdir -p "$NEW_DIR"
+
+        # Migrate database
+        if [ -f "$LEGACY_DIR/todos.db" ]; then
+            cp "$LEGACY_DIR/todos.db" "$NEW_DIR/todos.db"
+            echo -e "  ${GREEN}✓${RESET} Migrated database: ${DIM}todos.db${RESET}"
+        fi
+
+        # Migrate dailies directory
+        if [ -d "$LEGACY_DIR/dailies" ]; then
+            cp -r "$LEGACY_DIR/dailies" "$NEW_DIR/dailies"
+            echo -e "  ${GREEN}✓${RESET} Migrated dailies directory"
+        fi
+
+        # Migrate config
+        if [ -f "$LEGACY_DIR/config.toml" ]; then
+            cp "$LEGACY_DIR/config.toml" "$NEW_DIR/config.toml"
+            echo -e "  ${GREEN}✓${RESET} Migrated config: ${DIM}config.toml${RESET}"
+        fi
+
+        echo ""
+        echo -e "${GREEN}${BOLD}✓${RESET} Migration complete!"
+        echo -e "  ${DIM}You can safely remove $LEGACY_DIR once you verify everything works.${RESET}"
+        echo ""
+    fi
+fi
+
 echo -e "${GREEN}${BOLD}╭─────────────────────────────────────╮${RESET}"
 echo -e "${GREEN}${BOLD}│${RESET}       ${GREEN}${BOLD}Installation complete!${RESET}        ${GREEN}${BOLD}│${RESET}"
 echo -e "${GREEN}${BOLD}╰─────────────────────────────────────╯${RESET}"
