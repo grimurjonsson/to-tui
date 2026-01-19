@@ -387,6 +387,8 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             | Action::MoveItemDown
             | Action::ToggleCollapse
             | Action::Undo
+            | Action::CyclePriority
+            | Action::SortByPriority
     );
 
     if state.is_readonly() && dominated_by_readonly {
@@ -412,6 +414,12 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::CycleState => {
             state.cycle_current_item_state();
+        }
+        Action::CyclePriority => {
+            state.cycle_priority();
+        }
+        Action::SortByPriority => {
+            state.sort_by_priority();
         }
         Action::Delete => {
             if !state.todo_list.items.is_empty() {

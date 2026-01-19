@@ -1,3 +1,4 @@
+use super::priority::Priority;
 use super::TodoItem;
 use anyhow::{anyhow, Result};
 use chrono::NaiveDate;
@@ -134,6 +135,77 @@ impl TodoList {
         self.items
             .insert(index, TodoItem::new(content, indent_level));
         Ok(())
+    }
+
+    /// Sort todos by priority at every level, keeping children grouped with their parents.
+    /// Sort order: P0 (highest) -> P1 -> P2 -> None (lowest)
+    /// Within same priority, maintains original relative order (stable sort).
+    pub fn sort_by_priority(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+
+        // Helper function to get sort key for priority
+        fn priority_sort_key(priority: Option<Priority>) -> u8 {
+            match priority {
+                Some(Priority::P0) => 0,
+                Some(Priority::P1) => 1,
+                Some(Priority::P2) => 2,
+                None => 3,
+            }
+        }
+
+        // Recursively sort items at a given indent level
+        // Returns sorted items with their subtrees
+        fn sort_at_level(items: &[TodoItem], target_level: usize) -> Vec<TodoItem> {
+            if items.is_empty() {
+                return Vec::new();
+            }
+
+            // Group items at target_level with their children
+            let mut groups: Vec<(u8, Vec<TodoItem>)> = Vec::new();
+            let mut i = 0;
+
+            while i < items.len() {
+                let item = &items[i];
+                if item.indent_level == target_level {
+                    // Find end of this item's subtree (all items with indent > target_level)
+                    let mut end = i + 1;
+                    while end < items.len() && items[end].indent_level > target_level {
+                        end += 1;
+                    }
+
+                    // Get subtree and recursively sort children
+                    let mut subtree = vec![item.clone()];
+                    if end > i + 1 {
+                        // Has children - recursively sort them
+                        let children = &items[i + 1..end];
+                        subtree.extend(sort_at_level(children, target_level + 1));
+                    }
+
+                    let sort_key = priority_sort_key(item.priority);
+                    groups.push((sort_key, subtree));
+                    i = end;
+                } else {
+                    // Item at different level - shouldn't happen at top call, handle gracefully
+                    let sort_key = priority_sort_key(item.priority);
+                    groups.push((sort_key, vec![item.clone()]));
+                    i += 1;
+                }
+            }
+
+            // Stable sort groups by priority key
+            groups.sort_by_key(|(key, _)| *key);
+
+            // Flatten back to vec
+            groups.into_iter().flat_map(|(_, items)| items).collect()
+        }
+
+        // Sort starting from root level (0)
+        self.items = sort_at_level(&self.items, 0);
+
+        // Recalculate parent IDs after reordering
+        self.recalculate_parent_ids();
     }
 
     #[cfg(test)]
@@ -311,5 +383,117 @@ mod tests {
         list.add_item("Task 1".to_string());
         list.add_item("Task 2".to_string());
         assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn test_sort_by_priority_basic() {
+        let mut list = create_test_list();
+        list.add_item("No priority".to_string());
+        list.add_item("P2 task".to_string());
+        list.add_item("P0 task".to_string());
+        list.add_item("P1 task".to_string());
+
+        // Set priorities
+        list.items[1].priority = Some(Priority::P2);
+        list.items[2].priority = Some(Priority::P0);
+        list.items[3].priority = Some(Priority::P1);
+
+        list.sort_by_priority();
+
+        // Should be: P0, P1, P2, None
+        assert_eq!(list.items[0].content, "P0 task");
+        assert_eq!(list.items[1].content, "P1 task");
+        assert_eq!(list.items[2].content, "P2 task");
+        assert_eq!(list.items[3].content, "No priority");
+    }
+
+    #[test]
+    fn test_sort_by_priority_preserves_hierarchy() {
+        let mut list = create_test_list();
+
+        // Create: Low priority parent with children, then high priority parent with children
+        list.add_item_with_indent("Low priority parent".to_string(), 0);
+        list.add_item_with_indent("Low child 1".to_string(), 1);
+        list.add_item_with_indent("Low child 2".to_string(), 1);
+        list.add_item_with_indent("High priority parent".to_string(), 0);
+        list.add_item_with_indent("High child 1".to_string(), 1);
+
+        list.items[0].priority = Some(Priority::P2);
+        list.items[3].priority = Some(Priority::P0);
+
+        // Recalculate parent IDs to set up hierarchy
+        list.recalculate_parent_ids();
+
+        list.sort_by_priority();
+
+        // High priority should come first with its children
+        assert_eq!(list.items[0].content, "High priority parent");
+        assert_eq!(list.items[1].content, "High child 1");
+        assert_eq!(list.items[1].indent_level, 1);
+
+        // Low priority should come after with its children
+        assert_eq!(list.items[2].content, "Low priority parent");
+        assert_eq!(list.items[3].content, "Low child 1");
+        assert_eq!(list.items[4].content, "Low child 2");
+        assert_eq!(list.items[3].indent_level, 1);
+        assert_eq!(list.items[4].indent_level, 1);
+    }
+
+    #[test]
+    fn test_sort_by_priority_stable() {
+        let mut list = create_test_list();
+
+        // Multiple items with same priority - order should be preserved
+        list.add_item("First P1".to_string());
+        list.add_item("Second P1".to_string());
+        list.add_item("Third P1".to_string());
+
+        list.items[0].priority = Some(Priority::P1);
+        list.items[1].priority = Some(Priority::P1);
+        list.items[2].priority = Some(Priority::P1);
+
+        list.sort_by_priority();
+
+        // Order should be preserved (stable sort)
+        assert_eq!(list.items[0].content, "First P1");
+        assert_eq!(list.items[1].content, "Second P1");
+        assert_eq!(list.items[2].content, "Third P1");
+    }
+
+    #[test]
+    fn test_sort_by_priority_empty_list() {
+        let mut list = create_test_list();
+        list.sort_by_priority(); // Should not panic
+        assert!(list.items.is_empty());
+    }
+
+    #[test]
+    fn test_sort_by_priority_recalculates_parent_ids() {
+        let mut list = create_test_list();
+
+        list.add_item_with_indent("P1 parent".to_string(), 0);
+        list.add_item_with_indent("P1 child".to_string(), 1);
+        list.add_item_with_indent("P0 parent".to_string(), 0);
+        list.add_item_with_indent("P0 child".to_string(), 1);
+
+        list.items[0].priority = Some(Priority::P1);
+        list.items[2].priority = Some(Priority::P0);
+        list.recalculate_parent_ids();
+
+        list.sort_by_priority();
+
+        // After sort, P0 parent should be first
+        assert_eq!(list.items[0].content, "P0 parent");
+        assert_eq!(list.items[1].content, "P0 child");
+
+        // P0 child should have P0 parent as its parent
+        assert_eq!(list.items[1].parent_id, Some(list.items[0].id));
+
+        // P1 parent should be second
+        assert_eq!(list.items[2].content, "P1 parent");
+        assert_eq!(list.items[3].content, "P1 child");
+
+        // P1 child should have P1 parent as its parent
+        assert_eq!(list.items[3].parent_id, Some(list.items[2].id));
     }
 }

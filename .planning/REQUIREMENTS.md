@@ -21,6 +21,14 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **SCROLL-03**: Mouse clicks select correct item at any scroll position
 - [x] **SCROLL-04**: Scroll position indicator shows current position in list title
 
+### Priority
+
+- [x] **PRIO-01**: User can assign priority levels (P0/P1/P2) to todos
+- [x] **PRIO-02**: User can press `p` key to cycle through priority levels
+- [x] **PRIO-03**: Plugin menu accessible via `P` (capital P) instead of `p`
+- [x] **PRIO-04**: Priority is visually indicated in TUI with colored badge
+- [x] **PRIO-05**: User can press `s` to sort todos by priority
+
 ## v2 Requirements
 
 Deferred to future release. Tracked but not in current roadmap.
@@ -61,12 +69,17 @@ Which phases cover which requirements. Updated by create-roadmap.
 | SCROLL-02 | Phase 2 | Complete |
 | SCROLL-03 | Phase 2 | Complete |
 | SCROLL-04 | Phase 2 | Complete |
+| PRIO-01 | Phase 3 | Complete |
+| PRIO-02 | Phase 3 | Complete |
+| PRIO-03 | Phase 3 | Complete |
+| PRIO-04 | Phase 3 | Complete |
+| PRIO-05 | Phase 3 | Complete |
 
 **Coverage:**
-- v1 requirements: 8 total
-- Mapped to phases: 8 ✓
+- v1 requirements: 13 total
+- Mapped to phases: 13 ✓
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-01-17*
-*Last updated: 2026-01-17 after Phase 2 completion*
+*Last updated: 2026-01-19 after Phase 3 completion*

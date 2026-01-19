@@ -1,4 +1,4 @@
-use crate::todo::{TodoItem, TodoList, TodoState};
+use crate::todo::{Priority, TodoItem, TodoList, TodoState};
 use anyhow::{anyhow, Result};
 use chrono::NaiveDate;
 use std::path::PathBuf;
@@ -14,16 +14,22 @@ pub fn serialize_todo_list_clean(list: &TodoList) -> String {
     for item in &list.items {
         let indent = "  ".repeat(item.indent_level);
 
+        let priority_suffix = item
+            .priority
+            .map(|p| format!(" @priority({})", p))
+            .unwrap_or_default();
+
         let due_suffix = item
             .due_date
             .map(|d| format!(" @due({})", d.format("%Y-%m-%d")))
             .unwrap_or_default();
 
         output.push_str(&format!(
-            "{}- [{}] {}{}\n",
+            "{}- [{}] {}{}{}\n",
             indent,
             item.state.to_char(),
             item.content,
+            priority_suffix,
             due_suffix
         ));
 
@@ -120,8 +126,9 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
 
     let (content, id) = parse_id(raw_content);
     let (content, due_date) = parse_due_date(&content);
+    let (content, priority) = parse_priority(&content);
 
-    let mut item = TodoItem::full(content, state, indent_level, None, due_date, None, false);
+    let mut item = TodoItem::full(content, state, indent_level, None, due_date, None, priority, false);
 
     if let Some(parsed_id) = id {
         item.id = parsed_id;
@@ -170,6 +177,28 @@ fn parse_due_date(content: &str) -> (String, Option<NaiveDate>) {
                 }
             }
             return (cleaned, due_date);
+        }
+    (content.to_string(), None)
+}
+
+fn parse_priority(content: &str) -> (String, Option<Priority>) {
+    if let Some(start) = content.find("@priority(")
+        && let Some(end) = content[start..].find(')') {
+            let priority_str = &content[start + 10..start + end];
+            let priority = priority_str.parse::<Priority>().ok();
+
+            let mut cleaned = String::new();
+            cleaned.push_str(content[..start].trim());
+            if start + end + 1 < content.len() {
+                let suffix = content[start + end + 1..].trim();
+                if !suffix.is_empty() {
+                    if !cleaned.is_empty() {
+                        cleaned.push(' ');
+                    }
+                    cleaned.push_str(suffix);
+                }
+            }
+            return (cleaned, priority);
         }
     (content.to_string(), None)
 }
@@ -344,5 +373,96 @@ Empty line above
         assert_eq!(list.items.len(), 2);
         assert_eq!(list.items[0].content, "Task 1");
         assert_eq!(list.items[1].content, "Task 2");
+    }
+
+    #[test]
+    fn test_serialize_with_priority() {
+        let date = create_test_date();
+        let path = create_test_path();
+        let mut list = TodoList::new(date, path);
+
+        list.add_item("No priority".to_string());
+        list.add_item("Critical task".to_string());
+        list.add_item("High task".to_string());
+        list.add_item("Medium task".to_string());
+
+        list.items[1].priority = Some(Priority::P0);
+        list.items[2].priority = Some(Priority::P1);
+        list.items[3].priority = Some(Priority::P2);
+
+        let markdown = serialize_todo_list_clean(&list);
+        assert!(markdown.contains("- [ ] No priority\n"));
+        assert!(markdown.contains("- [ ] Critical task @priority(P0)\n"));
+        assert!(markdown.contains("- [ ] High task @priority(P1)\n"));
+        assert!(markdown.contains("- [ ] Medium task @priority(P2)\n"));
+    }
+
+    #[test]
+    fn test_parse_priority() {
+        let content = r#"# Todo List - December 31, 2025
+
+- [ ] No priority
+- [ ] Critical task @priority(P0)
+- [ ] High task @priority(P1)
+- [ ] Medium task @priority(P2)
+"#;
+
+        let date = create_test_date();
+        let path = create_test_path();
+        let list = parse_todo_list(content, date, path).unwrap();
+
+        assert_eq!(list.items.len(), 4);
+        assert_eq!(list.items[0].content, "No priority");
+        assert_eq!(list.items[0].priority, None);
+        assert_eq!(list.items[1].content, "Critical task");
+        assert_eq!(list.items[1].priority, Some(Priority::P0));
+        assert_eq!(list.items[2].content, "High task");
+        assert_eq!(list.items[2].priority, Some(Priority::P1));
+        assert_eq!(list.items[3].content, "Medium task");
+        assert_eq!(list.items[3].priority, Some(Priority::P2));
+    }
+
+    #[test]
+    fn test_priority_round_trip() {
+        let date = create_test_date();
+        let path = create_test_path();
+        let mut list = TodoList::new(date, path.clone());
+
+        list.add_item("No priority".to_string());
+        list.add_item("P0 task".to_string());
+        list.add_item("P1 task".to_string());
+        list.add_item("P2 task".to_string());
+
+        list.items[1].priority = Some(Priority::P0);
+        list.items[2].priority = Some(Priority::P1);
+        list.items[3].priority = Some(Priority::P2);
+
+        let markdown = serialize_todo_list_clean(&list);
+        let parsed = parse_todo_list(&markdown, date, path).unwrap();
+
+        assert_eq!(parsed.items.len(), 4);
+        assert_eq!(parsed.items[0].priority, None);
+        assert_eq!(parsed.items[1].priority, Some(Priority::P0));
+        assert_eq!(parsed.items[2].priority, Some(Priority::P1));
+        assert_eq!(parsed.items[3].priority, Some(Priority::P2));
+    }
+
+    #[test]
+    fn test_priority_with_due_date() {
+        let date = create_test_date();
+        let path = create_test_path();
+        let mut list = TodoList::new(date, path.clone());
+
+        list.add_item("Task with both".to_string());
+        list.items[0].priority = Some(Priority::P0);
+        list.items[0].due_date = Some(NaiveDate::from_ymd_opt(2026, 1, 15).unwrap());
+
+        let markdown = serialize_todo_list_clean(&list);
+        assert!(markdown.contains("- [ ] Task with both @priority(P0) @due(2026-01-15)\n"));
+
+        let parsed = parse_todo_list(&markdown, date, path).unwrap();
+        assert_eq!(parsed.items[0].content, "Task with both");
+        assert_eq!(parsed.items[0].priority, Some(Priority::P0));
+        assert_eq!(parsed.items[0].due_date, Some(NaiveDate::from_ymd_opt(2026, 1, 15).unwrap()));
     }
 }

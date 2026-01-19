@@ -1,5 +1,5 @@
 use crate::app::{AppState, Mode};
-use crate::todo::TodoState;
+use crate::todo::{Priority, TodoState};
 use crate::ui::theme::Theme;
 use crate::utils::unicode::{after_first_char, first_char_as_str};
 use ratatui::{
@@ -10,6 +10,18 @@ use ratatui::{
     Frame,
 };
 use unicode_width::UnicodeWidthStr;
+
+/// Get the priority badge text and color for a given priority level
+fn priority_badge(priority: Option<Priority>, theme: &Theme) -> Option<(String, Color)> {
+    priority.map(|p| {
+        let (text, color) = match p {
+            Priority::P0 => ("[P0]", theme.priority_p0),
+            Priority::P1 => ("[P1]", theme.priority_p1),
+            Priority::P2 => ("[P2]", theme.priority_p2),
+        };
+        (text.to_string(), color)
+    })
+}
 
 /// Compute the style for a todo item based on its state and selection
 /// Note: Cursor highlighting is now handled by ListState's highlight_style
@@ -86,12 +98,16 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
         let checkbox_width = checkbox_with_space.width();
         let content_with_extras = format!("{}{}{}", item.content, due_date_str, collapse_indicator);
 
+        // Get priority badge if item has priority
+        let badge = priority_badge(item.priority, &state.theme);
+        let badge_width = badge.as_ref().map(|(text, _)| text.width() + 1).unwrap_or(0); // +1 for space after badge
+
         let is_in_selection = state.is_selected(idx) && state.mode == Mode::Visual;
 
         // Use same style for entire line so highlight is uniform
         let content_style = compute_item_style(item.state, &state.theme, is_in_selection);
 
-        let content_max_width = available_width.saturating_sub(prefix_width + checkbox_width);
+        let content_max_width = available_width.saturating_sub(prefix_width + badge_width + checkbox_width);
 
         let is_editing_this_item =
             state.mode == Mode::Edit && !state.is_creating_new_item && idx == state.cursor_position;
@@ -122,33 +138,53 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                 let display_text = format!("{truncated_content}{collapse_indicator}");
 
                 // Pad to full width for proper highlight
-                let current_width = prefix_width + checkbox_width + display_text.width();
+                let current_width = prefix_width + badge_width + checkbox_width + display_text.width();
                 let padding = " ".repeat(available_width.saturating_sub(current_width));
 
-                let lines = vec![Line::from(vec![
-                    Span::styled(prefix.clone(), content_style),
-                    Span::styled(checkbox_with_space.clone(), content_style),
-                    Span::styled(display_text, content_style),
-                    Span::styled(padding, content_style),
-                ])];
+                let mut spans = vec![Span::styled(prefix.clone(), content_style)];
+
+                // Add priority badge if present
+                if let Some((badge_text, badge_color)) = &badge {
+                    spans.push(Span::styled(
+                        badge_text.clone(),
+                        Style::default().fg(*badge_color),
+                    ));
+                    spans.push(Span::styled(" ", content_style));
+                }
+
+                spans.push(Span::styled(checkbox_with_space.clone(), content_style));
+                spans.push(Span::styled(display_text, content_style));
+                spans.push(Span::styled(padding, content_style));
+
+                let lines = vec![Line::from(spans)];
                 items.push(ListItem::new(lines));
             } else {
                 let wrapped_lines = wrap_text(&content_with_extras, content_max_width);
-                let continuation_indent = " ".repeat(prefix_width + checkbox_width);
+                let continuation_indent = " ".repeat(prefix_width + badge_width + checkbox_width);
 
                 let mut lines: Vec<Line> = Vec::new();
                 for (i, line_text) in wrapped_lines.iter().enumerate() {
                     if i == 0 {
                         // Pad to full width for proper highlight
-                        let current_width = prefix_width + checkbox_width + line_text.width();
+                        let current_width = prefix_width + badge_width + checkbox_width + line_text.width();
                         let padding = " ".repeat(available_width.saturating_sub(current_width));
 
-                        lines.push(Line::from(vec![
-                            Span::styled(prefix.clone(), content_style),
-                            Span::styled(checkbox_with_space.clone(), content_style),
-                            Span::styled(line_text.clone(), content_style),
-                            Span::styled(padding, content_style),
-                        ]));
+                        let mut spans = vec![Span::styled(prefix.clone(), content_style)];
+
+                        // Add priority badge if present
+                        if let Some((badge_text, badge_color)) = &badge {
+                            spans.push(Span::styled(
+                                badge_text.clone(),
+                                Style::default().fg(*badge_color),
+                            ));
+                            spans.push(Span::styled(" ", content_style));
+                        }
+
+                        spans.push(Span::styled(checkbox_with_space.clone(), content_style));
+                        spans.push(Span::styled(line_text.clone(), content_style));
+                        spans.push(Span::styled(padding, content_style));
+
+                        lines.push(Line::from(spans));
                     } else {
                         // Pad continuation lines to full width
                         let current_width = continuation_indent.width() + line_text.width();

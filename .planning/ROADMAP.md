@@ -44,9 +44,29 @@ Plans:
 - [x] 02-02: Mouse scroll wheel and click offset handling (Wave 2)
 - [x] 02-03: Scroll position indicator in title bar (Wave 2)
 
+### Phase 3: Todo Priority System
+**Goal**: Enable priority levels (P0/P1/P2) for todos with visual indicators and sorting capability
+**Depends on**: Phase 2 (Scrolling & Mouse Support)
+**Requirements**: PRIO-01, PRIO-02, PRIO-03, PRIO-04, PRIO-05
+**Success Criteria** (what must be TRUE):
+  1. Database stores priority levels (P0/P1/P2 or None)
+  2. User can press `p` to cycle through priority levels (None → P0 → P1 → P2 → None)
+  3. Existing `p` (plugin) binding moved to `P` (capital P)
+  4. Priority is visually indicated in TUI (colored badge)
+  5. User can press `s` to sort todos by priority (root todos first, then children recursively)
+**Research**: Level 0 (Skip) — internal data model changes only
+**Plans**: 4 plans in 3 waves
+
+Plans:
+- [x] 03-01: Priority data model - enum, TodoItem field, database & markdown persistence (Wave 1)
+- [x] 03-02: Priority cycling keybinding - 'p' to cycle priority, 'P' for plugin menu (Wave 2)
+- [x] 03-03: Priority visual display - colored badges in TUI (Wave 2)
+- [x] 03-04: Sort by priority - 's' key to sort todos by priority level (Wave 3)
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Clipboard Support | 2/2 | ✓ Complete | 2026-01-17 |
 | 2. Scrolling & Mouse Support | 3/3 | ✓ Complete | 2026-01-17 |
+| 3. Todo Priority System | 4/4 | ✓ Complete | 2026-01-19 |

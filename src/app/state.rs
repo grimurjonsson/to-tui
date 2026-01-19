@@ -4,7 +4,7 @@ use crate::plugin::{GeneratorInfo, PluginRegistry};
 use crate::storage::file::load_todo_list;
 use crate::storage::load_todos_for_viewing;
 use crate::storage::UiCache;
-use crate::todo::{TodoItem, TodoList};
+use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
@@ -476,6 +476,29 @@ impl AppState {
         false
     }
 
+    /// Cycle the current item's priority with undo support.
+    /// Cycles: None -> P0 -> P1 -> P2 -> None
+    pub fn cycle_priority(&mut self) {
+        if self.is_readonly() {
+            return;
+        }
+
+        if self.selected_item().is_some() {
+            self.save_undo();
+            if let Some(item) = self.selected_item_mut() {
+                item.priority = item.priority.cycle_priority();
+                item.modified_at = chrono::Utc::now();
+
+                let priority_str = item
+                    .priority
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "None".to_string());
+                self.status_message = Some((format!("Priority: {}", priority_str), std::time::Instant::now()));
+                self.unsaved_changes = true;
+            }
+        }
+    }
+
     /// Toggle collapse state of the current item if it's collapsible.
     /// Returns true if a change was made.
     pub fn toggle_current_item_collapse(&mut self) -> bool {
@@ -548,6 +571,20 @@ impl AppState {
             self.move_to_parent();
         }
         false
+    }
+
+    /// Sort todos by priority (P0 first, then P1, P2, None last).
+    /// Children remain grouped under their parent.
+    pub fn sort_by_priority(&mut self) {
+        if self.is_readonly() {
+            return;
+        }
+
+        self.save_undo();
+        self.todo_list.sort_by_priority();
+        self.cursor_position = 0; // Reset cursor to top after sort
+        self.sync_list_state();
+        self.status_message = Some(("Sorted by priority".to_string(), std::time::Instant::now()));
     }
 
     /// Open the rollover modal with the given pending items

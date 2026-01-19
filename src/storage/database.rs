@@ -1,4 +1,4 @@
-use crate::todo::{TodoItem, TodoList, TodoState};
+use crate::todo::{Priority, TodoItem, TodoList, TodoState};
 use crate::utils::paths::get_to_tui_dir;
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -27,6 +27,7 @@ struct TodoRowData {
     parent_id_str: Option<String>,
     due_date_str: Option<String>,
     description: Option<String>,
+    priority_str: Option<String>,
     collapsed: i32,
     created_at_str: Option<String>,
     updated_at_str: Option<String>,
@@ -45,11 +46,12 @@ impl TodoRowData {
             parent_id_str: row.get(4)?,
             due_date_str: row.get(5)?,
             description: row.get(6)?,
-            collapsed: row.get(7).unwrap_or(0),
-            created_at_str: row.get(8).ok(),
-            updated_at_str: row.get(9).ok(),
-            completed_at_str: row.get(10).ok().flatten(),
-            deleted_at_str: row.get(11).ok().flatten(),
+            priority_str: row.get(7).ok().flatten(),
+            collapsed: row.get(8).unwrap_or(0),
+            created_at_str: row.get(9).ok(),
+            updated_at_str: row.get(10).ok(),
+            completed_at_str: row.get(11).ok().flatten(),
+            deleted_at_str: row.get(12).ok().flatten(),
         })
     }
 
@@ -61,6 +63,7 @@ impl TodoRowData {
         let due_date = self
             .due_date_str
             .and_then(|s| NaiveDate::parse_from_str(&s, "%Y-%m-%d").ok());
+        let priority = Priority::from_db_str(self.priority_str.as_deref());
 
         let mut todo = TodoItem::new(self.content, self.indent_level);
         todo.id = id;
@@ -68,6 +71,7 @@ impl TodoRowData {
         todo.parent_id = parent_id;
         todo.due_date = due_date;
         todo.description = self.description;
+        todo.priority = priority;
         todo.collapsed = self.collapsed != 0;
 
         if let Some(s) = self.created_at_str
@@ -109,6 +113,7 @@ pub fn init_database() -> Result<()> {
             parent_id TEXT,
             due_date TEXT,
             description TEXT,
+            priority TEXT,
             collapsed INTEGER NOT NULL DEFAULT 0,
             position INTEGER NOT NULL,
             created_at TEXT NOT NULL,
@@ -129,6 +134,9 @@ pub fn init_database() -> Result<()> {
         .ok();
 
     conn.execute("ALTER TABLE todos ADD COLUMN deleted_at TEXT", [])
+        .ok();
+
+    conn.execute("ALTER TABLE todos ADD COLUMN priority TEXT", [])
         .ok();
 
     conn.execute(
@@ -152,6 +160,7 @@ pub fn init_database() -> Result<()> {
             parent_id TEXT,
             due_date TEXT,
             description TEXT,
+            priority TEXT,
             collapsed INTEGER NOT NULL DEFAULT 0,
             position INTEGER NOT NULL,
             created_at TEXT NOT NULL,
@@ -176,6 +185,9 @@ pub fn init_database() -> Result<()> {
     conn.execute("ALTER TABLE archived_todos ADD COLUMN deleted_at TEXT", [])
         .ok();
 
+    conn.execute("ALTER TABLE archived_todos ADD COLUMN priority TEXT", [])
+        .ok();
+
     Ok(())
 }
 
@@ -184,7 +196,7 @@ pub fn load_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
-        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed, created_at, updated_at, completed_at, deleted_at
+        "SELECT id, content, state, indent_level, parent_id, due_date, description, priority, collapsed, created_at, updated_at, completed_at, deleted_at
          FROM todos
          WHERE date = ?1 AND deleted_at IS NULL
          ORDER BY position ASC",
@@ -230,8 +242,8 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
     )?;
 
     let mut stmt = conn.prepare(
-        "INSERT INTO todos (id, date, content, state, indent_level, parent_id, due_date, description, collapsed, position, created_at, updated_at, completed_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)"
+        "INSERT INTO todos (id, date, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
     )?;
 
     for (position, item) in list.items.iter().enumerate() {
@@ -239,6 +251,7 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
         let state_str = item.state.to_char().to_string();
         let parent_id_str = item.parent_id.map(|id| id.to_string());
         let due_date_str = item.due_date.map(|d| d.format("%Y-%m-%d").to_string());
+        let priority_str = item.priority.and_then(|p| p.to_db_str());
         let collapsed_int: i32 = if item.collapsed { 1 } else { 0 };
         let created_at_str = item.created_at.to_rfc3339();
         let modified_at_str = item.modified_at.to_rfc3339();
@@ -254,6 +267,7 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
             parent_id_str,
             due_date_str,
             item.description,
+            priority_str,
             collapsed_int,
             position as i64,
             created_at_str,
@@ -285,8 +299,8 @@ pub fn archive_todos_for_date(date: NaiveDate) -> Result<usize> {
     let now = chrono::Utc::now().to_rfc3339();
 
     let count = conn.execute(
-        "INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, collapsed, position, created_at, updated_at, completed_at, deleted_at)
-         SELECT id, date, ?1, content, state, indent_level, parent_id, due_date, description, collapsed, position, created_at, updated_at, completed_at, deleted_at
+        "INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at)
+         SELECT id, date, ?1, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at
          FROM todos WHERE date = ?2",
         params![now, date_str],
     )?;
@@ -301,7 +315,7 @@ pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
-        "SELECT id, content, state, indent_level, parent_id, due_date, description, collapsed, created_at, updated_at, completed_at, deleted_at
+        "SELECT id, content, state, indent_level, parent_id, due_date, description, priority, collapsed, created_at, updated_at, completed_at, deleted_at
          FROM archived_todos
          WHERE original_date = ?1 AND deleted_at IS NULL
          ORDER BY position ASC",

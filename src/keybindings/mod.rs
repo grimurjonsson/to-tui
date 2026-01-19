@@ -66,6 +66,10 @@ pub enum Action {
     // Clipboard
     Yank,
 
+    // Priority
+    CyclePriority,
+    SortByPriority,
+
     // Edit mode specific
     EditCancel,
     EditConfirm,
@@ -113,6 +117,8 @@ impl fmt::Display for Action {
             Action::OpenPluginMenu => "open_plugin_menu",
             Action::OpenRolloverModal => "open_rollover_modal",
             Action::Yank => "yank",
+            Action::CyclePriority => "cycle_priority",
+            Action::SortByPriority => "sort_by_priority",
             Action::EditCancel => "edit_cancel",
             Action::EditConfirm => "edit_confirm",
             Action::EditBackspace => "edit_backspace",
@@ -164,6 +170,8 @@ impl FromStr for Action {
             "open_plugin_menu" => Ok(Action::OpenPluginMenu),
             "open_rollover_modal" => Ok(Action::OpenRolloverModal),
             "yank" => Ok(Action::Yank),
+            "cycle_priority" => Ok(Action::CyclePriority),
+            "sort_by_priority" => Ok(Action::SortByPriority),
             "edit_cancel" => Ok(Action::EditCancel),
             "edit_confirm" => Ok(Action::EditConfirm),
             "edit_backspace" => Ok(Action::EditBackspace),
@@ -597,9 +605,11 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("<".to_string(), "prev_day".to_string());
     m.insert(">".to_string(), "next_day".to_string());
     m.insert("T".to_string(), "go_to_today".to_string());
-    m.insert("p".to_string(), "open_plugin_menu".to_string());
+    m.insert("p".to_string(), "cycle_priority".to_string());
+    m.insert("P".to_string(), "open_plugin_menu".to_string());
     m.insert("R".to_string(), "open_rollover_modal".to_string());
     m.insert("y".to_string(), "yank".to_string());
+    m.insert("s".to_string(), "sort_by_priority".to_string());
 
     m
 }

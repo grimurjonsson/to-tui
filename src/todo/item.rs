@@ -1,3 +1,4 @@
+use super::priority::Priority;
 use super::state::TodoState;
 use chrono::{DateTime, NaiveDate, Utc};
 use uuid::Uuid;
@@ -11,6 +12,7 @@ pub struct TodoItem {
     pub parent_id: Option<Uuid>,
     pub due_date: Option<NaiveDate>,
     pub description: Option<String>,
+    pub priority: Option<Priority>,
     pub collapsed: bool,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
@@ -29,6 +31,7 @@ impl TodoItem {
             parent_id: None,
             due_date: None,
             description: None,
+            priority: None,
             collapsed: false,
             created_at: now,
             modified_at: now,
@@ -53,6 +56,7 @@ impl TodoItem {
             parent_id: None,
             due_date: None,
             description: None,
+            priority: None,
             collapsed: false,
             created_at: now,
             modified_at: now,
@@ -68,6 +72,7 @@ impl TodoItem {
         parent_id: Option<Uuid>,
         due_date: Option<NaiveDate>,
         description: Option<String>,
+        priority: Option<Priority>,
         collapsed: bool,
     ) -> Self {
         let now = Utc::now();
@@ -84,6 +89,7 @@ impl TodoItem {
             parent_id,
             due_date,
             description,
+            priority,
             collapsed,
             created_at: now,
             modified_at: now,
