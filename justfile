@@ -480,18 +480,18 @@ _release bump msg="":
 
         # Build new changelog entry using printf to avoid justfile comment issues
         TMPFILE=$(mktemp)
-        printf '%s\n' "## [$NEW_VERSION] - $TODAY" >> "$TMPFILE"
+        printf '%s\n\n' "## [$NEW_VERSION] - $TODAY" >> "$TMPFILE"
 
         if [ -n "$ADDED" ]; then
-            printf '\n%s\n%s\n' "### Added" "$ADDED" >> "$TMPFILE"
+            printf '%s\n%s\n\n' "### Added" "$ADDED" >> "$TMPFILE"
         fi
 
         if [ -n "$FIXED" ]; then
-            printf '\n%s\n%s\n' "### Fixed" "$FIXED" >> "$TMPFILE"
+            printf '%s\n%s\n\n' "### Fixed" "$FIXED" >> "$TMPFILE"
         fi
 
         if [ -n "$CHANGED" ]; then
-            printf '\n%s\n%s\n' "### Changed" "$CHANGED" >> "$TMPFILE"
+            printf '%s\n%s\n\n' "### Changed" "$CHANGED" >> "$TMPFILE"
         fi
 
         # Insert new entry after the header, before first version entry
@@ -500,7 +500,6 @@ _release bump msg="":
             OUTFILE=$(mktemp)
             head -n $((HEADER_END - 1)) "$CHANGELOG_FILE" > "$OUTFILE"
             cat "$TMPFILE" >> "$OUTFILE"
-            printf '\n' >> "$OUTFILE"
             tail -n +$HEADER_END "$CHANGELOG_FILE" >> "$OUTFILE"
             mv "$OUTFILE" "$CHANGELOG_FILE"
             echo "Updated CHANGELOG.md with v$NEW_VERSION"
