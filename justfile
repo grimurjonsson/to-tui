@@ -436,6 +436,71 @@ release-minor msg="": (_release "minor" msg)
 # Bump major version (0.1.0 → 1.0.0)
 release-major msg="": (_release "major" msg)
 
+# Test changelog generation (dry-run, prints to stdout)
+generate-changelog-test:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+    TODAY=$(date +%Y-%m-%d)
+
+    echo "=== Changelog Test ==="
+    echo "Current version: $VERSION"
+    echo "Last tag: ${LAST_TAG:-none}"
+    echo ""
+
+    # Get commit messages since last tag
+    if [ -n "$LAST_TAG" ]; then
+        CHANGES=$(git log "$LAST_TAG"..HEAD --pretty=format:"- %s" --no-merges | grep -v "^- Release v" || true)
+    else
+        CHANGES=$(git log --pretty=format:"- %s" --no-merges | grep -v "^- Release v" || true)
+    fi
+
+    echo "=== Raw commits ==="
+    echo "$CHANGES"
+    echo ""
+
+    # Generate TL;DR using Claude if available
+    TLDR=""
+    if command -v claude &> /dev/null && [ -n "$CHANGES" ]; then
+        echo "=== Generating TL;DR with Claude... ==="
+        PROMPT="Summarize these git commits in ONE short sentence (max 10 words) for a changelog TL;DR. Focus on the user-facing impact. No quotes, no prefix, just the sentence. Commits: $CHANGES"
+        TLDR=$(claude -p "$PROMPT" 2>/dev/null || true)
+        echo "TL;DR: $TLDR"
+        echo ""
+    else
+        echo "=== Claude not available, skipping TL;DR ==="
+        echo ""
+    fi
+
+    # Categorize changes
+    ADDED=$(echo "$CHANGES" | grep -iE '^- (feat|add)' | sed 's/^- feat[:(] */- /i; s/^- add[:(] */- /i' || true)
+    FIXED=$(echo "$CHANGES" | grep -iE '^- fix' | sed 's/^- fix[:(] */- /i' || true)
+    CHANGED=$(echo "$CHANGES" | grep -iE '^- (refactor|change|update)' | sed 's/^- refactor[:(] */- /i; s/^- change[:(] */- /i; s/^- update[:(] */- /i' || true)
+
+    echo "=== Generated changelog entry ==="
+    echo "## [$VERSION] - $TODAY"
+    if [ -n "$TLDR" ]; then
+        echo "$TLDR"
+        echo ""
+    fi
+    if [ -n "$ADDED" ]; then
+        echo "### Added"
+        echo "$ADDED"
+        echo ""
+    fi
+    if [ -n "$FIXED" ]; then
+        echo "### Fixed"
+        echo "$FIXED"
+        echo ""
+    fi
+    if [ -n "$CHANGED" ]; then
+        echo "### Changed"
+        echo "$CHANGED"
+        echo ""
+    fi
+
 _release bump msg="":
     #!/usr/bin/env bash
     set -euo pipefail
