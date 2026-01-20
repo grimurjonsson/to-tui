@@ -473,14 +473,25 @@ _release bump msg="":
             CHANGES=$(git log --pretty=format:"- %s" --no-merges | grep -v "^- Release v" || true)
         fi
 
+        # Generate TL;DR using Claude if available
+        TLDR=""
+        if command -v claude &> /dev/null && [ -n "$CHANGES" ]; then
+            PROMPT="Summarize these git commits in ONE short sentence (max 10 words) for a changelog TL;DR. Focus on the user-facing impact. No quotes, no prefix, just the sentence. Commits: $CHANGES"
+            TLDR=$(claude -p "$PROMPT" 2>/dev/null || true)
+        fi
+
         # Categorize changes (strip conventional commit prefixes)
-        ADDED=$(echo "$CHANGES" | grep -iE "^- (feat|add)" | sed 's/^- feat[:(] */- /i; s/^- add[:(] */- /i' || true)
-        FIXED=$(echo "$CHANGES" | grep -iE "^- fix" | sed 's/^- fix[:(] */- /i' || true)
-        CHANGED=$(echo "$CHANGES" | grep -iE "^- (refactor|change|update)" | sed 's/^- refactor[:(] */- /i; s/^- change[:(] */- /i; s/^- update[:(] */- /i' || true)
+        ADDED=$(echo "$CHANGES" | grep -iE '^- (feat|add)' | sed 's/^- feat[:(] */- /i; s/^- add[:(] */- /i' || true)
+        FIXED=$(echo "$CHANGES" | grep -iE '^- fix' | sed 's/^- fix[:(] */- /i' || true)
+        CHANGED=$(echo "$CHANGES" | grep -iE '^- (refactor|change|update)' | sed 's/^- refactor[:(] */- /i; s/^- change[:(] */- /i; s/^- update[:(] */- /i' || true)
 
         # Build new changelog entry using printf to avoid justfile comment issues
         TMPFILE=$(mktemp)
         printf '%s\n' "## [$NEW_VERSION] - $TODAY" >> "$TMPFILE"
+
+        if [ -n "$TLDR" ]; then
+            printf '%s\n\n' "$TLDR" >> "$TMPFILE"
+        fi
 
         if [ -n "$ADDED" ]; then
             printf '%s\n%s\n\n' "### Added" "$ADDED" >> "$TMPFILE"
