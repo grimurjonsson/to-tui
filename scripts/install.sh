@@ -188,14 +188,21 @@ if [ -n "$TOTUI_VERSION" ] || [ -n "$TOTUI_MCP_VERSION" ]; then
     fi
 fi
 
-# Check if all binaries are already up to date
+# Track if totui-mcp is installed (for Claude Code integration check later)
+TOTUI_MCP_INSTALLED=false
+if [ -n "$TOTUI_MCP_VERSION" ]; then
+    TOTUI_MCP_INSTALLED=true
+fi
+
+# Check if all binaries are already up to date - skip installation but continue to Claude Code integration
+ALL_UP_TO_DATE=false
 if [ "$TOTUI_VERSION" = "$TARGET_VERSION" ] && [ "$TOTUI_MCP_VERSION" = "$TARGET_VERSION" ]; then
     echo -e "${GREEN}${BOLD}✓${RESET} All binaries are already up to date!"
     echo ""
-    echo -e "Documentation: ${BLUE}https://github.com/${REPO}${RESET}"
-    echo ""
-    exit 0
+    ALL_UP_TO_DATE=true
 fi
+
+if [ "$ALL_UP_TO_DATE" = false ]; then
 
 # Ask what to install
 echo -e "${BOLD}What would you like to install?${RESET}"
@@ -244,12 +251,7 @@ for BINARY_NAME in "${BINARIES[@]}"; do
     fi
 done
 
-if [ ${#BINARIES_TO_INSTALL[@]} -eq 0 ]; then
-    echo ""
-    echo -e "${GREEN}${BOLD}✓${RESET} Nothing to install - all selected binaries are up to date!"
-    echo ""
-    exit 0
-fi
+if [ ${#BINARIES_TO_INSTALL[@]} -gt 0 ]; then
 
 BINARIES=("${BINARIES_TO_INSTALL[@]}")
 echo ""
@@ -423,6 +425,107 @@ echo -e "${GREEN}${BOLD}│${RESET}       ${GREEN}${BOLD}Installation complete!$
 echo -e "${GREEN}${BOLD}╰─────────────────────────────────────╯${RESET}"
 echo ""
 
+fi # end: if BINARIES_TO_INSTALL not empty
+fi # end: if not ALL_UP_TO_DATE
+
+# ─────────────────────────────────────────────────────────────
+# Claude Code Integration (optional)
+# ─────────────────────────────────────────────────────────────
+
+# Check if totui-mcp was just installed OR was already installed
+if [ "$TOTUI_MCP_INSTALLED" = true ] || [[ " ${BINARIES[*]} " =~ " totui-mcp " ]]; then
+    # Check if claude CLI is available
+    if command -v claude &>/dev/null; then
+        echo -e "${BLUE}${BOLD}Claude Code Integration${RESET}"
+        echo ""
+
+        MARKETPLACE_REPO="grimurjonsson/to-tui"
+        MARKETPLACE_NAME="totui-mcp"
+        PLUGIN_ID="totui-mcp@totui-mcp"
+        MARKETPLACE_AVAILABLE=false
+
+        # Check if marketplace is already registered
+        if claude plugin marketplace list 2>/dev/null | grep -q "$MARKETPLACE_NAME"; then
+            echo -e "  ${GREEN}✓${RESET} Marketplace already registered"
+            MARKETPLACE_AVAILABLE=true
+        else
+            echo -e "  ${YELLOW}→${RESET} Marketplace not registered"
+            echo ""
+            if [ -t 0 ]; then
+                read -p "  Add totui marketplace to Claude Code? [Y/n] " -n 1 -r MARKETPLACE_CHOICE
+            else
+                read -p "  Add totui marketplace to Claude Code? [Y/n] " -n 1 -r MARKETPLACE_CHOICE </dev/tty
+            fi
+            echo ""
+
+            if [[ ! $MARKETPLACE_CHOICE =~ ^[Nn]$ ]]; then
+                if claude plugin marketplace add "$MARKETPLACE_REPO" 2>/dev/null; then
+                    echo -e "  ${GREEN}✓${RESET} Marketplace added: ${CYAN}$MARKETPLACE_REPO${RESET}"
+                    MARKETPLACE_AVAILABLE=true
+                else
+                    echo -e "  ${RED}✗${RESET} Failed to add marketplace"
+                fi
+            fi
+        fi
+
+        # If marketplace is available, check/install the plugin
+        if [ "$MARKETPLACE_AVAILABLE" = true ]; then
+            echo ""
+            if claude plugin list 2>/dev/null | grep -q "$PLUGIN_ID"; then
+                echo -e "  ${GREEN}✓${RESET} Plugin already installed"
+            else
+                echo -e "  ${YELLOW}→${RESET} Plugin not installed"
+                echo ""
+                if [ -t 0 ]; then
+                    read -p "  Install totui-mcp plugin from marketplace? [Y/n] " -n 1 -r PLUGIN_CHOICE
+                else
+                    read -p "  Install totui-mcp plugin from marketplace? [Y/n] " -n 1 -r PLUGIN_CHOICE </dev/tty
+                fi
+                echo ""
+
+                if [[ ! $PLUGIN_CHOICE =~ ^[Nn]$ ]]; then
+                    if claude plugin install "$PLUGIN_ID" --scope user 2>/dev/null; then
+                        echo -e "  ${GREEN}✓${RESET} Plugin installed: ${CYAN}$PLUGIN_ID${RESET}"
+                        echo ""
+                        echo -e "  ${DIM}Restart Claude Code to activate the plugin.${RESET}"
+                    else
+                        echo -e "  ${RED}✗${RESET} Failed to install plugin"
+                        echo -e "  ${DIM}Manual setup: claude plugin install $PLUGIN_ID --scope user${RESET}"
+                    fi
+                fi
+            fi
+        else
+            # Marketplace not available - offer standalone MCP server as fallback
+            echo ""
+            if claude mcp list 2>/dev/null | grep -q "totui-mcp"; then
+                echo -e "  ${GREEN}✓${RESET} MCP server already configured"
+            else
+                echo -e "  ${YELLOW}→${RESET} MCP server not configured"
+                echo ""
+                if [ -t 0 ]; then
+                    read -p "  Configure totui-mcp as standalone MCP server? [Y/n] " -n 1 -r MCP_CHOICE
+                else
+                    read -p "  Configure totui-mcp as standalone MCP server? [Y/n] " -n 1 -r MCP_CHOICE </dev/tty
+                fi
+                echo ""
+
+                if [[ ! $MCP_CHOICE =~ ^[Nn]$ ]]; then
+                    MCP_BINARY="${INSTALL_DIR}/totui-mcp${BINARY_EXT}"
+                    if claude mcp add --transport stdio --scope user totui-mcp -- "$MCP_BINARY" 2>/dev/null; then
+                        echo -e "  ${GREEN}✓${RESET} MCP server configured: ${CYAN}totui-mcp${RESET}"
+                        echo ""
+                        echo -e "  ${DIM}Restart Claude Code to activate the MCP tools.${RESET}"
+                    else
+                        echo -e "  ${RED}✗${RESET} Failed to configure MCP server"
+                        echo -e "  ${DIM}Manual setup: claude mcp add --transport stdio --scope user totui-mcp -- $MCP_BINARY${RESET}"
+                    fi
+                fi
+            fi
+        fi
+        echo ""
+    fi
+fi
+
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}${BOLD}⚠  $INSTALL_DIR is not in your PATH${RESET}"
@@ -436,14 +539,9 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo ""
 fi
 
-if [[ " ${BINARIES[*]} " =~ " totui " ]]; then
+# Show usage hints based on what's installed
+if [ -n "$TOTUI_VERSION" ] || [[ " ${BINARIES[*]} " =~ " totui " ]]; then
     echo -e "Run '${CYAN}${BOLD}totui${RESET}' to start the TUI"
-fi
-
-if [[ " ${BINARIES[*]} " =~ " totui-mcp " ]]; then
-    echo ""
-    echo -e "To use ${BOLD}totui-mcp${RESET} with Claude Code:"
-    echo -e "  Add to your MCP config: ${CYAN}${INSTALL_DIR}/totui-mcp${RESET}"
 fi
 
 echo ""
