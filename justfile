@@ -480,7 +480,7 @@ _release bump msg="":
 
         # Build new changelog entry using printf to avoid justfile comment issues
         TMPFILE=$(mktemp)
-        printf '%s\n\n' "## [$NEW_VERSION] - $TODAY" >> "$TMPFILE"
+        printf '%s\n' "## [$NEW_VERSION] - $TODAY" >> "$TMPFILE"
 
         if [ -n "$ADDED" ]; then
             printf '%s\n%s\n\n' "### Added" "$ADDED" >> "$TMPFILE"
