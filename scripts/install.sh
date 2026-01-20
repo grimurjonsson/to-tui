@@ -355,6 +355,73 @@ echo -e "${GREEN}${BOLD}│${RESET}       ${GREEN}${BOLD}Installation complete!$
 echo -e "${GREEN}${BOLD}╰─────────────────────────────────────╯${RESET}"
 echo ""
 
+# Show changelog for upgrades
+show_changelog() {
+    local from_version="$1"
+    local to_version="$2"
+
+    # Fetch CHANGELOG.md from the new version's tag
+    CHANGELOG_URL="https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/CHANGELOG.md"
+    CHANGELOG_CONTENT=$(curl -s "$CHANGELOG_URL" 2>/dev/null || true)
+
+    if [ -z "$CHANGELOG_CONTENT" ]; then
+        return
+    fi
+
+    echo -e "${CYAN}${BOLD}What's new since v${from_version}:${RESET}"
+    echo ""
+
+    # Parse changelog and show entries between versions
+    # Extract version sections and display relevant ones
+    local printing=false
+    local found_any=false
+
+    while IFS= read -r line; do
+        # Check for version header like "## [0.2.8]" or "## [0.2.8] - 2026-01-19"
+        if echo "$line" | grep -qE '^\#\# \[[0-9]+\.[0-9]+\.[0-9]+\]'; then
+            version=$(echo "$line" | grep -oE '\[([0-9]+\.[0-9]+\.[0-9]+)\]' | tr -d '[]')
+
+            # Compare versions - stop if we hit the from_version
+            if [ "$version" = "$from_version" ]; then
+                printing=false
+                break
+            fi
+
+            # Start printing if we haven't passed the to_version
+            if version_gt "$version" "$from_version" 2>/dev/null || [ "$version" = "$to_version" ]; then
+                printing=true
+                found_any=true
+                echo -e "${BOLD}${line}${RESET}"
+            else
+                printing=false
+            fi
+        elif [ "$printing" = true ]; then
+            # Format subsection headers
+            if echo "$line" | grep -qE '^\#\#\# '; then
+                echo -e "${YELLOW}${line}${RESET}"
+            elif [ -n "$line" ]; then
+                echo "  $line"
+            fi
+        fi
+    done <<< "$CHANGELOG_CONTENT"
+
+    if [ "$found_any" = true ]; then
+        echo ""
+    fi
+}
+
+# Helper function to compare versions (returns 0 if v1 > v2)
+version_gt() {
+    test "$(printf '%s\n' "$@" | sort -V | head -n 1)" != "$1"
+}
+
+# Determine if this is an upgrade and show changelog
+if [ -n "$TOTUI_VERSION" ] && [ "$TOTUI_VERSION" != "$TARGET_VERSION" ]; then
+    show_changelog "$TOTUI_VERSION" "$TARGET_VERSION"
+elif [ -n "$TOTUI_MCP_VERSION" ] && [ "$TOTUI_MCP_VERSION" != "$TARGET_VERSION" ]; then
+    show_changelog "$TOTUI_MCP_VERSION" "$TARGET_VERSION"
+fi
+
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
     echo -e "${YELLOW}${BOLD}⚠  $INSTALL_DIR is not in your PATH${RESET}"
