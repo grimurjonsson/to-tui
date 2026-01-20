@@ -1,6 +1,6 @@
 {
   "totui-mcp": {
-    "command": "{{PLUGIN_DIR}}/target/release/totui-mcp",
+    "command": "${CLAUDE_PLUGIN_ROOT}/target/release/totui-mcp",
     "args": []
   }
 }

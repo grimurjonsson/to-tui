@@ -1,7 +1,11 @@
 {
   "name": "totui-mcp",
   "description": "MCP server for to-tui - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
+  "version": "0.2.11",
   "author": {
     "name": "to-tui"
-  }
+  },
+  "repository": "https://github.com/grimurjonsson/to-tui",
+  "license": "MIT",
+  "keywords": ["todo", "task", "mcp", "productivity"]
 }

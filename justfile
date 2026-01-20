@@ -525,6 +525,13 @@ _release bump msg="":
         echo "✓ marketplace.json version: $NEW_VERSION"
     fi
 
+    # Update Claude Code plugin.json version
+    PLUGIN_FILE=".claude-plugin/plugin.json"
+    if [ -f "$PLUGIN_FILE" ]; then
+        sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$NEW_VERSION\"/" "$PLUGIN_FILE"
+        echo "✓ plugin.json version: $NEW_VERSION"
+    fi
+
     # Update CHANGELOG.md with git changes since last tag
     CHANGELOG_FILE="CHANGELOG.md"
     if [ -f "$CHANGELOG_FILE" ]; then
@@ -592,6 +599,9 @@ _release bump msg="":
         git add Cargo.toml Cargo.lock
         if [ -f "$MARKETPLACE_FILE" ]; then
             git add "$MARKETPLACE_FILE"
+        fi
+        if [ -f "$PLUGIN_FILE" ]; then
+            git add "$PLUGIN_FILE"
         fi
         if [ -f "$CHANGELOG_FILE" ]; then
             git add "$CHANGELOG_FILE"

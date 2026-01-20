@@ -8,6 +8,7 @@ Add clipboard support to to-tui, enabling users to copy todo text to the system 
 
 - [x] **Phase 1: Clipboard Support** - Implement `y` key to copy current todo text to system clipboard
 - [x] **Phase 2: Scrolling & Mouse Support** - Add scrolling when text exceeds viewable area vertically, plus mouse support
+- [x] **Phase 4: Claude Code Plugin Configuration** - Fix MCP server configuration to work with Claude Code's plugin/marketplace system
 
 ## Phase Details
 
@@ -50,7 +51,7 @@ Plans:
 **Requirements**: PRIO-01, PRIO-02, PRIO-03, PRIO-04, PRIO-05
 **Success Criteria** (what must be TRUE):
   1. Database stores priority levels (P0/P1/P2 or None)
-  2. User can press `p` to cycle through priority levels (None → P0 → P1 → P2 → None)
+  2. User can press `p` to cycle through priority levels (None -> P0 -> P1 -> P2 -> None)
   3. Existing `p` (plugin) binding moved to `P` (capital P)
   4. Priority is visually indicated in TUI (colored badge)
   5. User can press `s` to sort todos by priority (root todos first, then children recursively)
@@ -63,6 +64,23 @@ Plans:
 - [x] 03-03: Priority visual display - colored badges in TUI (Wave 2)
 - [x] 03-04: Sort by priority - 's' key to sort todos by priority level (Wave 3)
 
+### Phase 4: Claude Code Plugin Configuration
+**Goal**: Fix MCP server configuration to work with Claude Code's plugin/marketplace system per Anthropic documentation
+**Depends on**: Phase 3 (Todo Priority System)
+**Requirements**: CONFIG-01 (portable paths), CONFIG-02 (complete metadata), CONFIG-03 (installation docs)
+**Success Criteria** (what must be TRUE):
+  1. totui-mcp server is discoverable/configurable in Claude Code
+  2. MCP tools (list_todos, create_todo, etc.) accessible from Claude Code sessions
+  3. Configuration follows current Anthropic documentation patterns
+  4. Installation/setup instructions updated
+**Research**: Level 2 (Complete) — see .planning/phases/04-claude-code-plugin-configuration/04-RESEARCH.md
+**Plans**: 3 plans in 2 waves
+
+Plans:
+- [x] 04-01: Update .mcp.json and plugin.json with portable paths and complete metadata (Wave 1)
+- [x] 04-02: Verify marketplace.json and install-binary.sh consistency (Wave 1)
+- [x] 04-03: Update README with correct Claude Code plugin installation commands (Wave 2)
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -70,3 +88,4 @@ Plans:
 | 1. Clipboard Support | 2/2 | ✓ Complete | 2026-01-17 |
 | 2. Scrolling & Mouse Support | 3/3 | ✓ Complete | 2026-01-17 |
 | 3. Todo Priority System | 4/4 | ✓ Complete | 2026-01-19 |
+| 4. Claude Code Plugin Configuration | 3/3 | ✓ Complete | 2026-01-20 |

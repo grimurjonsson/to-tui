@@ -122,26 +122,47 @@ The MCP server allows AI assistants like Claude to manage your todos.
 
 #### Installation as Claude Code Plugin
 
-**Recommended for Claude Code users:**
+**Option 1: Plugin Marketplace (Recommended)**
 
 1. Open Claude Code
-2. Type `/plugin` to open the plugin manager
-3. Go to the "Installed" tab
-4. Look for an option to add a plugin from URL (may be a button or text input)
-5. Enter the GitHub URL: `https://github.com/grimurjonsson/to-tui.git`
-6. After installation, download the pre-built binary (one-time setup):
+2. Add the marketplace:
+   ```
+   /plugin marketplace add grimurjonsson/to-tui
+   ```
+3. Install the plugin:
+   ```
+   /plugin install totui-mcp@grimurjonsson/to-tui
+   ```
+4. Download the pre-built binary (one-time setup):
    ```bash
-   # Find the installed plugin directory
-   cd ~/.claude/plugins/repos/totui-mcp
-   # Or if installed via marketplace:
-   # cd ~/.claude/plugins/cache/*/totui-mcp/*
-
-   # Run the installation script
+   cd ~/.claude/plugins/cache/grimurjonsson-to-tui/totui-mcp
    bash scripts/install-binary.sh
    ```
-7. Restart Claude Code
+5. Restart Claude Code
 
-The MCP server will now be available in **all** Claude Code instances.
+The MCP server tools (list_todos, create_todo, etc.) will now be available.
+
+**Option 2: Direct MCP Configuration**
+
+Add totui-mcp directly to your Claude Code configuration without using the plugin system:
+
+```bash
+# User-scoped (available in all projects)
+claude mcp add --transport stdio --scope user totui-mcp -- /path/to/totui-mcp
+
+# Project-scoped (creates .mcp.json in project)
+claude mcp add --transport stdio --scope project totui-mcp -- /path/to/totui-mcp
+```
+
+Verify installation:
+```bash
+claude mcp list
+```
+
+Or check in Claude Code:
+```
+/mcp
+```
 
 **Pre-built Binaries:**
 
@@ -154,14 +175,14 @@ The installation script automatically downloads the correct binary for your plat
 
 If you prefer to build from source instead:
 ```bash
-cd ~/.claude/plugins/repos/totui-mcp
+cd ~/.claude/plugins/cache/grimurjonsson-to-tui/totui-mcp
 cargo build --release --bin totui-mcp
 ```
 
 **Updating the Plugin:**
 
 When updates are available:
-1. Update through the plugin UI
+1. Update through `/plugin update totui-mcp`
 2. Re-run the installation script: `bash scripts/install-binary.sh`
 3. Restart Claude Code
 
@@ -184,15 +205,13 @@ For other LLM tools (e.g., Claude Desktop, OpenCode):
 cargo run --release --bin totui-mcp
 ```
 
-Configure in your LLM tool:
+Configure in your LLM tool's MCP configuration file:
 
 ```json
 {
-  "mcp": {
-    "totui-mcp": {
-      "command": ["/path/to/totui-mcp"],
-      "enabled": true
-    }
+  "totui-mcp": {
+    "command": "/path/to/totui-mcp",
+    "args": []
   }
 }
 ```

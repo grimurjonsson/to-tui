@@ -5,24 +5,24 @@
 See: .planning/PROJECT.md (updated 2026-01-17)
 
 **Core value:** Fast, keyboard-driven todo management that lives in the terminal and integrates with the tools I already use.
-**Current focus:** All phases complete — Milestone ready for audit
+**Current focus:** Phase 4 — Claude Code Plugin Configuration
 
 ## Current Position
 
-Phase: 3 of 3 (Todo Priority System) — Complete + Verified
-Plan: 4 of 4
-Status: All phases complete — milestone ready for audit
-Last activity: 2026-01-20 — Completed quick task 001: Install script version changelog
-Next Action: Run /gsd:audit-milestone or /gsd:complete-milestone
+Phase: 4 of 4 (Claude Code Plugin Configuration) — Complete
+Plan: 3 of 3
+Status: Phase 04 complete
+Last activity: 2026-01-20 — Completed 04-03-PLAN.md (README Documentation Update)
+Next Action: Project complete (all phases done)
 
-Progress: ██████████ 100% (Phase 3)
+Progress: ████████████████████ 100% (12/12 plans total)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 9
-- Average duration: 3.5 min
-- Total execution time: 0.52 hours
+- Total plans completed: 12
+- Average duration: 2.8 min
+- Total execution time: 0.56 hours
 
 **By Phase:**
 
@@ -31,10 +31,11 @@ Progress: ██████████ 100% (Phase 3)
 | 01-clipboard-support | 2/2 | 3 min | 1.5 min |
 | 02-scrolling-mouse-support | 3/3 | 10 min | 3.3 min |
 | 03-todo-priority-system | 4/4 | 16 min | 4 min |
+| 04-claude-code-plugin-configuration | 3/3 | 5 min | 1.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 02-03 (2 min), 03-01 (8 min), 03-03 (4 min), 03-04 (4 min)
-- Trend: Consistent
+- Last 5 plans: 03-03 (4 min), 03-04 (4 min), 04-01 (2 min), 04-02 (2 min), 04-03 (1 min)
+- Trend: Consistent (docs phases faster than feature phases)
 
 ## Accumulated Context
 
@@ -65,6 +66,10 @@ Recent decisions affecting current work:
 - Sort by root item priority; children inherit parent's position (03-04)
 - Use stable sort to preserve relative order within same priority (03-04)
 - Reset cursor to position 0 after sort operation (03-04)
+- Use ${CLAUDE_PLUGIN_ROOT} variable for binary path portability in .mcp.json (04-01)
+- Keep .mcp.json at plugin root (standard location per Anthropic docs) (04-01)
+- Document both plugin marketplace and direct MCP add approaches (04-03)
+- Use simpler JSON format for manual setup (no 'mcp' wrapper or 'enabled' field) (04-03)
 
 ### Pending Todos
 
@@ -75,6 +80,8 @@ None.
 - Phase 2 added: Scrolling & Mouse Support (2026-01-17)
 - Phase 3 added: Todo Priority System (2026-01-19)
 - Phase 3 completed: 2026-01-19
+- Phase 4 added: Claude Code Plugin Configuration (2026-01-20)
+- Phase 4 completed: 2026-01-20
 
 ### Blockers/Concerns
 
@@ -88,6 +95,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-19
-Stopped at: All phases complete — ready for /gsd:audit-milestone
+Last session: 2026-01-20
+Stopped at: Completed 04-03-PLAN.md (Phase 04 complete, all planned phases done)
 Resume file: None
