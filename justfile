@@ -460,6 +460,54 @@ _release bump msg="":
         echo "✓ marketplace.json version: $NEW_VERSION"
     fi
 
+    # Update CHANGELOG.md with git changes since last tag
+    CHANGELOG_FILE="CHANGELOG.md"
+    if [ -f "$CHANGELOG_FILE" ]; then
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        TODAY=$(date +%Y-%m-%d)
+
+        # Get commit messages since last tag (or all if no tag)
+        if [ -n "$LAST_TAG" ]; then
+            CHANGES=$(git log "$LAST_TAG"..HEAD --pretty=format:"- %s" --no-merges | grep -v "^- Release v" || true)
+        else
+            CHANGES=$(git log --pretty=format:"- %s" --no-merges | grep -v "^- Release v" || true)
+        fi
+
+        # Categorize changes (strip conventional commit prefixes)
+        ADDED=$(echo "$CHANGES" | grep -iE "^- (feat|add)" | sed 's/^- feat[:(] */- /i; s/^- add[:(] */- /i' || true)
+        FIXED=$(echo "$CHANGES" | grep -iE "^- fix" | sed 's/^- fix[:(] */- /i' || true)
+        CHANGED=$(echo "$CHANGES" | grep -iE "^- (refactor|change|update)" | sed 's/^- refactor[:(] */- /i; s/^- change[:(] */- /i; s/^- update[:(] */- /i' || true)
+
+        # Build new changelog entry using printf to avoid justfile comment issues
+        TMPFILE=$(mktemp)
+        printf '%s\n' "## [$NEW_VERSION] - $TODAY" >> "$TMPFILE"
+
+        if [ -n "$ADDED" ]; then
+            printf '\n%s\n%s\n' "### Added" "$ADDED" >> "$TMPFILE"
+        fi
+
+        if [ -n "$FIXED" ]; then
+            printf '\n%s\n%s\n' "### Fixed" "$FIXED" >> "$TMPFILE"
+        fi
+
+        if [ -n "$CHANGED" ]; then
+            printf '\n%s\n%s\n' "### Changed" "$CHANGED" >> "$TMPFILE"
+        fi
+
+        # Insert new entry after the header, before first version entry
+        HEADER_END=$(grep -n '^\#\# \[' "$CHANGELOG_FILE" | head -1 | cut -d: -f1)
+        if [ -n "$HEADER_END" ]; then
+            OUTFILE=$(mktemp)
+            head -n $((HEADER_END - 1)) "$CHANGELOG_FILE" > "$OUTFILE"
+            cat "$TMPFILE" >> "$OUTFILE"
+            printf '\n' >> "$OUTFILE"
+            tail -n +$HEADER_END "$CHANGELOG_FILE" >> "$OUTFILE"
+            mv "$OUTFILE" "$CHANGELOG_FILE"
+            echo "Updated CHANGELOG.md with v$NEW_VERSION"
+        fi
+        rm -f "$TMPFILE"
+    fi
+
     # Update Cargo.lock with new version
     cargo check --quiet
 
@@ -469,6 +517,9 @@ _release bump msg="":
         git add Cargo.toml Cargo.lock
         if [ -f "$MARKETPLACE_FILE" ]; then
             git add "$MARKETPLACE_FILE"
+        fi
+        if [ -f "$CHANGELOG_FILE" ]; then
+            git add "$CHANGELOG_FILE"
         fi
         if [ -n "{{ msg }}" ]; then
             git commit -m "Release v$NEW_VERSION" -m "{{ msg }}"
