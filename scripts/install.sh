@@ -137,6 +137,8 @@ show_changelog() {
                 echo -e "${YELLOW}${line}${RESET}"
             elif [ -n "$line" ]; then
                 echo "  $line"
+            else
+                echo ""
             fi
         fi
     done <<< "$CHANGELOG_CONTENT"
