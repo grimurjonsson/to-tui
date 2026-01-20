@@ -97,8 +97,8 @@ show_changelog() {
     local from_version="$1"
     local to_version="$2"
 
-    # Fetch CHANGELOG.md from the new version's tag
-    CHANGELOG_URL="https://raw.githubusercontent.com/${REPO}/${LATEST_TAG}/CHANGELOG.md"
+    # Fetch CHANGELOG.md from main branch (always has latest changelog)
+    CHANGELOG_URL="https://raw.githubusercontent.com/${REPO}/main/CHANGELOG.md"
     CHANGELOG_CONTENT=$(curl -s "$CHANGELOG_URL" 2>/dev/null || true)
 
     if [ -z "$CHANGELOG_CONTENT" ]; then
