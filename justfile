@@ -465,7 +465,7 @@ generate-changelog-test:
     TLDR=""
     if command -v claude &> /dev/null && [ -n "$CHANGES" ]; then
         echo "=== Generating TL;DR with Claude... ==="
-        PROMPT="Summarize these git commits in ONE short sentence (max 10 words) for a changelog TL;DR. Focus on the user-facing impact. No quotes, no prefix, just the sentence. Commits: $CHANGES"
+        PROMPT="Write a concise TL;DR for these changelog commits. Focus only on user-facing changes. No quotes or prefix. Commits: $CHANGES"
         TLDR=$(claude -p "$PROMPT" 2>/dev/null || true)
         echo "TL;DR: $TLDR"
         echo ""
@@ -541,7 +541,7 @@ _release bump msg="":
         # Generate TL;DR using Claude if available
         TLDR=""
         if command -v claude &> /dev/null && [ -n "$CHANGES" ]; then
-            PROMPT="Summarize these git commits in ONE short sentence (max 10 words) for a changelog TL;DR. Focus on the user-facing impact. No quotes, no prefix, just the sentence. Commits: $CHANGES"
+            PROMPT="Write a concise TL;DR for these changelog commits. Focus only on user-facing changes. No quotes or prefix. Commits: $CHANGES"
             TLDR=$(claude -p "$PROMPT" 2>/dev/null || true)
         fi
 
