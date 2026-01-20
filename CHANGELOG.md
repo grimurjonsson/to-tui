@@ -5,6 +5,19 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.11] - 2026-01-20
+Improved changelog display with better section spacing and added automatic TL;DR generation using Claude CLI.
+
+### Added
+- add generate-changelog-test command
+- generate TL;DR for changelog using Claude CLI
+
+### Fixed
+- relax TL;DR prompt constraints
+- remove blank line between version header and first section
+- preserve blank lines in changelog display
+- add blank lines between changelog sections
+
 ## [0.2.10] - 2026-01-20
 ### Added
 - auto-update CHANGELOG.md during release
