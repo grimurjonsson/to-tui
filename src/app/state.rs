@@ -6,12 +6,14 @@ use crate::storage::load_todos_for_viewing;
 use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
+use crate::utils::upgrade::{get_asset_download_url, spawn_download, DownloadProgress, UpgradeSubState};
 use crate::utils::version_check::{spawn_version_checker, VersionCheckResult};
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
 use std::sync::mpsc;
 use std::time::Instant;
+use tokio::sync::mpsc as tokio_mpsc;
 use uuid::Uuid;
 
 const MAX_UNDO_HISTORY: usize = 50;
@@ -93,6 +95,10 @@ pub struct AppState {
     pub show_upgrade_prompt: bool,
     /// Release URL to print after quit (when user clicks Y)
     pub pending_release_url: Option<String>,
+    /// Current upgrade sub-state when in Mode::UpgradePrompt
+    pub upgrade_sub_state: Option<UpgradeSubState>,
+    /// Channel receiver for download progress updates
+    pub download_progress_rx: Option<tokio_mpsc::Receiver<DownloadProgress>>,
 }
 
 impl AppState {
@@ -154,6 +160,8 @@ impl AppState {
             skipped_version,
             show_upgrade_prompt: false,
             pending_release_url: None,
+            upgrade_sub_state: None,
+            download_progress_rx: None,
         };
         // Sync list state with cursor position
         state.sync_list_state();
@@ -488,6 +496,7 @@ impl AppState {
     pub fn open_upgrade_modal(&mut self) {
         if self.new_version_available.is_some() {
             self.show_upgrade_prompt = true;
+            self.upgrade_sub_state = Some(UpgradeSubState::Prompt);
             self.mode = Mode::UpgradePrompt;
         }
     }
@@ -496,7 +505,66 @@ impl AppState {
     pub fn dismiss_upgrade_session(&mut self) {
         self.session_dismissed_upgrade = true;
         self.show_upgrade_prompt = false;
+        self.upgrade_sub_state = None;
+        self.download_progress_rx = None;
         self.mode = Mode::Navigate;
+    }
+
+    /// Start downloading the new version
+    pub fn start_download(&mut self) {
+        let version = match &self.new_version_available {
+            Some(v) => v.clone(),
+            None => return,
+        };
+
+        let url = get_asset_download_url(&version);
+        let target_path = std::env::temp_dir().join(format!("totui-{}.tar.gz", version));
+        let rx = spawn_download(url, target_path);
+
+        self.download_progress_rx = Some(rx);
+        self.upgrade_sub_state = Some(UpgradeSubState::Downloading {
+            progress: 0.0,
+            bytes_downloaded: 0,
+            total_bytes: None,
+        });
+    }
+
+    /// Check for download progress updates (non-blocking)
+    pub fn check_download_progress(&mut self) {
+        let rx = match &mut self.download_progress_rx {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        match rx.try_recv() {
+            Ok(DownloadProgress::Progress { bytes, total }) => {
+                let progress = bytes as f64 / total.unwrap_or(bytes.max(1)) as f64;
+                self.upgrade_sub_state = Some(UpgradeSubState::Downloading {
+                    progress,
+                    bytes_downloaded: bytes,
+                    total_bytes: total,
+                });
+            }
+            Ok(DownloadProgress::Complete { path }) => {
+                self.download_progress_rx = None;
+                self.upgrade_sub_state = Some(UpgradeSubState::RestartPrompt {
+                    downloaded_path: path,
+                });
+            }
+            Ok(DownloadProgress::Error { message }) => {
+                self.download_progress_rx = None;
+                self.upgrade_sub_state = Some(UpgradeSubState::Error { message });
+            }
+            Err(tokio_mpsc::error::TryRecvError::Empty) => {
+                // No update yet, do nothing
+            }
+            Err(tokio_mpsc::error::TryRecvError::Disconnected) => {
+                self.download_progress_rx = None;
+                self.upgrade_sub_state = Some(UpgradeSubState::Error {
+                    message: "Download task crashed".to_string(),
+                });
+            }
+        }
     }
 
     /// Skip this version permanently (save to config)
