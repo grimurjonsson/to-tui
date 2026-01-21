@@ -1,0 +1,277 @@
+{
+  "generated": "2026-01-21",
+  "project": "to-tui",
+  "language": "rust",
+  "files": {
+    "src/main.rs": {
+      "type": "binary",
+      "exports": [],
+      "imports": ["totui::*", "clap", "tokio", "anyhow"],
+      "description": "Main entry point - CLI handling, TUI/API server modes"
+    },
+    "src/lib.rs": {
+      "type": "library",
+      "exports": ["app", "api", "cli", "clipboard", "config", "keybindings", "mcp", "plugin", "storage", "todo", "ui", "utils"],
+      "imports": [],
+      "description": "Library root - re-exports all modules"
+    },
+    "src/cli.rs": {
+      "type": "module",
+      "exports": ["Cli", "Commands"],
+      "imports": ["clap"],
+      "description": "Clap-based CLI argument parsing"
+    },
+    "src/config.rs": {
+      "type": "module",
+      "exports": ["Config"],
+      "imports": ["serde", "toml", "dirs"],
+      "description": "TOML configuration loading from ~/.config/totui/"
+    },
+    "src/clipboard.rs": {
+      "type": "module",
+      "exports": ["copy_to_clipboard"],
+      "imports": ["arboard"],
+      "description": "System clipboard integration"
+    },
+    "src/bin/totui-mcp.rs": {
+      "type": "binary",
+      "exports": [],
+      "imports": ["totui::mcp", "rmcp", "tokio", "tracing"],
+      "description": "MCP server binary entrypoint"
+    },
+    "src/todo/mod.rs": {
+      "type": "module",
+      "exports": ["TodoItem", "TodoList", "TodoState", "Priority"],
+      "imports": [],
+      "description": "Todo domain module root"
+    },
+    "src/todo/item.rs": {
+      "type": "module",
+      "exports": ["TodoItem"],
+      "imports": ["uuid", "chrono", "serde"],
+      "description": "TodoItem struct with id, content, state, indent_level, parent_id, due_date, description, priority, collapsed"
+    },
+    "src/todo/list.rs": {
+      "type": "module",
+      "exports": ["TodoList"],
+      "imports": ["chrono", "uuid"],
+      "description": "TodoList container with items Vec, date, hierarchy management, undo history"
+    },
+    "src/todo/state.rs": {
+      "type": "module",
+      "exports": ["TodoState"],
+      "imports": ["serde"],
+      "description": "TodoState enum (Empty, Checked, Question, Exclamation, InProgress)"
+    },
+    "src/todo/priority.rs": {
+      "type": "module",
+      "exports": ["Priority"],
+      "imports": ["serde"],
+      "description": "Priority enum (P0, P1, P2) with parsing from todo content"
+    },
+    "src/todo/hierarchy.rs": {
+      "type": "module",
+      "exports": ["hierarchy functions"],
+      "imports": [],
+      "description": "Parent-child relationship operations"
+    },
+    "src/storage/mod.rs": {
+      "type": "module",
+      "exports": ["load_or_create_todo_list", "save_todo_list", "Database", "RolloverChecker", "UiCache"],
+      "imports": [],
+      "description": "Storage layer root"
+    },
+    "src/storage/file.rs": {
+      "type": "module",
+      "exports": ["load_or_create_todo_list", "save_todo_list"],
+      "imports": ["chrono", "anyhow"],
+      "description": "File-based todo list persistence to dailies/YYYY-MM-DD.md"
+    },
+    "src/storage/markdown.rs": {
+      "type": "module",
+      "exports": ["parse_markdown", "serialize_to_markdown"],
+      "imports": ["regex", "uuid"],
+      "description": "Markdown parsing/serialization for todos with checkbox states"
+    },
+    "src/storage/database.rs": {
+      "type": "module",
+      "exports": ["Database"],
+      "imports": ["rusqlite", "uuid", "chrono"],
+      "description": "SQLite storage for archived todos"
+    },
+    "src/storage/rollover.rs": {
+      "type": "module",
+      "exports": ["RolloverChecker"],
+      "imports": ["chrono"],
+      "description": "Incomplete todo rollover between days"
+    },
+    "src/storage/ui_cache.rs": {
+      "type": "module",
+      "exports": ["UiCache"],
+      "imports": ["serde", "uuid"],
+      "description": "UI state caching (selected todo id)"
+    },
+    "src/app/mod.rs": {
+      "type": "module",
+      "exports": ["AppState", "Mode", "event"],
+      "imports": [],
+      "description": "Application state module root"
+    },
+    "src/app/state.rs": {
+      "type": "module",
+      "exports": ["AppState"],
+      "imports": ["chrono", "uuid", "tokio"],
+      "description": "Main AppState struct with todo_list, cursor, mode, undo/redo, plugin state"
+    },
+    "src/app/mode.rs": {
+      "type": "module",
+      "exports": ["Mode"],
+      "imports": [],
+      "description": "Mode enum (Normal, Edit, Visual, ConfirmDelete, Help, Plugin, Rollover, Upgrade)"
+    },
+    "src/app/event.rs": {
+      "type": "module",
+      "exports": ["handle_key_event", "handle_mouse_event"],
+      "imports": ["crossterm"],
+      "description": "Key/mouse event handlers with mode-specific dispatching"
+    },
+    "src/api/mod.rs": {
+      "type": "module",
+      "exports": ["create_router"],
+      "imports": [],
+      "description": "REST API module root"
+    },
+    "src/api/routes.rs": {
+      "type": "module",
+      "exports": ["create_router"],
+      "imports": ["axum", "tower_http"],
+      "description": "Axum router with CRUD endpoints at /todos"
+    },
+    "src/api/handlers.rs": {
+      "type": "module",
+      "exports": ["list_todos", "create_todo", "update_todo", "delete_todo"],
+      "imports": ["axum", "uuid"],
+      "description": "API request handlers"
+    },
+    "src/api/models.rs": {
+      "type": "module",
+      "exports": ["CreateTodoRequest", "UpdateTodoRequest", "TodoResponse"],
+      "imports": ["serde", "uuid"],
+      "description": "Request/response DTOs for API"
+    },
+    "src/mcp/mod.rs": {
+      "type": "module",
+      "exports": ["TodoMcpServer"],
+      "imports": [],
+      "description": "MCP server module root"
+    },
+    "src/mcp/server.rs": {
+      "type": "module",
+      "exports": ["TodoMcpServer"],
+      "imports": ["rmcp", "serde_json", "tokio"],
+      "description": "MCP server with tools: list_todos, create_todo, update_todo, delete_todo, mark_complete"
+    },
+    "src/mcp/schemas.rs": {
+      "type": "module",
+      "exports": ["ListTodosRequest", "CreateTodoRequest", "UpdateTodoRequest", "DeleteTodoRequest", "MarkCompleteRequest"],
+      "imports": ["serde", "schemars"],
+      "description": "MCP request/response schemas with JsonSchema"
+    },
+    "src/mcp/errors.rs": {
+      "type": "module",
+      "exports": ["McpErrorDetail", "IntoMcpError"],
+      "imports": ["rmcp"],
+      "description": "MCP error handling"
+    },
+    "src/plugin/mod.rs": {
+      "type": "module",
+      "exports": ["TodoGenerator", "PluginRegistry", "generators"],
+      "imports": [],
+      "description": "Plugin system root with TodoGenerator trait"
+    },
+    "src/plugin/subprocess.rs": {
+      "type": "module",
+      "exports": ["run_command"],
+      "imports": ["std::process"],
+      "description": "Command execution helpers for plugins"
+    },
+    "src/plugin/generators/mod.rs": {
+      "type": "module",
+      "exports": ["JiraClaudeGenerator"],
+      "imports": [],
+      "description": "Generator implementations root"
+    },
+    "src/plugin/generators/jira_claude.rs": {
+      "type": "module",
+      "exports": ["JiraClaudeGenerator"],
+      "imports": ["serde_json"],
+      "description": "Jira ticket -> todos using acli + Claude CLI"
+    },
+    "src/ui/mod.rs": {
+      "type": "module",
+      "exports": ["run_tui", "components", "theme"],
+      "imports": ["crossterm", "ratatui", "notify"],
+      "description": "TUI main loop with terminal setup/teardown, event polling"
+    },
+    "src/ui/theme.rs": {
+      "type": "module",
+      "exports": ["Theme"],
+      "imports": ["ratatui::style::Color"],
+      "description": "Theme struct with color definitions (default, dark, light)"
+    },
+    "src/ui/components/mod.rs": {
+      "type": "module",
+      "exports": ["render"],
+      "imports": ["ratatui"],
+      "description": "Main render function, overlay renderers (help, plugin, rollover, upgrade)"
+    },
+    "src/ui/components/todo_list.rs": {
+      "type": "module",
+      "exports": ["render"],
+      "imports": ["ratatui", "unicode_width"],
+      "description": "Todo list rendering with wrapping, collapsing, descriptions"
+    },
+    "src/ui/components/status_bar.rs": {
+      "type": "module",
+      "exports": ["render"],
+      "imports": ["ratatui"],
+      "description": "Status bar with mode, date, version info"
+    },
+    "src/utils/mod.rs": {
+      "type": "module",
+      "exports": ["paths", "unicode", "version_check", "upgrade"],
+      "imports": [],
+      "description": "Utility functions root"
+    },
+    "src/utils/paths.rs": {
+      "type": "module",
+      "exports": ["get_data_dir", "get_dailies_dir", "get_database_path", "get_config_dir"],
+      "imports": ["dirs"],
+      "description": "Path resolution for data/config directories"
+    },
+    "src/utils/unicode.rs": {
+      "type": "module",
+      "exports": ["display_width"],
+      "imports": ["unicode_width"],
+      "description": "Unicode display width calculations"
+    },
+    "src/utils/version_check.rs": {
+      "type": "module",
+      "exports": ["check_for_updates"],
+      "imports": ["reqwest", "semver"],
+      "description": "GitHub release version checking"
+    },
+    "src/utils/upgrade.rs": {
+      "type": "module",
+      "exports": ["download_and_upgrade"],
+      "imports": ["self_update", "tokio"],
+      "description": "Self-upgrade functionality"
+    },
+    "src/keybindings/mod.rs": {
+      "type": "module",
+      "exports": ["Keybindings"],
+      "imports": ["crossterm"],
+      "description": "Keybinding configuration"
+    }
+  }
+}

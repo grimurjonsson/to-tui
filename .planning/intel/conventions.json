@@ -1,0 +1,70 @@
+{
+  "generated": "2026-01-21",
+  "project": "to-tui",
+  "language": "rust",
+  "naming": {
+    "modules": "snake_case",
+    "structs": "PascalCase",
+    "enums": "PascalCase",
+    "functions": "snake_case",
+    "constants": "SCREAMING_SNAKE_CASE",
+    "traits": "PascalCase"
+  },
+  "directory_patterns": {
+    "src/": "Main source code",
+    "src/bin/": "Additional binary entrypoints",
+    "src/todo/": "Core domain module (TodoItem, TodoList, TodoState)",
+    "src/storage/": "Persistence layer (file, database, markdown)",
+    "src/app/": "Application state and event handling",
+    "src/api/": "REST API (axum-based)",
+    "src/mcp/": "Model Context Protocol server",
+    "src/plugin/": "Plugin/generator system",
+    "src/plugin/generators/": "Plugin implementations",
+    "src/ui/": "Terminal UI (ratatui-based)",
+    "src/ui/components/": "UI component renderers",
+    "src/utils/": "Utility functions"
+  },
+  "file_patterns": {
+    "mod.rs": "Module root that re-exports public items",
+    "state.rs": "State struct definitions",
+    "event.rs": "Event handling logic",
+    "routes.rs": "HTTP route definitions",
+    "handlers.rs": "Request handler implementations",
+    "models.rs": "Data transfer objects/schemas",
+    "schemas.rs": "JSON schema definitions"
+  },
+  "import_patterns": {
+    "external_crates": "Listed in Cargo.toml, imported at crate root or per-module",
+    "internal_modules": "use crate::module_name::{Item}",
+    "super_imports": "use super::*"
+  },
+  "error_handling": {
+    "pattern": "anyhow::Result with .with_context()",
+    "example": "fn foo() -> Result<T> { ... .with_context(|| \"descriptive message\")? }"
+  },
+  "database_conventions": {
+    "soft_deletes": "Use deleted_at timestamp, never hard delete",
+    "queries": "Always include WHERE deleted_at IS NULL"
+  },
+  "storage_conventions": {
+    "data_dir": "~/.local/share/to-tui/",
+    "dailies": "~/.local/share/to-tui/dailies/YYYY-MM-DD.md",
+    "database": "~/.local/share/to-tui/archive.db",
+    "config": "~/.config/to-tui/config.toml"
+  },
+  "todo_states": {
+    "Empty": "[ ] - pending",
+    "Checked": "[x] - done",
+    "Question": "[?] - question",
+    "Exclamation": "[!] - important",
+    "InProgress": "[*] - in progress"
+  },
+  "frameworks": {
+    "tui": "ratatui + crossterm",
+    "async_runtime": "tokio",
+    "web_framework": "axum",
+    "database": "rusqlite (SQLite)",
+    "serialization": "serde + serde_json",
+    "mcp": "rmcp crate"
+  }
+}
