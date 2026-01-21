@@ -7,6 +7,7 @@ use crate::storage::{execute_rollover, find_rollover_candidates, save_todo_list,
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
+use crate::utils::upgrade::UpgradeSubState;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use std::sync::mpsc;
@@ -744,28 +745,74 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
-    match key.code {
-        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-            // Set pending release URL to print after quit
-            if let Some(ref version) = state.new_version_available {
-                let url = format!("https://github.com/grimurjonsson/to-tui/releases/tag/v{}", version);
-                state.pending_release_url = Some(url);
+    let sub_state = state.upgrade_sub_state.clone();
+
+    match sub_state {
+        Some(UpgradeSubState::Prompt) | None => {
+            // Initial prompt: Y (download), N (dismiss), S (skip)
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    // Start download instead of just setting URL
+                    state.start_download();
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    // Dismiss for this session
+                    state.dismiss_upgrade_session();
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => {
+                    // Skip this version permanently
+                    if let Some(version) = state.new_version_available.clone() {
+                        state.skip_version_permanently(version)?;
+                        state.set_status_message("Skipped version updates".to_string());
+                    }
+                }
+                _ => {}
             }
-            state.show_upgrade_prompt = false;
-            state.mode = Mode::Navigate;
         }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-            // Dismiss for this session
-            state.dismiss_upgrade_session();
+        Some(UpgradeSubState::Downloading { .. }) => {
+            // During download, only allow cancel with Esc
+            if key.code == KeyCode::Esc {
+                state.download_progress_rx = None;
+                state.upgrade_sub_state = None;
+                state.show_upgrade_prompt = false;
+                state.mode = Mode::Navigate;
+            }
+            // Otherwise ignore - download continues
         }
-        KeyCode::Char('s') | KeyCode::Char('S') => {
-            // Skip this version permanently
-            if let Some(version) = state.new_version_available.clone() {
-                state.skip_version_permanently(version)?;
-                state.set_status_message(format!("Skipped version updates"));
+        Some(UpgradeSubState::Error { .. }) => {
+            match key.code {
+                KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Enter => {
+                    // Retry download
+                    state.start_download();
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    // Dismiss error
+                    state.upgrade_sub_state = None;
+                    state.show_upgrade_prompt = false;
+                    state.mode = Mode::Navigate;
+                }
+                _ => {}
             }
         }
-        _ => {}
+        Some(UpgradeSubState::RestartPrompt { downloaded_path }) => {
+            match key.code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    // Will be implemented in Plan 03: extract, replace, restart
+                    // For now, just store the path and note it needs implementation
+                    state.set_status_message(format!("Downloaded to: {:?}", downloaded_path));
+                    state.upgrade_sub_state = None;
+                    state.show_upgrade_prompt = false;
+                    state.mode = Mode::Navigate;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    // Dismiss without installing
+                    state.upgrade_sub_state = None;
+                    state.show_upgrade_prompt = false;
+                    state.mode = Mode::Navigate;
+                }
+                _ => {}
+            }
+        }
     }
     Ok(())
 }
