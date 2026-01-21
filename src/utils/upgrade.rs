@@ -1,6 +1,8 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use futures_util::StreamExt;
+use self_update::Extract;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
@@ -205,6 +207,144 @@ pub fn format_bytes(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+/// Extracts the `totui` binary from a downloaded tar.gz archive.
+///
+/// # Arguments
+/// * `archive_path` - Path to the downloaded .tar.gz archive
+///
+/// # Returns
+/// Path to the extracted binary in a stable temp location.
+///
+/// # Errors
+/// Returns error if extraction fails or the binary is not found in the archive.
+pub fn extract_binary(archive_path: &Path) -> anyhow::Result<PathBuf> {
+    // Create temp directory for extraction
+    let temp_dir = tempfile::tempdir()
+        .context("Failed to create temporary directory for extraction")?;
+
+    // Extract the archive using self_update's Extract
+    Extract::from_source(archive_path)
+        .archive(self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz)))
+        .extract_into(temp_dir.path())
+        .context("Failed to extract archive")?;
+
+    // Find the totui binary in the extracted files
+    let extracted_binary_path = temp_dir.path().join("totui");
+    if !extracted_binary_path.exists() {
+        anyhow::bail!(
+            "Binary 'totui' not found in archive. Contents: {:?}",
+            std::fs::read_dir(temp_dir.path())
+                .ok()
+                .map(|entries| entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect::<Vec<_>>())
+                .unwrap_or_default()
+        );
+    }
+
+    // Copy extracted binary to a stable temp location that won't be cleaned up
+    // when the tempdir drops
+    let stable_binary_path = std::env::temp_dir().join("totui-upgrade-binary");
+    std::fs::copy(&extracted_binary_path, &stable_binary_path)
+        .with_context(|| "Failed to copy extracted binary to stable location")?;
+
+    // Set executable permissions on the stable copy
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&stable_binary_path, std::fs::Permissions::from_mode(0o755))
+            .context("Failed to set executable permissions on extracted binary")?;
+    }
+
+    // tempdir drops here and cleans up extraction directory, but our copy is safe
+    Ok(stable_binary_path)
+}
+
+/// Checks if we have permission to write to the current executable's location.
+///
+/// # Errors
+/// Returns error with helpful message if we cannot write to the binary location.
+pub fn check_write_permission() -> anyhow::Result<()> {
+    let current_exe = std::env::current_exe()
+        .context("Failed to determine current executable path")?;
+
+    let parent_dir = current_exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Failed to determine parent directory of executable"))?;
+
+    // Check if we can write to the parent directory
+    let test_file = parent_dir.join(".totui-write-test");
+    match std::fs::File::create(&test_file) {
+        Ok(_) => {
+            // Clean up test file
+            let _ = std::fs::remove_file(&test_file);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            let exe_display = current_exe.display();
+            let dir_display = parent_dir.display();
+            anyhow::bail!(
+                "Cannot write to {}\n\n\
+                 Binary is located in {} which requires elevated permissions.\n\n\
+                 Try: sudo totui --upgrade\n\
+                 Or download manually from:\n\
+                 https://github.com/grimurjonsson/to-tui/releases",
+                exe_display,
+                dir_display
+            );
+        }
+        Err(e) => {
+            anyhow::bail!("Failed to check write permissions: {}", e);
+        }
+    }
+}
+
+/// Atomically replaces the current binary with a new version and restarts the application.
+///
+/// # Arguments
+/// * `new_binary_path` - Path to the new binary to install
+///
+/// # Returns
+/// This function does not return on success (the process is replaced).
+///
+/// # Errors
+/// Returns error if replacement or restart fails.
+pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
+    let current_exe = std::env::current_exe()
+        .context("Failed to determine current executable path")?;
+
+    // Use self_replace for atomic replacement
+    self_replace::self_replace(new_binary_path)
+        .context("Failed to replace binary")?;
+
+    // Clean up the temp binary file
+    let _ = std::fs::remove_file(new_binary_path);
+
+    // Restart the application
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        let err = std::process::Command::new(&current_exe)
+            .args(&args)
+            .exec();
+        // exec() only returns on error
+        anyhow::bail!("Failed to restart: {}", err);
+    }
+
+    #[cfg(not(unix))]
+    {
+        // On Windows, spawn new process and exit
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        std::process::Command::new(&current_exe)
+            .args(&args)
+            .spawn()
+            .context("Failed to spawn new process")?;
+        std::process::exit(0);
     }
 }
 
