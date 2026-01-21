@@ -85,6 +85,14 @@ pub struct AppState {
     pub new_version_available: Option<String>,
     /// Receiver for version check results
     version_check_rx: mpsc::Receiver<VersionCheckResult>,
+    /// Session-only flag: dismiss upgrade prompt until app restart
+    pub session_dismissed_upgrade: bool,
+    /// Version to skip permanently (loaded from config)
+    pub skipped_version: Option<String>,
+    /// Flag to show upgrade prompt (set when new version detected)
+    pub show_upgrade_prompt: bool,
+    /// Release URL to print after quit (when user clicks Y)
+    pub pending_release_url: Option<String>,
 }
 
 impl AppState {
@@ -95,6 +103,7 @@ impl AppState {
         timeoutlen: u64,
         plugin_registry: PluginRegistry,
         ui_cache: Option<UiCache>,
+        skipped_version: Option<String>,
     ) -> Self {
         let today = Local::now().date_naive();
         let viewing_date = todo_list.date;
@@ -141,6 +150,10 @@ impl AppState {
             help_scroll: 0,
             new_version_available: None,
             version_check_rx: spawn_version_checker(),
+            session_dismissed_upgrade: false,
+            skipped_version,
+            show_upgrade_prompt: false,
+            pending_release_url: None,
         };
         // Sync list state with cursor position
         state.sync_list_state();
@@ -455,8 +468,52 @@ impl AppState {
         if let Ok(result) = self.version_check_rx.try_recv()
             && result.is_newer
         {
-            self.new_version_available = Some(result.latest_version);
+            let new_version = result.latest_version.clone();
+            self.new_version_available = Some(new_version.clone());
+
+            // Auto-show upgrade prompt if:
+            // 1. Not already dismissed this session
+            // 2. Not in skipped_version list
+            let should_show = !self.session_dismissed_upgrade
+                && self.skipped_version.as_ref() != Some(&new_version);
+
+            if should_show {
+                self.show_upgrade_prompt = true;
+                self.mode = Mode::UpgradePrompt;
+            }
         }
+    }
+
+    /// Open upgrade modal (e.g., when clicking version in status bar)
+    pub fn open_upgrade_modal(&mut self) {
+        if self.new_version_available.is_some() {
+            self.show_upgrade_prompt = true;
+            self.mode = Mode::UpgradePrompt;
+        }
+    }
+
+    /// Dismiss upgrade prompt for this session only
+    pub fn dismiss_upgrade_session(&mut self) {
+        self.session_dismissed_upgrade = true;
+        self.show_upgrade_prompt = false;
+        self.mode = Mode::Navigate;
+    }
+
+    /// Skip this version permanently (save to config)
+    pub fn skip_version_permanently(&mut self, version: String) -> Result<()> {
+        use crate::config::Config;
+
+        // Load current config, update skipped_version, and save
+        let mut config = Config::load()?;
+        config.skipped_version = Some(version.clone());
+        config.save()?;
+
+        // Update local state
+        self.skipped_version = Some(version);
+        self.show_upgrade_prompt = false;
+        self.mode = Mode::Navigate;
+
+        Ok(())
     }
 
     pub fn get_spinner_char(&self) -> char {

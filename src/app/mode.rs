@@ -9,6 +9,7 @@ pub enum Mode {
     ConfirmDelete,
     Plugin,
     Rollover,
+    UpgradePrompt,
 }
 
 impl fmt::Display for Mode {
@@ -20,6 +21,7 @@ impl fmt::Display for Mode {
             Mode::ConfirmDelete => write!(f, "CONFIRM"),
             Mode::Plugin => write!(f, "PLUGIN"),
             Mode::Rollover => write!(f, "ROLLOVER"),
+            Mode::UpgradePrompt => write!(f, "UPGRADE"),
         }
     }
 }

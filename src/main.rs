@@ -81,6 +81,7 @@ fn main() -> Result<()> {
                 config.timeoutlen,
                 plugin_registry,
                 ui_cache,
+                config.skipped_version.clone(),
             );
 
             // Check for rollover candidates and show modal on startup if found

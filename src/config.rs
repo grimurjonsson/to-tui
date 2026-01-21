@@ -15,6 +15,9 @@ pub struct Config {
 
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
+
+    #[serde(default)]
+    pub skipped_version: Option<String>,
 }
 
 fn default_theme() -> String {
@@ -31,6 +34,7 @@ impl Default for Config {
             theme: default_theme(),
             timeoutlen: default_timeoutlen(),
             keybindings: KeybindingsConfig::default(),
+            skipped_version: None,
         }
     }
 }
@@ -49,6 +53,20 @@ impl Config {
         config.keybindings = config.keybindings.merge_with_defaults();
 
         Ok(config)
+    }
+
+    pub fn save(&self) -> Result<()> {
+        let config_path = get_config_path()?;
+
+        // Ensure config directory exists
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let content = toml::to_string_pretty(self)?;
+        fs::write(&config_path, content)?;
+
+        Ok(())
     }
 }
 
