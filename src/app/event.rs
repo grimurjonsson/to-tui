@@ -7,7 +7,7 @@ use crate::storage::{execute_rollover, find_rollover_candidates, save_todo_list,
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
-use crate::utils::upgrade::UpgradeSubState;
+use crate::utils::upgrade::{check_write_permission, extract_binary, replace_and_restart, UpgradeSubState};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use std::sync::mpsc;
@@ -752,7 +752,13 @@ fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
             // Initial prompt: Y (download), N (dismiss), S (skip)
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    // Start download instead of just setting URL
+                    // Check write permission before downloading
+                    if let Err(e) = check_write_permission() {
+                        state.upgrade_sub_state = Some(UpgradeSubState::Error {
+                            message: e.to_string(),
+                        });
+                        return Ok(());
+                    }
                     state.start_download();
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -782,6 +788,13 @@ fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
         Some(UpgradeSubState::Error { .. }) => {
             match key.code {
                 KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Enter => {
+                    // Check write permission before retrying
+                    if let Err(e) = check_write_permission() {
+                        state.upgrade_sub_state = Some(UpgradeSubState::Error {
+                            message: e.to_string(),
+                        });
+                        return Ok(());
+                    }
                     // Retry download
                     state.start_download();
                 }
@@ -797,15 +810,38 @@ fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
         Some(UpgradeSubState::RestartPrompt { downloaded_path }) => {
             match key.code {
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    // Will be implemented in Plan 03: extract, replace, restart
-                    // For now, just store the path and note it needs implementation
-                    state.set_status_message(format!("Downloaded to: {:?}", downloaded_path));
-                    state.upgrade_sub_state = None;
-                    state.show_upgrade_prompt = false;
-                    state.mode = Mode::Navigate;
+                    // Check write permission first (should already be checked, but verify)
+                    if let Err(e) = check_write_permission() {
+                        state.upgrade_sub_state = Some(UpgradeSubState::Error {
+                            message: e.to_string(),
+                        });
+                        return Ok(());
+                    }
+
+                    // Extract binary from archive
+                    match extract_binary(&downloaded_path) {
+                        Ok(binary_path) => {
+                            // Clean up downloaded archive
+                            let _ = std::fs::remove_file(&downloaded_path);
+
+                            // Attempt replacement and restart
+                            // Note: replace_and_restart will not return on success (exec replaces process)
+                            if let Err(e) = replace_and_restart(&binary_path) {
+                                state.upgrade_sub_state = Some(UpgradeSubState::Error {
+                                    message: format!("Upgrade failed: {}", e),
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            state.upgrade_sub_state = Some(UpgradeSubState::Error {
+                                message: format!("Extraction failed: {}", e),
+                            });
+                        }
+                    }
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                    // Dismiss without installing
+                    // Clean up downloaded file
+                    let _ = std::fs::remove_file(&downloaded_path);
                     state.upgrade_sub_state = None;
                     state.show_upgrade_prompt = false;
                     state.mode = Mode::Navigate;
