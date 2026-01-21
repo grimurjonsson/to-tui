@@ -35,7 +35,7 @@ impl Drop for TerminalGuard {
     }
 }
 
-pub fn run_tui(mut state: AppState) -> Result<()> {
+pub fn run_tui(mut state: AppState) -> Result<AppState> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
@@ -59,7 +59,8 @@ pub fn run_tui(mut state: AppState) -> Result<()> {
     let result = run_app(&mut terminal, &mut state, db_rx);
     terminal.show_cursor()?;
 
-    result
+    result?;
+    Ok(state)
 }
 
 fn setup_database_watcher(tx: mpsc::Sender<()>) -> Option<RecommendedWatcher> {

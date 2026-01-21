@@ -89,7 +89,13 @@ fn main() -> Result<()> {
                 state.open_rollover_modal(source_date, items);
             }
 
-            ui::run_tui(state)?;
+            let state = ui::run_tui(state)?;
+
+            // Print release URL if user requested it
+            if let Some(url) = state.pending_release_url {
+                println!("\nNew version available:");
+                println!("{}", url);
+            }
         }
     }
 

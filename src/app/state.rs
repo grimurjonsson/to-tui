@@ -677,3 +677,53 @@ impl AppState {
         self.pending_rollover.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_dismiss_upgrade() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::PluginRegistry;
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            PluginRegistry::new(),
+            None,
+            None,
+        );
+
+        // Simulate new version detected
+        state.new_version_available = Some("0.4.0".to_string());
+        state.show_upgrade_prompt = true;
+        state.mode = Mode::UpgradePrompt;
+
+        // Dismiss for session
+        state.dismiss_upgrade_session();
+
+        // Verify state after dismissal
+        assert_eq!(state.session_dismissed_upgrade, true);
+        assert_eq!(state.show_upgrade_prompt, false);
+        assert_eq!(state.mode, Mode::Navigate);
+
+        // Simulate another check - should NOT auto-show because session dismissed
+        state.mode = Mode::Navigate;
+        let should_show = !state.session_dismissed_upgrade
+            && state.skipped_version.as_ref() != state.new_version_available.as_ref();
+        assert_eq!(should_show, false, "Should not auto-show after session dismiss");
+    }
+}
