@@ -311,6 +311,10 @@ pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
     // Clean up the temp binary file
     let _ = std::fs::remove_file(new_binary_path);
 
+    // Restore terminal state BEFORE exec() replaces the process
+    // (exec replaces the process entirely, so Drop handlers won't run)
+    restore_terminal();
+
     // Restart the application
     #[cfg(unix)]
     {
@@ -333,6 +337,22 @@ pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
             .context("Failed to spawn new process")?;
         std::process::exit(0);
     }
+}
+
+/// Restore terminal to normal state before exec() replaces the process.
+/// This must be called explicitly because exec() doesn't run Drop handlers.
+fn restore_terminal() {
+    use crossterm::{
+        execute,
+        event::DisableMouseCapture,
+        terminal::{disable_raw_mode, LeaveAlternateScreen},
+    };
+    use std::io::{self, Write};
+
+    let mut stdout = io::stdout();
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
+    let _ = stdout.flush();
 }
 
 #[cfg(test)]
