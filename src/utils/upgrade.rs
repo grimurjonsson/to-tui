@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use futures_util::StreamExt;
-use self_update::Extract;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
@@ -42,14 +41,15 @@ pub enum DownloadProgress {
 /// * `version` - The version string without 'v' prefix (e.g., "0.3.1")
 ///
 /// # Returns
-/// The full URL to the tar.gz asset for the current platform.
+/// The full URL to the binary asset for the current platform.
 ///
 /// # Panics
 /// Panics on unsupported platforms (not macOS or Linux x86_64).
 pub fn get_asset_download_url(version: &str) -> String {
     let target = get_target_triple();
+    // Release assets are raw binaries, not archives
     format!(
-        "https://github.com/{}/releases/download/v{}/totui-{}.tar.gz",
+        "https://github.com/{}/releases/download/v{}/totui-{}",
         GITHUB_REPO, version, target
     )
 }
@@ -210,58 +210,44 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Extracts the `totui` binary from a downloaded tar.gz archive.
+/// Prepares the downloaded binary for installation by setting executable permissions.
+///
+/// Since GitHub releases contain raw binaries (not archives), we just need to
+/// make the downloaded file executable.
 ///
 /// # Arguments
-/// * `archive_path` - Path to the downloaded .tar.gz archive
+/// * `binary_path` - Path to the downloaded binary
 ///
 /// # Returns
-/// Path to the extracted binary in a stable temp location.
+/// The same path, after setting executable permissions.
 ///
 /// # Errors
-/// Returns error if extraction fails or the binary is not found in the archive.
-pub fn extract_binary(archive_path: &Path) -> anyhow::Result<PathBuf> {
-    // Create temp directory for extraction
-    let temp_dir = tempfile::tempdir()
-        .context("Failed to create temporary directory for extraction")?;
+/// Returns error if setting permissions fails or the file doesn't exist.
+pub fn prepare_binary(binary_path: &Path) -> anyhow::Result<PathBuf> {
+    // Verify the file exists
+    if !binary_path.exists() {
+        anyhow::bail!("Downloaded binary not found at {:?}", binary_path);
+    }
 
-    // Extract the archive using self_update's Extract
-    Extract::from_source(archive_path)
-        .archive(self_update::ArchiveKind::Tar(Some(self_update::Compression::Gz)))
-        .extract_into(temp_dir.path())
-        .context("Failed to extract archive")?;
-
-    // Find the totui binary in the extracted files
-    let extracted_binary_path = temp_dir.path().join("totui");
-    if !extracted_binary_path.exists() {
+    // Check file size is reasonable (at least 1MB for a Rust binary)
+    let metadata = std::fs::metadata(binary_path)
+        .context("Failed to read binary metadata")?;
+    if metadata.len() < 1_000_000 {
         anyhow::bail!(
-            "Binary 'totui' not found in archive. Contents: {:?}",
-            std::fs::read_dir(temp_dir.path())
-                .ok()
-                .map(|entries| entries
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.file_name().to_string_lossy().to_string())
-                    .collect::<Vec<_>>())
-                .unwrap_or_default()
+            "Downloaded file is too small ({} bytes). Expected a binary, got something else.",
+            metadata.len()
         );
     }
 
-    // Copy extracted binary to a stable temp location that won't be cleaned up
-    // when the tempdir drops
-    let stable_binary_path = std::env::temp_dir().join("totui-upgrade-binary");
-    std::fs::copy(&extracted_binary_path, &stable_binary_path)
-        .with_context(|| "Failed to copy extracted binary to stable location")?;
-
-    // Set executable permissions on the stable copy
+    // Set executable permissions
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&stable_binary_path, std::fs::Permissions::from_mode(0o755))
-            .context("Failed to set executable permissions on extracted binary")?;
+        std::fs::set_permissions(binary_path, std::fs::Permissions::from_mode(0o755))
+            .context("Failed to set executable permissions on downloaded binary")?;
     }
 
-    // tempdir drops here and cleans up extraction directory, but our copy is safe
-    Ok(stable_binary_path)
+    Ok(binary_path.to_path_buf())
 }
 
 /// Checks if we have permission to write to the current executable's location.
@@ -368,7 +354,8 @@ mod tests {
     fn test_get_asset_download_url() {
         let url = get_asset_download_url("0.3.1");
         assert!(url.starts_with("https://github.com/grimurjonsson/to-tui/releases/download/v0.3.1/totui-"));
-        assert!(url.ends_with(".tar.gz"));
+        // Release assets are raw binaries, not archives
+        assert!(!url.ends_with(".tar.gz"));
     }
 
     #[test]

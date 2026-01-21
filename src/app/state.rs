@@ -518,7 +518,8 @@ impl AppState {
         };
 
         let url = get_asset_download_url(&version);
-        let target_path = std::env::temp_dir().join(format!("totui-{}.tar.gz", version));
+        // Download as raw binary (releases are not archived)
+        let target_path = std::env::temp_dir().join(format!("totui-{}", version));
         let rx = spawn_download(url, target_path);
 
         self.download_progress_rx = Some(rx);
