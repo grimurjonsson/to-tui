@@ -3293,7 +3293,6 @@ dependencies = [
  "rmcp",
  "rusqlite",
  "schemars",
- "self-replace",
  "self_update",
  "serde",
  "serde_json",
