@@ -10,19 +10,19 @@ See: .planning/PROJECT.md (updated 2026-01-17)
 ## Current Position
 
 Phase: 5 of 5 (Automatic Self-Upgrade) — In Progress
-Plan: 1 of 3
+Plan: 2 of 3 complete
 Status: In progress
-Last activity: 2026-01-21 — Completed 05-01-PLAN.md (Download Infrastructure)
-Next Action: Execute 05-02-PLAN.md (TUI Integration)
+Last activity: 2026-01-21 — Completed 05-02-PLAN.md (TUI Integration)
+Next Action: Execute 05-03-PLAN.md (Binary Replacement)
 
-Progress: █████████████████████░░ 87% (13/15 plans complete)
+Progress: ██████████████████████░ 93% (14/15 plans complete)
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 12
-- Average duration: 2.8 min
-- Total execution time: 0.56 hours
+- Total plans completed: 14
+- Average duration: 2.7 min
+- Total execution time: 0.63 hours
 
 **By Phase:**
 
@@ -32,11 +32,11 @@ Progress: █████████████████████░░ 
 | 02-scrolling-mouse-support | 3/3 | 10 min | 3.3 min |
 | 03-todo-priority-system | 4/4 | 16 min | 4 min |
 | 04-claude-code-plugin-configuration | 3/3 | 5 min | 1.7 min |
-| 05-automatic-self-upgrade | 1/3 | 2 min | 2 min |
+| 05-automatic-self-upgrade | 2/3 | 5 min | 2.5 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-01 (2 min), 04-02 (2 min), 04-03 (1 min), 05-01 (2 min)
-- Trend: Consistent (infrastructure phases around 2 min)
+- Last 5 plans: 04-02 (2 min), 04-03 (1 min), 05-01 (2 min), 05-02 (3 min)
+- Trend: Consistent (infrastructure phases around 2-3 min)
 
 ## Accumulated Context
 
@@ -77,6 +77,7 @@ Recent decisions affecting current work:
 - Clicking version text in status bar reopens modal on demand (Quick-002)
 - Release URL printed to terminal after quit (when Y pressed) (Quick-002)
 - Added reqwest stream feature for bytes_stream() download streaming (05-01)
+- Use Option<UpgradeSubState> to track upgrade mode state independently of Mode enum (05-02)
 
 ### Pending Todos
 
@@ -105,6 +106,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-21 12:40 UTC
-Stopped at: Completed 05-01-PLAN.md (Download Infrastructure)
-Resume file: .planning/phases/05-automatic-self-upgrade/05-02-PLAN.md
+Last session: 2026-01-21 12:46 UTC
+Stopped at: Completed 05-02-PLAN.md (TUI Integration)
+Resume file: .planning/phases/05-automatic-self-upgrade/05-03-PLAN.md
