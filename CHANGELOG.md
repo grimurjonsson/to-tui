@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-01-21
+A version checker now notifies you when a new release is available.
+
+### Added
+- adding a version checker to notify of new releases
+
 ## [0.3.0] - 2026-01-21
 MCP plugin now finds the binary via PATH instead of hardcoded paths, improving portability across different installations.
 
