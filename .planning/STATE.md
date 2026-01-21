@@ -70,6 +70,11 @@ Recent decisions affecting current work:
 - Keep .mcp.json at plugin root (standard location per Anthropic docs) (04-01)
 - Document both plugin marketplace and direct MCP add approaches (04-03)
 - Use simpler JSON format for manual setup (no 'mcp' wrapper or 'enabled' field) (04-03)
+- Modal shows three actions: Y (view release), N (dismiss session), S (skip version) (Quick-002)
+- Session dismissal flag prevents repeated prompts during single app run (Quick-002)
+- Skipped version persisted to config.toml for permanent opt-out (Quick-002)
+- Clicking version text in status bar reopens modal on demand (Quick-002)
+- Release URL printed to terminal after quit (when Y pressed) (Quick-002)
 
 ### Pending Todos
 
@@ -92,9 +97,10 @@ None.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 001 | Install script version changelog | 2026-01-20 | c203a31 | [001-install-script-version-changelog](./quick/001-install-script-version-changelog/) |
+| 002 | Version upgrade modal with session caching | 2026-01-21 | 19b4832 | [002-version-upgrade-modal-with-session-caching](./quick/002-version-upgrade-modal-with-session-caching/) |
 
 ## Session Continuity
 
-Last session: 2026-01-20
-Stopped at: Completed 04-03-PLAN.md (Phase 04 complete, all planned phases done)
+Last session: 2026-01-21
+Stopped at: Completed quick task 002 (Version upgrade modal with session caching)
 Resume file: None
