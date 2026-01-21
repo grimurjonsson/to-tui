@@ -98,6 +98,7 @@ fn run_app(
     loop {
         state.clear_expired_status_message();
         state.check_plugin_result();
+        state.check_version_update();
         state.tick_spinner();
 
         terminal.draw(|f| {

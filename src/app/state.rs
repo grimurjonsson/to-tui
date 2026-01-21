@@ -6,6 +6,7 @@ use crate::storage::load_todos_for_viewing;
 use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
+use crate::utils::version_check::{spawn_version_checker, VersionCheckResult};
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
@@ -80,6 +81,10 @@ pub struct AppState {
     pub terminal_height: u16,
     /// Help overlay scroll offset
     pub help_scroll: u16,
+    /// New version available (if any)
+    pub new_version_available: Option<String>,
+    /// Receiver for version check results
+    version_check_rx: mpsc::Receiver<VersionCheckResult>,
 }
 
 impl AppState {
@@ -134,6 +139,8 @@ impl AppState {
             terminal_width: 80,  // Default, updated on first render
             terminal_height: 24, // Default, updated on first render
             help_scroll: 0,
+            new_version_available: None,
+            version_check_rx: spawn_version_checker(),
         };
         // Sync list state with cursor position
         state.sync_list_state();
@@ -441,6 +448,15 @@ impl AppState {
 
     pub fn tick_spinner(&mut self) {
         self.spinner_frame = (self.spinner_frame + 1) % 8;
+    }
+
+    /// Check for new version availability (non-blocking)
+    pub fn check_version_update(&mut self) {
+        if let Ok(result) = self.version_check_rx.try_recv()
+            && result.is_newer
+        {
+            self.new_version_available = Some(result.latest_version);
+        }
     }
 
     pub fn get_spinner_char(&self) -> char {

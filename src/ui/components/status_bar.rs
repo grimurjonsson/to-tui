@@ -46,7 +46,10 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     } else {
         "? help  q quit"
     };
-    let version_text = format!("v{VERSION}");
+    let version_text = match &state.new_version_available {
+        Some(new_version) => format!("v{VERSION} → v{new_version}"),
+        None => format!("v{VERSION}"),
+    };
 
     let left_content = format!(
         " {} | {} | {} items{}{}",
