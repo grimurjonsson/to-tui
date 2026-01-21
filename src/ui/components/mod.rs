@@ -4,13 +4,14 @@ pub mod todo_list;
 use crate::app::mode::Mode;
 use crate::app::state::PluginSubState;
 use crate::app::AppState;
+use crate::utils::upgrade::{format_bytes, UpgradeSubState};
 use chrono::{Local, NaiveDate};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
     Frame,
 };
 
@@ -617,6 +618,25 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
         return;
     }
 
+    let sub_state = state.upgrade_sub_state.as_ref();
+
+    match sub_state {
+        Some(UpgradeSubState::Downloading { progress, bytes_downloaded, total_bytes }) => {
+            render_upgrade_downloading(f, state, *progress, *bytes_downloaded, *total_bytes);
+        }
+        Some(UpgradeSubState::Error { message }) => {
+            render_upgrade_error(f, state, message);
+        }
+        Some(UpgradeSubState::RestartPrompt { downloaded_path: _ }) => {
+            render_upgrade_restart_prompt(f, state);
+        }
+        Some(UpgradeSubState::Prompt) | None => {
+            render_upgrade_prompt(f, state);
+        }
+    }
+}
+
+fn render_upgrade_prompt(f: &mut Frame, state: &AppState) {
     let area = centered_rect(60, 40, f.area());
 
     let current_version = env!("CARGO_PKG_VERSION");
@@ -631,7 +651,7 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
         Span::raw("  Current: "),
         Span::styled(
             format!("v{}", current_version),
-            Style::default().fg(ratatui::style::Color::Yellow),
+            Style::default().fg(Color::Yellow),
         ),
     ]));
     lines.push(Line::from(vec![
@@ -639,7 +659,7 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
         Span::styled(
             format!("v{}", new_version),
             Style::default()
-                .fg(ratatui::style::Color::Green)
+                .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
     ]));
@@ -653,7 +673,7 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
     lines.push(Line::from(vec![
         Span::styled(
             "  https://github.com/grimurjonsson/to-tui/releases",
-            Style::default().fg(ratatui::style::Color::Cyan),
+            Style::default().fg(Color::Cyan),
         ),
     ]));
     lines.push(Line::from(""));
@@ -682,24 +702,229 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
         Span::styled(
             "[Y]",
             Style::default()
-                .fg(ratatui::style::Color::Green)
+                .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("es - View release  "),
+        Span::raw("es - Download & install  "),
         Span::styled(
             "[N]",
             Style::default()
-                .fg(ratatui::style::Color::Yellow)
+                .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("o - Later  "),
         Span::styled(
             "[S]",
             Style::default()
-                .fg(ratatui::style::Color::Red)
+                .fg(Color::Red)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("kip - Don't remind"),
+    ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+fn render_upgrade_downloading(f: &mut Frame, state: &AppState, progress: f64, bytes_downloaded: u64, total_bytes: Option<u64>) {
+    let area = centered_rect(50, 25, f.area());
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    let new_version = state.new_version_available.as_ref().unwrap();
+
+    // Build content lines
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::raw("  Upgrading: "),
+        Span::styled(
+            format!("v{}", current_version),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw(" -> "),
+        Span::styled(
+            format!("v{}", new_version),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Downloading Update ")
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+
+    // Render progress bar
+    let gauge_area = Rect {
+        x: area.x + 2,
+        y: area.y + 4,
+        width: area.width - 4,
+        height: 1,
+    };
+
+    let progress_label = format!(
+        "{} / {}",
+        format_bytes(bytes_downloaded),
+        total_bytes.map(format_bytes).unwrap_or_else(|| "???".to_string())
+    );
+
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+        .percent((progress * 100.0) as u16)
+        .label(progress_label);
+
+    f.render_widget(gauge, gauge_area);
+
+    // Render footer
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Cancel"),
+    ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+fn render_upgrade_error(f: &mut Frame, state: &AppState, message: &str) {
+    let area = centered_rect(60, 30, f.area());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Download Error ")
+        .style(
+            Style::default()
+                .bg(state.theme.background)
+                .fg(Color::Red),
+        );
+
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("  {}", message),
+            Style::default().fg(Color::Red),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    let content = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: true });
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+
+    // Render footer
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[R]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("etry  "),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" Dismiss"),
+    ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+fn render_upgrade_restart_prompt(f: &mut Frame, state: &AppState) {
+    let area = centered_rect(55, 35, f.area());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Update Ready ")
+        .style(Style::default().bg(state.theme.background));
+
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Download complete!",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  The application will restart to complete the update.",
+            Style::default().fg(state.theme.foreground),
+        ),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Any unsaved changes will be lost.",
+            Style::default().fg(Color::Yellow),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    let content = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+
+    // Render footer
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[Y]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("es - Restart now  "),
+        Span::styled(
+            "[N]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("o - Later"),
     ]));
 
     f.render_widget(footer, footer_area);
