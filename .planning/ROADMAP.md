@@ -9,7 +9,7 @@ Add clipboard support to to-tui, enabling users to copy todo text to the system 
 - [x] **Phase 1: Clipboard Support** - Implement `y` key to copy current todo text to system clipboard
 - [x] **Phase 2: Scrolling & Mouse Support** - Add scrolling when text exceeds viewable area vertically, plus mouse support
 - [x] **Phase 4: Claude Code Plugin Configuration** - Fix MCP server configuration to work with Claude Code's plugin/marketplace system
-- [ ] **Phase 5: Automatic Self-Upgrade** - Download and install new versions automatically from upgrade prompt modal
+- [x] **Phase 5: Automatic Self-Upgrade** - Download and install new versions automatically from upgrade prompt modal
 
 ## Phase Details
 
@@ -97,9 +97,9 @@ Plans:
 **Plans**: 3 plans in 3 waves
 
 Plans:
-- [ ] 05-01: Add dependencies and create upgrade module with download infrastructure (Wave 1)
-- [ ] 05-02: Integrate sub-states into AppState and event handling (Wave 2)
-- [ ] 05-03: Complete UI rendering and binary replacement/restart (Wave 3)
+- [x] 05-01: Add dependencies and create upgrade module with download infrastructure (Wave 1)
+- [x] 05-02: Integrate sub-states into AppState and event handling (Wave 2)
+- [x] 05-03: Complete UI rendering and binary replacement/restart (Wave 3)
 
 ## Progress
 
@@ -109,4 +109,4 @@ Plans:
 | 2. Scrolling & Mouse Support | 3/3 | ✓ Complete | 2026-01-17 |
 | 3. Todo Priority System | 4/4 | ✓ Complete | 2026-01-19 |
 | 4. Claude Code Plugin Configuration | 3/3 | ✓ Complete | 2026-01-20 |
-| 5. Automatic Self-Upgrade | 0/3 | Not Started | - |
+| 5. Automatic Self-Upgrade | 3/3 | ✓ Complete | 2026-01-21 |

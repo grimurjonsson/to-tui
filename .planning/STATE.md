@@ -5,17 +5,17 @@
 See: .planning/PROJECT.md (updated 2026-01-17)
 
 **Core value:** Fast, keyboard-driven todo management that lives in the terminal and integrates with the tools I already use.
-**Current focus:** Phase 5 — Automatic Self-Upgrade
+**Current focus:** Milestone Complete
 
 ## Current Position
 
-Phase: 5 of 5 (Automatic Self-Upgrade) — In Progress
-Plan: 2 of 3 complete
-Status: In progress
-Last activity: 2026-01-21 — Completed 05-02-PLAN.md (TUI Integration)
-Next Action: Execute 05-03-PLAN.md (Binary Replacement)
+Phase: 5 of 5 (Automatic Self-Upgrade) — Complete
+Plan: 3 of 3 complete
+Status: All phases complete
+Last activity: 2026-01-21 — Completed Phase 5 (Automatic Self-Upgrade)
+Next Action: /gsd:audit-milestone or /gsd:complete-milestone
 
-Progress: ██████████████████████░ 93% (14/15 plans complete)
+Progress: ████████████████████ 100% (15/15 plans complete)
 
 ## Performance Metrics
 
@@ -32,11 +32,11 @@ Progress: ██████████████████████░ 
 | 02-scrolling-mouse-support | 3/3 | 10 min | 3.3 min |
 | 03-todo-priority-system | 4/4 | 16 min | 4 min |
 | 04-claude-code-plugin-configuration | 3/3 | 5 min | 1.7 min |
-| 05-automatic-self-upgrade | 2/3 | 5 min | 2.5 min |
+| 05-automatic-self-upgrade | 3/3 | 20 min | 6.7 min |
 
 **Recent Trend:**
-- Last 5 plans: 04-02 (2 min), 04-03 (1 min), 05-01 (2 min), 05-02 (3 min)
-- Trend: Consistent (infrastructure phases around 2-3 min)
+- Last 5 plans: 04-03 (1 min), 05-01 (2 min), 05-02 (3 min), 05-03 (15 min)
+- Trend: 05-03 longer due to debugging (tokio runtime, tar.gz format issues)
 
 ## Accumulated Context
 
@@ -78,6 +78,10 @@ Recent decisions affecting current work:
 - Release URL printed to terminal after quit (when Y pressed) (Quick-002)
 - Added reqwest stream feature for bytes_stream() download streaming (05-01)
 - Use Option<UpgradeSubState> to track upgrade mode state independently of Mode enum (05-02)
+- Download raw binaries (releases are not .tar.gz archives) (05-03)
+- Use std::thread for download (TUI has no tokio runtime) (05-03)
+- Use self_update's re-exported self_replace (one less dependency) (05-03)
+- Crash handler writes to ~/.to-tui/crash.log with backtrace (05-03)
 
 ### Pending Todos
 
@@ -92,6 +96,7 @@ None.
 - Phase 4 completed: 2026-01-20
 - Phase 5 added: Automatic Self-Upgrade (2026-01-21)
 - Phase 5 planned: 3 plans in 3 waves (2026-01-21)
+- Phase 5 completed: 2026-01-21
 
 ### Blockers/Concerns
 
@@ -106,6 +111,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-21 12:46 UTC
-Stopped at: Completed 05-02-PLAN.md (TUI Integration)
-Resume file: .planning/phases/05-automatic-self-upgrade/05-03-PLAN.md
+Last session: 2026-01-21
+Stopped at: Milestone complete — all 5 phases done
+Resume file: None
