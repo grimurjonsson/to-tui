@@ -5,17 +5,17 @@
 See: .planning/PROJECT.md (updated 2026-01-17)
 
 **Core value:** Fast, keyboard-driven todo management that lives in the terminal and integrates with the tools I already use.
-**Current focus:** Phase 4 — Claude Code Plugin Configuration
+**Current focus:** Phase 5 — Automatic Self-Upgrade
 
 ## Current Position
 
-Phase: 4 of 4 (Claude Code Plugin Configuration) — Complete
-Plan: 3 of 3
-Status: Phase 04 complete
-Last activity: 2026-01-20 — Completed 04-03-PLAN.md (README Documentation Update)
-Next Action: Project complete (all phases done)
+Phase: 5 of 5 (Automatic Self-Upgrade) — In Progress
+Plan: 1 of 3
+Status: In progress
+Last activity: 2026-01-21 — Completed 05-01-PLAN.md (Download Infrastructure)
+Next Action: Execute 05-02-PLAN.md (TUI Integration)
 
-Progress: ████████████████████ 100% (12/12 plans total)
+Progress: █████████████████████░░ 87% (13/15 plans complete)
 
 ## Performance Metrics
 
@@ -32,10 +32,11 @@ Progress: ████████████████████ 100% (12/
 | 02-scrolling-mouse-support | 3/3 | 10 min | 3.3 min |
 | 03-todo-priority-system | 4/4 | 16 min | 4 min |
 | 04-claude-code-plugin-configuration | 3/3 | 5 min | 1.7 min |
+| 05-automatic-self-upgrade | 1/3 | 2 min | 2 min |
 
 **Recent Trend:**
-- Last 5 plans: 03-03 (4 min), 03-04 (4 min), 04-01 (2 min), 04-02 (2 min), 04-03 (1 min)
-- Trend: Consistent (docs phases faster than feature phases)
+- Last 5 plans: 04-01 (2 min), 04-02 (2 min), 04-03 (1 min), 05-01 (2 min)
+- Trend: Consistent (infrastructure phases around 2 min)
 
 ## Accumulated Context
 
@@ -75,6 +76,7 @@ Recent decisions affecting current work:
 - Skipped version persisted to config.toml for permanent opt-out (Quick-002)
 - Clicking version text in status bar reopens modal on demand (Quick-002)
 - Release URL printed to terminal after quit (when Y pressed) (Quick-002)
+- Added reqwest stream feature for bytes_stream() download streaming (05-01)
 
 ### Pending Todos
 
@@ -87,6 +89,8 @@ None.
 - Phase 3 completed: 2026-01-19
 - Phase 4 added: Claude Code Plugin Configuration (2026-01-20)
 - Phase 4 completed: 2026-01-20
+- Phase 5 added: Automatic Self-Upgrade (2026-01-21)
+- Phase 5 planned: 3 plans in 3 waves (2026-01-21)
 
 ### Blockers/Concerns
 
@@ -101,6 +105,6 @@ None.
 
 ## Session Continuity
 
-Last session: 2026-01-21
-Stopped at: Completed quick task 002 (Version upgrade modal with session caching)
-Resume file: None
+Last session: 2026-01-21 12:40 UTC
+Stopped at: Completed 05-01-PLAN.md (Download Infrastructure)
+Resume file: .planning/phases/05-automatic-self-upgrade/05-02-PLAN.md
