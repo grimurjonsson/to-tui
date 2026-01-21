@@ -13,7 +13,6 @@ use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
 use std::sync::mpsc;
 use std::time::Instant;
-use tokio::sync::mpsc as tokio_mpsc;
 use uuid::Uuid;
 
 const MAX_UNDO_HISTORY: usize = 50;
@@ -97,8 +96,8 @@ pub struct AppState {
     pub pending_release_url: Option<String>,
     /// Current upgrade sub-state when in Mode::UpgradePrompt
     pub upgrade_sub_state: Option<UpgradeSubState>,
-    /// Channel receiver for download progress updates
-    pub download_progress_rx: Option<tokio_mpsc::Receiver<DownloadProgress>>,
+    /// Channel receiver for download progress updates (std::sync::mpsc for thread-based download)
+    pub download_progress_rx: Option<mpsc::Receiver<DownloadProgress>>,
 }
 
 impl AppState {
@@ -556,10 +555,10 @@ impl AppState {
                 self.download_progress_rx = None;
                 self.upgrade_sub_state = Some(UpgradeSubState::Error { message });
             }
-            Err(tokio_mpsc::error::TryRecvError::Empty) => {
+            Err(mpsc::TryRecvError::Empty) => {
                 // No update yet, do nothing
             }
-            Err(tokio_mpsc::error::TryRecvError::Disconnected) => {
+            Err(mpsc::TryRecvError::Disconnected) => {
                 self.download_progress_rx = None;
                 self.upgrade_sub_state = Some(UpgradeSubState::Error {
                     message: "Download task crashed".to_string(),

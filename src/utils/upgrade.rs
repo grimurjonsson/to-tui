@@ -1,9 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use futures_util::StreamExt;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
+use std::io::Write;
+use std::sync::mpsc;
 
 const GITHUB_REPO: &str = "grimurjonsson/to-tui";
 
@@ -83,9 +82,9 @@ fn get_target_triple() -> &'static str {
     }
 }
 
-/// Spawns an async download task and returns a channel receiver for progress updates.
+/// Spawns a background thread to download a file and returns a channel receiver for progress updates.
 ///
-/// The download task:
+/// The download thread:
 /// 1. Creates HTTP client with appropriate headers
 /// 2. Streams the response body in chunks
 /// 3. Writes chunks to the target file
@@ -99,85 +98,87 @@ fn get_target_triple() -> &'static str {
 /// # Returns
 /// A receiver that will receive DownloadProgress messages.
 pub fn spawn_download(url: String, target_path: PathBuf) -> mpsc::Receiver<DownloadProgress> {
-    let (tx, rx) = mpsc::channel(32);
+    let (tx, rx) = mpsc::channel();
 
-    tokio::spawn(async move {
-        if let Err(e) = download_file(&url, &target_path, &tx).await {
-            let _ = tx
-                .send(DownloadProgress::Error {
-                    message: e.to_string(),
-                })
-                .await;
+    std::thread::spawn(move || {
+        if let Err(e) = download_file_blocking(&url, &target_path, &tx) {
+            let _ = tx.send(DownloadProgress::Error {
+                message: e.to_string(),
+            });
         }
     });
 
     rx
 }
 
-/// Internal download implementation.
-async fn download_file(
+/// Internal blocking download implementation.
+fn download_file_blocking(
     url: &str,
     target_path: &PathBuf,
     tx: &mpsc::Sender<DownloadProgress>,
 ) -> anyhow::Result<()> {
-    let client = reqwest::Client::builder()
+    let client = reqwest::blocking::Client::builder()
         .user_agent("to-tui")
         .build()?;
 
     let response = client
         .get(url)
         .header("Accept", "application/octet-stream")
-        .send()
-        .await?;
+        .send()?;
 
     // Check for HTTP errors
     let status = response.status();
     if !status.is_success() {
-        anyhow::bail!("HTTP error: {} {}", status.as_u16(), status.canonical_reason().unwrap_or("Unknown"));
+        anyhow::bail!(
+            "HTTP error: {} {}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("Unknown")
+        );
     }
 
     let total_size = response.content_length();
-    let mut stream = response.bytes_stream();
+    let mut reader = response;
 
-    let mut file = tokio::fs::File::create(target_path).await?;
+    let mut file = std::fs::File::create(target_path)?;
     let mut downloaded: u64 = 0;
     let mut last_progress_at: u64 = 0;
     const PROGRESS_INTERVAL: u64 = 100 * 1024; // Send progress every 100KB
+    let mut buffer = [0u8; 8192];
 
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        file.write_all(&chunk).await?;
-        downloaded += chunk.len() as u64;
+    loop {
+        let bytes_read = std::io::Read::read(&mut reader, &mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+
+        file.write_all(&buffer[..bytes_read])?;
+        downloaded += bytes_read as u64;
 
         // Rate-limit progress updates to avoid overwhelming the channel
-        if downloaded - last_progress_at >= PROGRESS_INTERVAL || downloaded == total_size.unwrap_or(0) {
-            let _ = tx
-                .send(DownloadProgress::Progress {
-                    bytes: downloaded,
-                    total: total_size,
-                })
-                .await;
+        if downloaded - last_progress_at >= PROGRESS_INTERVAL
+            || downloaded == total_size.unwrap_or(0)
+        {
+            let _ = tx.send(DownloadProgress::Progress {
+                bytes: downloaded,
+                total: total_size,
+            });
             last_progress_at = downloaded;
         }
     }
 
-    file.flush().await?;
+    file.flush()?;
 
     // Send final progress update if we haven't
     if downloaded != last_progress_at {
-        let _ = tx
-            .send(DownloadProgress::Progress {
-                bytes: downloaded,
-                total: total_size,
-            })
-            .await;
+        let _ = tx.send(DownloadProgress::Progress {
+            bytes: downloaded,
+            total: total_size,
+        });
     }
 
-    let _ = tx
-        .send(DownloadProgress::Complete {
-            path: target_path.clone(),
-        })
-        .await;
+    let _ = tx.send(DownloadProgress::Complete {
+        path: target_path.clone(),
+    });
 
     Ok(())
 }
