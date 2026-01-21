@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-01-21
+MCP plugin now finds the binary via PATH instead of hardcoded paths, improving portability across different installations.
+
+### Fixed
+- use PATH-based binary lookup for MCP plugin
+
 ## [0.2.12] - 2026-01-20
 Fixes plugin marketplace configuration.
 
