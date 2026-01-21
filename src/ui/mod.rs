@@ -101,6 +101,7 @@ fn run_app(
         state.check_plugin_result();
         state.check_version_update();
         state.tick_spinner();
+        state.check_download_progress();
 
         terminal.draw(|f| {
             components::render(f, state);
