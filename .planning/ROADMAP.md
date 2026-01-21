@@ -9,6 +9,7 @@ Add clipboard support to to-tui, enabling users to copy todo text to the system 
 - [x] **Phase 1: Clipboard Support** - Implement `y` key to copy current todo text to system clipboard
 - [x] **Phase 2: Scrolling & Mouse Support** - Add scrolling when text exceeds viewable area vertically, plus mouse support
 - [x] **Phase 4: Claude Code Plugin Configuration** - Fix MCP server configuration to work with Claude Code's plugin/marketplace system
+- [ ] **Phase 5: Automatic Self-Upgrade** - Download and install new versions automatically from upgrade prompt modal
 
 ## Phase Details
 
@@ -81,6 +82,25 @@ Plans:
 - [x] 04-02: Verify marketplace.json and install-binary.sh consistency (Wave 1)
 - [x] 04-03: Update README with correct Claude Code plugin installation commands (Wave 2)
 
+### Phase 5: Automatic Self-Upgrade
+**Goal**: When user accepts upgrade in the upgrade prompt modal, automatically download and install the new version with progress indication, then prompt for restart
+**Depends on**: Phase 4 (Claude Code Plugin Configuration)
+**Requirements**: UPGRADE-01 (download binary), UPGRADE-02 (progress bar), UPGRADE-03 (restart prompt), UPGRADE-04 (atomic upgrade)
+**Success Criteria** (what must be TRUE):
+  1. Pressing Y in upgrade modal starts automatic download of new release binary
+  2. Progress bar shows download progress (if available from HTTP response)
+  3. After download completes, modal shows "Installation ready, restart and upgrade? (Y/n)"
+  4. Pressing Y at restart prompt exits program, replaces binary, and relaunches
+  5. Pressing N at restart prompt dismisses modal without upgrading
+  6. Download failures show error message and allow retry or dismiss
+**Research**: Complete — see .planning/phases/05-automatic-self-upgrade/05-RESEARCH.md
+**Plans**: 3 plans in 3 waves
+
+Plans:
+- [ ] 05-01: Add dependencies and create upgrade module with download infrastructure (Wave 1)
+- [ ] 05-02: Integrate sub-states into AppState and event handling (Wave 2)
+- [ ] 05-03: Complete UI rendering and binary replacement/restart (Wave 3)
+
 ## Progress
 
 | Phase | Plans Complete | Status | Completed |
@@ -89,3 +109,4 @@ Plans:
 | 2. Scrolling & Mouse Support | 3/3 | ✓ Complete | 2026-01-17 |
 | 3. Todo Priority System | 4/4 | ✓ Complete | 2026-01-19 |
 | 4. Claude Code Plugin Configuration | 3/3 | ✓ Complete | 2026-01-20 |
+| 5. Automatic Self-Upgrade | 0/3 | Not Started | - |

@@ -43,7 +43,6 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 self_update = { version = "0.41", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
 futures-util = "0.3"
 tempfile = "3.13"
-self-replace = "1.5"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

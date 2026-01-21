@@ -304,8 +304,8 @@ pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()
         .context("Failed to determine current executable path")?;
 
-    // Use self_replace for atomic replacement
-    self_replace::self_replace(new_binary_path)
+    // Use self_update's re-exported self_replace for atomic replacement
+    self_update::self_replace::self_replace(new_binary_path)
         .context("Failed to replace binary")?;
 
     // Clean up the temp binary file
