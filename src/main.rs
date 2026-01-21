@@ -20,12 +20,13 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::panic;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use storage::{UiCache, find_rollover_candidates, save_todo_list};
 use storage::file::{file_exists, load_todo_list};
 use ui::theme::Theme;
-use utils::paths::get_pid_file_path;
+use utils::paths::{get_crash_log_path, get_pid_file_path};
 
 /// Load today's todo list without prompting for rollover.
 /// Creates an empty list if no existing todos are found.
@@ -38,7 +39,57 @@ fn load_today_list() -> Result<todo::TodoList> {
     }
 }
 
+/// Install a panic hook that writes crash information to a log file
+fn install_crash_handler() {
+    let default_hook = panic::take_hook();
+
+    panic::set_hook(Box::new(move |panic_info| {
+        // Try to write to crash log
+        if let Ok(crash_log_path) = get_crash_log_path() {
+            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+            let mut crash_report = format!("=== CRASH at {} ===\n", timestamp);
+
+            // Add panic message
+            if let Some(message) = panic_info.payload().downcast_ref::<&str>() {
+                crash_report.push_str(&format!("Message: {}\n", message));
+            } else if let Some(message) = panic_info.payload().downcast_ref::<String>() {
+                crash_report.push_str(&format!("Message: {}\n", message));
+            }
+
+            // Add location if available
+            if let Some(location) = panic_info.location() {
+                crash_report.push_str(&format!(
+                    "Location: {}:{}:{}\n",
+                    location.file(),
+                    location.line(),
+                    location.column()
+                ));
+            }
+
+            // Add backtrace
+            crash_report.push_str(&format!("\nBacktrace:\n{}\n", std::backtrace::Backtrace::force_capture()));
+            crash_report.push_str("\n");
+
+            // Append to crash log
+            if let Ok(mut file) = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&crash_log_path)
+            {
+                let _ = file.write_all(crash_report.as_bytes());
+                eprintln!("\nCrash logged to: {}", crash_log_path.display());
+            }
+        }
+
+        // Call the default hook (prints to stderr)
+        default_hook(panic_info);
+    }));
+}
+
 fn main() -> Result<()> {
+    // Install crash handler first thing
+    install_crash_handler();
+
     let cli = Cli::parse();
     let config = Config::load()?;
 
