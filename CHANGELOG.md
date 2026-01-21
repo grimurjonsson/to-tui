@@ -5,6 +5,30 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-01-21
+Added automatic self-upgrade feature with in-app download progress UI, binary replacement, and automatic restart. Includes crash handler with log file support.
+
+### Added
+- 05-03): add crash handler with log file
+- 05-03): wire up restart in event handler
+- 05-03): add binary extraction and restart functions
+- 05-03): add upgrade UI rendering for all sub-states
+- 05-02): add download progress polling to event loop
+- 05-02): update event handling for upgrade mode sub-states
+- 05-02): add upgrade sub-state tracking to AppState
+- 05-01): add upgrade module with download infrastructure
+- quick-002): integration and post-quit URL printing
+- quick-002): add upgrade modal rendering and event handling
+- quick-002): add UpgradePrompt mode and state management
+
+### Fixed
+- 05-03): restore terminal before exec() in upgrade restart
+- 05-03): use std::thread instead of tokio for download
+- 05-03): download raw binaries instead of non-existent tar.gz archives
+
+### Changed
+- 05-03): use self_update's re-exported self_replace
+
 ## [0.3.1] - 2026-01-21
 A version checker now notifies you when a new release is available.
 

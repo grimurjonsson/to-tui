@@ -2,11 +2,25 @@
 
 ## What This Is
 
-A terminal-based todo list manager with vim-style keybindings, built in Rust. Provides a TUI for daily task management with markdown file storage, SQLite archival, REST API for integrations, and MCP server for LLM tooling.
+A terminal-based todo list manager with vim-style keybindings, built in Rust. Provides a TUI for daily task management with markdown file storage, SQLite archival, REST API for integrations, MCP server for LLM tooling, and automatic self-upgrade.
 
 ## Core Value
 
 Fast, keyboard-driven todo management that lives in the terminal and integrates with the tools I already use.
+
+## Current State
+
+**Version:** v1.0 (shipped 2026-01-21)
+**Codebase:** 10,823 lines of Rust
+**Tech stack:** Rust 2024, ratatui/crossterm TUI, SQLite, axum REST API, rmcp MCP server
+
+**Recent additions:**
+- Clipboard support (`y` to copy)
+- Scrolling with mouse wheel support
+- Priority system (P0/P1/P2) with colored badges
+- Sort by priority (`s` key)
+- Claude Code plugin configuration
+- Automatic self-upgrade with progress bar
 
 ## Requirements
 
@@ -24,29 +38,23 @@ Fast, keyboard-driven todo management that lives in the terminal and integrates 
 - ✓ Customizable keybindings via config.toml — existing
 - ✓ Plugin system for external todo generators (Jira) — existing
 - ✓ Cross-platform builds (macOS, Linux, Windows) — existing
+- ✓ Clipboard support with `y` key — v1.0
+- ✓ Scrolling with mouse wheel — v1.0
+- ✓ Priority system (P0/P1/P2) with visual badges — v1.0
+- ✓ Sort by priority — v1.0
+- ✓ Automatic self-upgrade — v1.0
 
 ### Active
 
-- [ ] Clipboard support: Cmd-C/Ctrl-C to copy current todo text to system clipboard
+(None — v1.0 shipped, awaiting next milestone planning)
 
 ### Out of Scope
 
 - Cloud sync — local-first design is intentional
 - Mobile app — terminal-focused tool
 - Collaboration features — single-user design
-
-## Context
-
-This is a mature Rust project with clean layered architecture:
-- Domain layer (`todo/`) with pure business logic
-- Storage layer with dual persistence (markdown + SQLite)
-- Multiple interface adapters (TUI, REST API, MCP)
-- Modal state machine for vim-like interaction
-
-The TUI uses ratatui + crossterm. Keybindings are configurable and processed through a `KeybindingCache`. Adding clipboard support requires:
-1. A clipboard crate dependency
-2. Keybinding for Cmd-C/Ctrl-C
-3. Handler to copy selected todo content
+- Clipboard history / paste menu — system clipboard managers exist
+- Internal yank registers (vim a-z) — massive complexity for niche use
 
 ## Constraints
 
@@ -59,7 +67,14 @@ The TUI uses ratatui + crossterm. Keybindings are configurable and processed thr
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Copy text only (no checkbox/hierarchy) | User preference — clean text for pasting elsewhere | — Pending |
+| Copy text only (no checkbox/hierarchy) | User preference — clean text for pasting | ✓ Good |
+| Use `y` key for copy (vim yank) | Avoid Ctrl-C terminal interrupt conflicts | ✓ Good |
+| Use arboard with wayland-data-control | Linux Wayland support | ✓ Good |
+| Priority badge [P0]/[P1]/[P2] format | Clear, compact, colored foreground | ✓ Good |
+| Sort preserves children under parent | Intuitive hierarchy behavior | ✓ Good |
+| std::thread for download (not tokio) | TUI runs without tokio runtime | ✓ Good |
+| Restore terminal before exec() | exec() doesn't run Drop handlers | ✓ Good |
+| Download raw binaries (not tar.gz) | Matches actual GitHub release format | ✓ Good |
 
 ---
-*Last updated: 2026-01-17 after initialization*
+*Last updated: 2026-01-21 after v1.0 milestone*
