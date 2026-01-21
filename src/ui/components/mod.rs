@@ -44,6 +44,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     if state.mode == Mode::Rollover {
         render_rollover_overlay(f, state);
     }
+
+    if state.mode == Mode::UpgradePrompt {
+        render_upgrade_overlay(f, state);
+    }
 }
 
 fn render_help_overlay(f: &mut Frame, state: &AppState) {
@@ -603,6 +607,99 @@ fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
         Span::raw("es - Rollover now    "),
         Span::styled("[L]", Style::default().fg(ratatui::style::Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::raw("ater - Dismiss (press R anytime to reopen)"),
+    ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
+    if state.new_version_available.is_none() {
+        return;
+    }
+
+    let area = centered_rect(60, 40, f.area());
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    let new_version = state.new_version_available.as_ref().unwrap();
+
+    let title = " New Version Available ";
+
+    // Build content lines
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::raw("  Current: "),
+        Span::styled(
+            format!("v{}", current_version),
+            Style::default().fg(ratatui::style::Color::Yellow),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::raw("  New:     "),
+        Span::styled(
+            format!("v{}", new_version),
+            Style::default()
+                .fg(ratatui::style::Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Release page:",
+            Style::default().fg(state.theme.foreground),
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  https://github.com/grimurjonsson/to-tui/releases",
+            Style::default().fg(ratatui::style::Color::Cyan),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+
+    // Render footer with options
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[Y]",
+            Style::default()
+                .fg(ratatui::style::Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("es - View release  "),
+        Span::styled(
+            "[N]",
+            Style::default()
+                .fg(ratatui::style::Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("o - Later  "),
+        Span::styled(
+            "[S]",
+            Style::default()
+                .fg(ratatui::style::Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("kip - Don't remind"),
     ]));
 
     f.render_widget(footer, footer_area);

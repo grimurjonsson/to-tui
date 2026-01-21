@@ -51,6 +51,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
         Mode::ConfirmDelete => handle_confirm_delete_mode(key, state)?,
         Mode::Plugin => handle_plugin_mode(key, state)?,
         Mode::Rollover => handle_rollover_mode(key, state)?,
+        Mode::UpgradePrompt => handle_upgrade_prompt_mode(key, state)?,
     }
     Ok(())
 }
@@ -93,6 +94,30 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
             return Ok(());
         }
         _ => {}
+    }
+
+    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+        let clicked_row = mouse.row as usize;
+        let clicked_col = mouse.column as usize;
+
+        // Check if click is on status bar (bottom row)
+        if clicked_row == state.terminal_height.saturating_sub(1) as usize {
+            // Check if version upgrade notification is visible and clicked
+            if let Some(ref new_version) = state.new_version_available {
+                let current_version = env!("CARGO_PKG_VERSION");
+                let version_text = format!("v{} → v{}", current_version, new_version);
+                let version_text_len = version_text.len();
+
+                // Version text is right-aligned at end of status bar
+                let version_start = state.terminal_width.saturating_sub(version_text_len as u16) as usize;
+
+                if clicked_col >= version_start {
+                    // Clicked on version text - open upgrade modal
+                    state.open_upgrade_modal();
+                    return Ok(());
+                }
+            }
+        }
     }
 
     // Block other mouse interactions in readonly mode
@@ -712,6 +737,33 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Esc => {
             // Close modal but keep pending_rollover for later
             state.close_rollover_modal();
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            // Set pending release URL to print after quit
+            if let Some(ref version) = state.new_version_available {
+                let url = format!("https://github.com/grimurjonsson/to-tui/releases/tag/v{}", version);
+                state.pending_release_url = Some(url);
+            }
+            state.show_upgrade_prompt = false;
+            state.mode = Mode::Navigate;
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            // Dismiss for this session
+            state.dismiss_upgrade_session();
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            // Skip this version permanently
+            if let Some(version) = state.new_version_available.clone() {
+                state.skip_version_permanently(version)?;
+                state.set_status_message(format!("Skipped version updates"));
+            }
         }
         _ => {}
     }
