@@ -1,6 +1,6 @@
 [package]
 name = "to-tui"
-version = "0.3.1"
+version = "0.3.0"
 edition = "2024"
 
 [lib]
@@ -40,7 +40,9 @@ unicode-width = "0.2"
 rmcp = { version = "0.12", features = ["server", "transport-io"] }
 schemars = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+self_update = { version = "0.41", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
+futures-util = "0.3"
+tempfile = "3.13"
 
 [dev-dependencies]
-tempfile = "3.13"
 pretty_assertions = "1.4"
