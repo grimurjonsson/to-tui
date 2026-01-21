@@ -39,7 +39,7 @@ dialoguer = "0.11"
 unicode-width = "0.2"
 rmcp = { version = "0.12", features = ["server", "transport-io"] }
 schemars = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking", "stream"] }
 self_update = { version = "0.41", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
 futures-util = "0.3"
 tempfile = "3.13"
