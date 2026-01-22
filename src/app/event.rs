@@ -954,6 +954,7 @@ fn new_item_below(state: &mut AppState) {
         .selected_item()
         .map(|item| item.indent_level)
         .unwrap_or(0);
+    state.sync_list_state_for_new_item();
 }
 
 fn new_item_at_same_level(state: &mut AppState) {
@@ -970,6 +971,7 @@ fn insert_item_above(state: &mut AppState) {
         .selected_item()
         .map(|item| item.indent_level)
         .unwrap_or(0);
+    state.sync_list_state_for_new_item();
 }
 
 fn delete_current_item(state: &mut AppState) -> Result<()> {
@@ -996,10 +998,15 @@ fn delete_current_item(state: &mut AppState) -> Result<()> {
 
 fn save_edit_buffer(state: &mut AppState) -> Result<()> {
     if state.edit_buffer.trim().is_empty() {
+        let was_creating = state.is_creating_new_item;
         state.edit_buffer.clear();
         state.edit_cursor_pos = 0;
         state.is_creating_new_item = false;
         state.insert_above = false;
+        if was_creating {
+            // Reset visual highlight since phantom row is gone
+            state.sync_list_state();
+        }
         return Ok(());
     }
 

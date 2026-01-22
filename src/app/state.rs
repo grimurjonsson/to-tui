@@ -236,6 +236,41 @@ impl AppState {
         }
     }
 
+    /// Sync list_state selection for when creating a new item.
+    /// This accounts for the temporary edit row that appears during new item creation.
+    pub fn sync_list_state_for_new_item(&mut self) {
+        // First get the base visible index
+        self.sync_list_state();
+
+        if !self.is_creating_new_item {
+            return;
+        }
+
+        // Get current selection
+        let current = match self.list_state.selected() {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        if self.insert_above {
+            // New item appears at current position, no change needed
+            // The highlight should stay where it is
+        } else {
+            // New item appears below current item
+            // Need to increment selection to point to the new row
+            let mut offset = 1;
+
+            // If current item has expanded description, that's another ListItem between
+            if let Some(item) = self.todo_list.items.get(self.cursor_position) {
+                if !item.collapsed && item.description.is_some() {
+                    offset += 1;
+                }
+            }
+
+            self.list_state.select(Some(current + offset));
+        }
+    }
+
     pub fn navigate_to_date(&mut self, date: NaiveDate) -> Result<()> {
         if date > self.today {
             return Ok(());
@@ -589,18 +624,33 @@ impl AppState {
         SPINNER_FRAMES[self.spinner_frame]
     }
 
-    /// Toggle the current item's state (checked/unchecked) with undo support.
+    /// Toggle the current item's state (checked/unchecked) AND all descendants with undo support.
     /// Returns true if a change was made.
     pub fn toggle_current_item_state(&mut self) -> bool {
-        if self.selected_item().is_some() {
-            self.save_undo();
-            if let Some(item) = self.selected_item_mut() {
-                item.toggle_state();
-                self.unsaved_changes = true;
-                return true;
-            }
+        if self.selected_item().is_none() {
+            return false;
         }
-        false
+
+        self.save_undo();
+
+        // Get the range including this item and all its children
+        let (start, end) = match self.todo_list.get_item_range(self.cursor_position) {
+            Ok(range) => range,
+            Err(_) => return false,
+        };
+
+        // Determine target state based on current item's state
+        // If current item is Checked, toggle to Empty; otherwise toggle to Checked
+        let target_state = self.todo_list.items[self.cursor_position].state.toggle();
+
+        // Apply the target state to all items in range
+        for i in start..end {
+            self.todo_list.items[i].state = target_state;
+            self.todo_list.items[i].modified_at = chrono::Utc::now();
+        }
+
+        self.unsaved_changes = true;
+        true
     }
 
     /// Cycle the current item's state with undo support.
@@ -793,5 +843,138 @@ mod tests {
         let should_show = !state.session_dismissed_upgrade
             && state.skipped_version.as_ref() != state.new_version_available.as_ref();
         assert_eq!(should_show, false, "Should not auto-show after session dismiss");
+    }
+
+    #[test]
+    fn test_toggle_cascades_to_children() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::PluginRegistry;
+        use crate::todo::{TodoList, TodoState};
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let mut todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        // Create parent with two children
+        todo_list.add_item_with_indent("Parent".to_string(), 0);
+        todo_list.add_item_with_indent("Child 1".to_string(), 1);
+        todo_list.add_item_with_indent("Child 2".to_string(), 1);
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            PluginRegistry::new(),
+            None,
+            None,
+        );
+
+        // Set cursor to parent (index 0)
+        state.cursor_position = 0;
+
+        // Toggle - should affect parent and all children
+        state.toggle_current_item_state();
+
+        // All items should now be Checked
+        assert_eq!(state.todo_list.items[0].state, TodoState::Checked);
+        assert_eq!(state.todo_list.items[1].state, TodoState::Checked);
+        assert_eq!(state.todo_list.items[2].state, TodoState::Checked);
+    }
+
+    #[test]
+    fn test_toggle_cascade_undo_restores_all() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::PluginRegistry;
+        use crate::todo::{TodoList, TodoState};
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let mut todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        // Create parent (Empty), child1 (already Checked), child2 (Empty)
+        todo_list.add_item_with_indent("Parent".to_string(), 0);
+        todo_list.add_item_with_indent("Child 1".to_string(), 1);
+        todo_list.add_item_with_indent("Child 2".to_string(), 1);
+
+        // Set child1 to Checked before creating state
+        todo_list.items[1].state = TodoState::Checked;
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            PluginRegistry::new(),
+            None,
+            None,
+        );
+
+        // Set cursor to parent
+        state.cursor_position = 0;
+
+        // Toggle - all should become Checked
+        state.toggle_current_item_state();
+        assert_eq!(state.todo_list.items[0].state, TodoState::Checked);
+        assert_eq!(state.todo_list.items[1].state, TodoState::Checked);
+        assert_eq!(state.todo_list.items[2].state, TodoState::Checked);
+
+        // Undo - should restore all to original states
+        state.undo();
+        assert_eq!(state.todo_list.items[0].state, TodoState::Empty);
+        assert_eq!(state.todo_list.items[1].state, TodoState::Checked); // Was already Checked
+        assert_eq!(state.todo_list.items[2].state, TodoState::Empty);
+    }
+
+    #[test]
+    fn test_toggle_cascade_unchecks_all() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::PluginRegistry;
+        use crate::todo::{TodoList, TodoState};
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let mut todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        // Create parent and child, both Checked
+        todo_list.add_item_with_indent("Parent".to_string(), 0);
+        todo_list.add_item_with_indent("Child".to_string(), 1);
+
+        // Set both to Checked
+        todo_list.items[0].state = TodoState::Checked;
+        todo_list.items[1].state = TodoState::Checked;
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            PluginRegistry::new(),
+            None,
+            None,
+        );
+
+        // Set cursor to parent
+        state.cursor_position = 0;
+
+        // Toggle - both should become Empty
+        state.toggle_current_item_state();
+        assert_eq!(state.todo_list.items[0].state, TodoState::Empty);
+        assert_eq!(state.todo_list.items[1].state, TodoState::Empty);
     }
 }
