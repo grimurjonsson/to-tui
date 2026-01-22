@@ -375,6 +375,7 @@ for BINARY_NAME in "${BINARIES[@]}"; do
     fi
 
     # Extract archive
+    echo -e "${BLUE}↓${RESET} Extracting ${BOLD}${BINARY_NAME}${RESET}..."
     if [ -z "$BINARY_EXT" ]; then
         # Unix: extract tar.gz
         tar -xzf "$TEMP_ARCHIVE" -C "$TEMP_DIR" || {
