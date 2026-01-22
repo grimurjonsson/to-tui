@@ -70,8 +70,8 @@ jobs:
         run: |
           mkdir -p release-assets
           # Create zip archives for Windows binaries
-          cd target/${{ matrix.target }}/release && zip ../../../release-assets/totui-${{ matrix.target }}.zip totui.exe
-          cd target/${{ matrix.target }}/release && zip ../../../release-assets/totui-mcp-${{ matrix.target }}.zip totui-mcp.exe
+          (cd target/${{ matrix.target }}/release && zip ../../../release-assets/totui-${{ matrix.target }}.zip totui.exe)
+          (cd target/${{ matrix.target }}/release && zip ../../../release-assets/totui-mcp-${{ matrix.target }}.zip totui-mcp.exe)
 
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v2
