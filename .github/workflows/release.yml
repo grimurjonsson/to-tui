@@ -61,16 +61,17 @@ jobs:
         if: ${{ !contains(matrix.target, 'windows') }}
         run: |
           mkdir -p release-assets
-          cp target/${{ matrix.target }}/release/totui release-assets/totui-${{ matrix.target }}
-          cp target/${{ matrix.target }}/release/totui-mcp release-assets/totui-mcp-${{ matrix.target }}
-          chmod +x release-assets/*
+          # Create tar.gz archives for Unix binaries
+          tar -czvf release-assets/totui-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release totui
+          tar -czvf release-assets/totui-mcp-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release totui-mcp
 
       - name: Prepare binaries (Windows)
         if: contains(matrix.target, 'windows')
         run: |
           mkdir -p release-assets
-          cp target/${{ matrix.target }}/release/totui.exe release-assets/totui-${{ matrix.target }}.exe
-          cp target/${{ matrix.target }}/release/totui-mcp.exe release-assets/totui-mcp-${{ matrix.target }}.exe
+          # Create zip archives for Windows binaries
+          cd target/${{ matrix.target }}/release && zip ../../../release-assets/totui-${{ matrix.target }}.zip totui.exe
+          cd target/${{ matrix.target }}/release && zip ../../../release-assets/totui-mcp-${{ matrix.target }}.zip totui-mcp.exe
 
       - name: Upload binaries to release
         uses: softprops/action-gh-release@v2

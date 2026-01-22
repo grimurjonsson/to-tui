@@ -11,7 +11,7 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 
 Milestone: v1.0 TUI Enhancements — SHIPPED
 Status: Ready for next milestone
-Last activity: 2026-01-22 — Completed quick-003 (cascading x toggle with undo)
+Last activity: 2026-01-22 — Completed quick-004 (tar.gz release binaries)
 Next Action: /gsd:new-milestone
 
 ## Completed Milestones
@@ -29,9 +29,10 @@ Quick tasks are ad-hoc improvements outside milestone planning:
 | quick-001 | Simplify README installation and MCP sections | ✓ | 2026-01-21 |
 | 001-fix-row-highlighting | Fix visual row highlighting on new item creation | ✓ | 2026-01-22 |
 | 003-cascading-x-toggle | Cascading 'x' toggle for parent and children with undo | ✓ | 2026-01-22 |
+| 004-tar-gz-release-binaries | Change release format to tar.gz/zip archives | ✓ | 2026-01-22 |
 
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed quick-003 (cascading-x-toggle-with-undo)
+Stopped at: Completed quick-004 (tar-gz-release-binaries)
 Resume file: None

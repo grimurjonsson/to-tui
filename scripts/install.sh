@@ -351,32 +351,66 @@ fi
 
 # Download and install each binary
 for BINARY_NAME in "${BINARIES[@]}"; do
-    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${BINARY_NAME}-${TARGET}${BINARY_EXT}"
+    # Determine archive extension based on platform
+    if [ -z "$BINARY_EXT" ]; then
+        ARCHIVE_EXT=".tar.gz"
+    else
+        ARCHIVE_EXT=".zip"
+    fi
+
+    DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${BINARY_NAME}-${TARGET}${ARCHIVE_EXT}"
 
     echo -e "${BLUE}↓${RESET} Downloading ${BOLD}${BINARY_NAME}${RESET}..."
 
-    # Create temp file
-    TEMP_FILE=$(mktemp)
+    # Create temp directory for extraction
+    TEMP_DIR=$(mktemp -d)
+    TEMP_ARCHIVE="${TEMP_DIR}/archive${ARCHIVE_EXT}"
 
-    if ! curl -L -f -o "$TEMP_FILE" "$DOWNLOAD_URL" 2>/dev/null; then
+    if ! curl -L -f -o "$TEMP_ARCHIVE" "$DOWNLOAD_URL" 2>/dev/null; then
         echo -e "${RED}${BOLD}✗${RESET} Download failed for ${BOLD}${BINARY_NAME}${RESET}"
         echo -e "   ${DIM}URL: $DOWNLOAD_URL${RESET}"
         echo -e "   ${DIM}This might mean no binary exists for your platform ($TARGET)${RESET}"
-        rm -f "$TEMP_FILE"
+        rm -rf "$TEMP_DIR"
         continue
     fi
 
-    chmod +x "$TEMP_FILE"
+    # Extract archive
+    if [ -z "$BINARY_EXT" ]; then
+        # Unix: extract tar.gz
+        tar -xzf "$TEMP_ARCHIVE" -C "$TEMP_DIR" || {
+            echo -e "${RED}${BOLD}✗${RESET} Failed to extract archive for ${BOLD}${BINARY_NAME}${RESET}"
+            rm -rf "$TEMP_DIR"
+            continue
+        }
+    else
+        # Windows: extract zip
+        unzip -q "$TEMP_ARCHIVE" -d "$TEMP_DIR" || {
+            echo -e "${RED}${BOLD}✗${RESET} Failed to extract archive for ${BOLD}${BINARY_NAME}${RESET}"
+            rm -rf "$TEMP_DIR"
+            continue
+        }
+    fi
 
-    # Install
+    # Move extracted binary to install directory
+    EXTRACTED_BINARY="${TEMP_DIR}/${BINARY_NAME}${BINARY_EXT}"
     DEST="${INSTALL_DIR}/${BINARY_NAME}${BINARY_EXT}"
+
+    if [ ! -f "$EXTRACTED_BINARY" ]; then
+        echo -e "${RED}${BOLD}✗${RESET} Binary not found in archive for ${BOLD}${BINARY_NAME}${RESET}"
+        rm -rf "$TEMP_DIR"
+        continue
+    fi
+
     if [ "$NEED_SUDO" = true ]; then
-        sudo mv "$TEMP_FILE" "$DEST"
+        sudo mv "$EXTRACTED_BINARY" "$DEST"
         sudo chmod +x "$DEST"
     else
-        mv "$TEMP_FILE" "$DEST"
+        mv "$EXTRACTED_BINARY" "$DEST"
         chmod +x "$DEST"
     fi
+
+    # Clean up temp directory
+    rm -rf "$TEMP_DIR"
 
     echo -e "${GREEN}${BOLD}✓${RESET} Installed ${BOLD}${BINARY_NAME}${RESET} to ${CYAN}${DEST}${RESET}"
 done
