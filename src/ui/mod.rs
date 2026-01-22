@@ -3,6 +3,7 @@ pub mod theme;
 
 use crate::app::{event::handle_key_event, event::handle_mouse_event, AppState};
 use crate::storage::UiCache;
+use crate::utils::cursor::set_mouse_cursor_default;
 use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
@@ -31,6 +32,8 @@ impl Drop for TerminalGuard {
         }
         let _ = disable_raw_mode();
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen);
+        // Reset mouse cursor to default in case it was changed to pointer
+        set_mouse_cursor_default();
         let _ = stdout.flush();
     }
 }

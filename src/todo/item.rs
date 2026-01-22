@@ -200,6 +200,9 @@ mod tests {
         assert_eq!(item.state, TodoState::Exclamation);
 
         item.cycle_state();
+        assert_eq!(item.state, TodoState::Cancelled);
+
+        item.cycle_state();
         assert_eq!(item.state, TodoState::Empty);
     }
 

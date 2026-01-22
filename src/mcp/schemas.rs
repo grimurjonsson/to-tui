@@ -3,12 +3,41 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::project::Project;
 use crate::todo::{TodoItem, TodoState};
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListTodosRequest {
     #[schemars(description = "Date in YYYY-MM-DD format. Defaults to today if not provided.")]
     pub date: Option<String>,
+    #[schemars(description = "Project name. Defaults to 'default' if not provided.")]
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ListProjectsRequest {}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProjectItemResponse {
+    pub id: String,
+    pub name: String,
+    pub created_at: String,
+}
+
+impl From<&Project> for ProjectItemResponse {
+    fn from(project: &Project) -> Self {
+        Self {
+            id: project.id.to_string(),
+            name: project.name.clone(),
+            created_at: project.created_at.to_rfc3339(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProjectListResponse {
+    pub count: usize,
+    pub projects: Vec<ProjectItemResponse>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -25,6 +54,8 @@ pub struct CreateTodoRequest {
     pub due_date: Option<String>,
     #[schemars(description = "Additional notes or description for the todo.")]
     pub description: Option<String>,
+    #[schemars(description = "Project name. Defaults to 'default' if not provided.")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -43,6 +74,8 @@ pub struct UpdateTodoRequest {
     pub due_date: Option<String>,
     #[schemars(description = "New description. Empty string clears the description.")]
     pub description: Option<String>,
+    #[schemars(description = "Project name. Defaults to 'default' if not provided.")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -51,6 +84,8 @@ pub struct DeleteTodoRequest {
     pub id: String,
     #[schemars(description = "Date in YYYY-MM-DD format. Defaults to today if not provided.")]
     pub date: Option<String>,
+    #[schemars(description = "Project name. Defaults to 'default' if not provided.")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -61,6 +96,8 @@ pub struct MarkCompleteRequest {
     pub id: String,
     #[schemars(description = "Date in YYYY-MM-DD format. Defaults to today if not provided.")]
     pub date: Option<String>,
+    #[schemars(description = "Project name. Defaults to 'default' if not provided.")]
+    pub project: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -90,6 +127,7 @@ impl From<&TodoItem> for TodoItemResponse {
                 TodoState::Question => "question",
                 TodoState::Exclamation => "important",
                 TodoState::InProgress => "in_progress",
+                TodoState::Cancelled => "cancelled",
             }
             .to_string(),
             indent_level: item.indent_level,

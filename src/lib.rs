@@ -1,6 +1,7 @@
 pub mod clipboard;
 pub mod mcp;
 pub mod plugin;
+pub mod project;
 pub mod storage;
 pub mod todo;
 pub mod utils;

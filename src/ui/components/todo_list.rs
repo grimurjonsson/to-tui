@@ -23,9 +23,9 @@ fn priority_badge(priority: Option<Priority>, theme: &Theme) -> Option<(String, 
     })
 }
 
-/// Compute the style for a todo item based on its state and selection
-/// Note: Cursor highlighting is now handled by ListState's highlight_style
-fn compute_item_style(state: TodoState, theme: &Theme, is_in_selection: bool) -> Style {
+/// Compute the base style for a todo item (color only, no strikethrough)
+/// Used for prefix elements (indent, fold icon, checkbox)
+fn compute_base_style(state: TodoState, theme: &Theme, is_in_selection: bool) -> Style {
     if is_in_selection {
         Style::default()
             .bg(Color::DarkGray)
@@ -36,8 +36,20 @@ fn compute_item_style(state: TodoState, theme: &Theme, is_in_selection: bool) ->
             TodoState::Question => Style::default().fg(theme.question),
             TodoState::Exclamation => Style::default().fg(theme.exclamation),
             TodoState::InProgress => Style::default().fg(theme.in_progress),
+            TodoState::Cancelled => Style::default().fg(theme.cancelled),
             _ => Style::default().fg(theme.foreground),
         }
+    }
+}
+
+/// Compute the style for todo item content text
+/// Adds strikethrough for cancelled items
+fn compute_content_style(state: TodoState, theme: &Theme, is_in_selection: bool) -> Style {
+    let base = compute_base_style(state, theme, is_in_selection);
+    if state == TodoState::Cancelled && !is_in_selection {
+        base.add_modifier(Modifier::CROSSED_OUT)
+    } else {
+        base
     }
 }
 
@@ -104,8 +116,10 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
 
         let is_in_selection = state.is_selected(idx) && state.mode == Mode::Visual;
 
-        // Use same style for entire line so highlight is uniform
-        let content_style = compute_item_style(item.state, &state.theme, is_in_selection);
+        // Base style for prefix elements (no strikethrough)
+        let base_style = compute_base_style(item.state, &state.theme, is_in_selection);
+        // Content style includes strikethrough for cancelled items
+        let text_style = compute_content_style(item.state, &state.theme, is_in_selection);
 
         let content_max_width = available_width.saturating_sub(prefix_width + badge_width + checkbox_width);
 
@@ -141,7 +155,7 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                 let current_width = prefix_width + badge_width + checkbox_width + display_text.width();
                 let padding = " ".repeat(available_width.saturating_sub(current_width));
 
-                let mut spans = vec![Span::styled(prefix.clone(), content_style)];
+                let mut spans = vec![Span::styled(prefix.clone(), base_style)];
 
                 // Add priority badge if present
                 if let Some((badge_text, badge_color)) = &badge {
@@ -149,12 +163,12 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                         badge_text.clone(),
                         Style::default().fg(*badge_color),
                     ));
-                    spans.push(Span::styled(" ", content_style));
+                    spans.push(Span::styled(" ", base_style));
                 }
 
-                spans.push(Span::styled(checkbox_with_space.clone(), content_style));
-                spans.push(Span::styled(display_text, content_style));
-                spans.push(Span::styled(padding, content_style));
+                spans.push(Span::styled(checkbox_with_space.clone(), base_style));
+                spans.push(Span::styled(display_text, text_style));
+                spans.push(Span::styled(padding, base_style));
 
                 let lines = vec![Line::from(spans)];
                 items.push(ListItem::new(lines));
@@ -169,7 +183,7 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                         let current_width = prefix_width + badge_width + checkbox_width + line_text.width();
                         let padding = " ".repeat(available_width.saturating_sub(current_width));
 
-                        let mut spans = vec![Span::styled(prefix.clone(), content_style)];
+                        let mut spans = vec![Span::styled(prefix.clone(), base_style)];
 
                         // Add priority badge if present
                         if let Some((badge_text, badge_color)) = &badge {
@@ -177,12 +191,12 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                                 badge_text.clone(),
                                 Style::default().fg(*badge_color),
                             ));
-                            spans.push(Span::styled(" ", content_style));
+                            spans.push(Span::styled(" ", base_style));
                         }
 
-                        spans.push(Span::styled(checkbox_with_space.clone(), content_style));
-                        spans.push(Span::styled(line_text.clone(), content_style));
-                        spans.push(Span::styled(padding, content_style));
+                        spans.push(Span::styled(checkbox_with_space.clone(), base_style));
+                        spans.push(Span::styled(line_text.clone(), text_style));
+                        spans.push(Span::styled(padding, base_style));
 
                         lines.push(Line::from(spans));
                     } else {
@@ -191,9 +205,9 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                         let padding = " ".repeat(available_width.saturating_sub(current_width));
 
                         lines.push(Line::from(vec![
-                            Span::styled(continuation_indent.clone(), content_style),
-                            Span::styled(line_text.clone(), content_style),
-                            Span::styled(padding, content_style),
+                            Span::styled(continuation_indent.clone(), base_style),
+                            Span::styled(line_text.clone(), text_style),
+                            Span::styled(padding, base_style),
                         ]));
                     }
                 }

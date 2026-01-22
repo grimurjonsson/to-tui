@@ -7,18 +7,40 @@ use axum::{
 use chrono::Local;
 use uuid::Uuid;
 
-use crate::storage::file::{load_todo_list, save_todo_list};
+use crate::project::{ProjectRegistry, DEFAULT_PROJECT_NAME};
+use crate::storage::file::{load_todo_list_for_project, save_todo_list_for_project};
 use crate::todo::TodoItem;
 
 use super::models::{
-    CreateTodoRequest, DateQuery, ErrorResponse, TodoListResponse, TodoResponse,
-    UpdateTodoRequest, parse_state,
+    CreateTodoRequest, DateQuery, ErrorResponse, ProjectListResponse, ProjectResponse,
+    TodoListResponse, TodoResponse, UpdateTodoRequest, parse_state,
 };
+
+/// Helper to get project name with validation
+fn get_validated_project(project: Option<String>) -> Result<String, axum::response::Response<axum::body::Body>> {
+    let project_name = project.unwrap_or_else(|| DEFAULT_PROJECT_NAME.to_string());
+
+    // Validate project exists
+    let registry = match ProjectRegistry::load() {
+        Ok(r) => r,
+        Err(e) => return Err(ErrorResponse::internal(e)),
+    };
+
+    if registry.get_by_name(&project_name).is_none() {
+        return Err(ErrorResponse::not_found(format!("Project not found: {project_name}")));
+    }
+
+    Ok(project_name)
+}
 
 pub async fn list_todos(Query(query): Query<DateQuery>) -> impl IntoResponse {
     let date = query.date.unwrap_or_else(|| Local::now().date_naive());
+    let project_name = match get_validated_project(query.project) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
-    match load_todo_list(date) {
+    match load_todo_list_for_project(&project_name, date) {
         Ok(list) => {
             let response = TodoListResponse {
                 date: list.date,
@@ -35,8 +57,12 @@ pub async fn create_todo(
     Json(req): Json<CreateTodoRequest>,
 ) -> impl IntoResponse {
     let date = query.date.unwrap_or_else(|| Local::now().date_naive());
+    let project_name = match get_validated_project(query.project) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
-    let mut list = match load_todo_list(date) {
+    let mut list = match load_todo_list_for_project(&project_name, date) {
         Ok(l) => l,
         Err(e) => return ErrorResponse::internal(e),
     };
@@ -58,7 +84,7 @@ pub async fn create_todo(
     let response = TodoResponse::from(&item);
     list.items.insert(insert_index, item);
 
-    if let Err(e) = save_todo_list(&list) {
+    if let Err(e) = save_todo_list_for_project(&list, &project_name) {
         return ErrorResponse::internal(e);
     }
 
@@ -70,8 +96,12 @@ pub async fn delete_todo(
     Query(query): Query<DateQuery>,
 ) -> impl IntoResponse {
     let date = query.date.unwrap_or_else(|| Local::now().date_naive());
+    let project_name = match get_validated_project(query.project) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
-    let mut list = match load_todo_list(date) {
+    let mut list = match load_todo_list_for_project(&project_name, date) {
         Ok(l) => l,
         Err(e) => return ErrorResponse::internal(e),
     };
@@ -88,7 +118,7 @@ pub async fn delete_todo(
     list.items.drain(start..end);
     list.recalculate_parent_ids();
 
-    if let Err(e) = save_todo_list(&list) {
+    if let Err(e) = save_todo_list_for_project(&list, &project_name) {
         return ErrorResponse::internal(e);
     }
 
@@ -101,8 +131,12 @@ pub async fn update_todo(
     Json(req): Json<UpdateTodoRequest>,
 ) -> impl IntoResponse {
     let date = query.date.unwrap_or_else(|| Local::now().date_naive());
+    let project_name = match get_validated_project(query.project) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
 
-    let mut list = match load_todo_list(date) {
+    let mut list = match load_todo_list_for_project(&project_name, date) {
         Ok(l) => l,
         Err(e) => return ErrorResponse::internal(e),
     };
@@ -140,9 +174,24 @@ pub async fn update_todo(
 
     let response = TodoResponse::from(&*item);
 
-    if let Err(e) = save_todo_list(&list) {
+    if let Err(e) = save_todo_list_for_project(&list, &project_name) {
         return ErrorResponse::internal(e);
     }
 
     (StatusCode::OK, Json(response)).into_response()
+}
+
+pub async fn list_projects() -> impl IntoResponse {
+    match ProjectRegistry::load() {
+        Ok(registry) => {
+            let projects: Vec<ProjectResponse> = registry
+                .list_sorted()
+                .iter()
+                .map(|p| ProjectResponse::from(*p))
+                .collect();
+            let response = ProjectListResponse { projects };
+            (StatusCode::OK, Json(response)).into_response()
+        }
+        Err(e) => ErrorResponse::internal(e),
+    }
 }

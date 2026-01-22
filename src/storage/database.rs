@@ -1,3 +1,4 @@
+use crate::project::DEFAULT_PROJECT_NAME;
 use crate::todo::{Priority, TodoItem, TodoList, TodoState};
 use crate::utils::paths::get_to_tui_dir;
 use anyhow::{Context, Result};
@@ -119,7 +120,8 @@ pub fn init_database() -> Result<()> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT,
-            deleted_at TEXT
+            deleted_at TEXT,
+            project TEXT NOT NULL DEFAULT 'default'
         )",
         [],
     )?;
@@ -139,6 +141,13 @@ pub fn init_database() -> Result<()> {
     conn.execute("ALTER TABLE todos ADD COLUMN priority TEXT", [])
         .ok();
 
+    // Add project column for existing databases
+    conn.execute(
+        "ALTER TABLE todos ADD COLUMN project TEXT NOT NULL DEFAULT 'default'",
+        [],
+    )
+    .ok();
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todos_date ON todos(date)",
         [],
@@ -146,6 +155,16 @@ pub fn init_database() -> Result<()> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todos_parent_id ON todos(parent_id)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_todos_project ON todos(project)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_todos_date_project ON todos(date, project)",
         [],
     )?;
 
@@ -166,7 +185,8 @@ pub fn init_database() -> Result<()> {
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT,
-            deleted_at TEXT
+            deleted_at TEXT,
+            project TEXT NOT NULL DEFAULT 'default'
         )",
         [],
     )?;
@@ -188,21 +208,51 @@ pub fn init_database() -> Result<()> {
     conn.execute("ALTER TABLE archived_todos ADD COLUMN priority TEXT", [])
         .ok();
 
+    // Add project column for existing databases
+    conn.execute(
+        "ALTER TABLE archived_todos ADD COLUMN project TEXT NOT NULL DEFAULT 'default'",
+        [],
+    )
+    .ok();
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_todos_project ON archived_todos(project)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_archived_todos_date_project ON archived_todos(original_date, project)",
+        [],
+    )?;
+
+    // Projects table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS projects (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )?;
+
     Ok(())
 }
 
-pub fn load_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
+pub fn load_todos_for_date_and_project(
+    date: NaiveDate,
+    project_name: &str,
+) -> Result<Vec<TodoItem>> {
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
         "SELECT id, content, state, indent_level, parent_id, due_date, description, priority, collapsed, created_at, updated_at, completed_at, deleted_at
          FROM todos
-         WHERE date = ?1 AND deleted_at IS NULL
+         WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL
          ORDER BY position ASC",
     )?;
 
-    let items = stmt.query_map([&date_str], TodoRowData::from_row)?;
+    let items = stmt.query_map(params![&date_str, project_name], TodoRowData::from_row)?;
 
     let mut result = Vec::new();
     for item in items {
@@ -212,7 +262,11 @@ pub fn load_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
     Ok(result)
 }
 
-pub fn soft_delete_todos(ids: &[Uuid], date: NaiveDate) -> Result<()> {
+pub fn soft_delete_todos_for_project(
+    ids: &[Uuid],
+    date: NaiveDate,
+    project_name: &str,
+) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
@@ -224,26 +278,32 @@ pub fn soft_delete_todos(ids: &[Uuid], date: NaiveDate) -> Result<()> {
     for id in ids {
         let id_str = id.to_string();
         conn.execute(
-            "UPDATE todos SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND date = ?3",
-            params![now, id_str, date_str],
+            "UPDATE todos SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND date = ?3 AND project = ?4",
+            params![now, id_str, date_str, project_name],
         )?;
     }
 
     Ok(())
 }
 
-pub fn save_todo_list(list: &TodoList) -> Result<()> {
+/// Legacy: Soft deletes todos for the default project
+/// Use soft_delete_todos_for_project() for project-aware code
+pub fn soft_delete_todos(ids: &[Uuid], date: NaiveDate) -> Result<()> {
+    soft_delete_todos_for_project(ids, date, DEFAULT_PROJECT_NAME)
+}
+
+pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result<()> {
     let conn = get_connection()?;
     let date_str = list.date.format("%Y-%m-%d").to_string();
 
     conn.execute(
-        "DELETE FROM todos WHERE date = ?1 AND deleted_at IS NULL",
-        [&date_str],
+        "DELETE FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL",
+        params![&date_str, project_name],
     )?;
 
     let mut stmt = conn.prepare(
-        "INSERT INTO todos (id, date, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)"
+        "INSERT INTO todos (id, date, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"
     )?;
 
     for (position, item) in list.items.iter().enumerate() {
@@ -274,54 +334,67 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
             modified_at_str,
             completed_at_str,
             deleted_at_str,
+            project_name,
         ])?;
     }
 
     Ok(())
 }
 
-pub fn has_todos_for_date(date: NaiveDate) -> Result<bool> {
+pub fn has_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Result<bool> {
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM todos WHERE date = ?1 AND deleted_at IS NULL",
-        [&date_str],
+        "SELECT COUNT(*) FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL",
+        params![&date_str, project_name],
         |row| row.get(0),
     )?;
 
     Ok(count > 0)
 }
 
-pub fn archive_todos_for_date(date: NaiveDate) -> Result<usize> {
+pub fn archive_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Result<usize> {
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
     let count = conn.execute(
-        "INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at)
-         SELECT id, date, ?1, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at
-         FROM todos WHERE date = ?2",
-        params![now, date_str],
+        "INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project)
+         SELECT id, date, ?1, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project
+         FROM todos WHERE date = ?2 AND project = ?3",
+        params![now, date_str, project_name],
     )?;
 
-    conn.execute("DELETE FROM todos WHERE date = ?1", [&date_str])?;
+    conn.execute(
+        "DELETE FROM todos WHERE date = ?1 AND project = ?2",
+        params![&date_str, project_name],
+    )?;
 
     Ok(count)
 }
 
-pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
+/// Legacy: Archives todos for the default project
+/// Use archive_todos_for_date_and_project() for project-aware code
+pub fn archive_todos_for_date(date: NaiveDate) -> Result<usize> {
+    archive_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME)
+}
+
+pub fn load_archived_todos_for_date_and_project(
+    date: NaiveDate,
+    project_name: &str,
+) -> Result<Vec<TodoItem>> {
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
         "SELECT id, content, state, indent_level, parent_id, due_date, description, priority, collapsed, created_at, updated_at, completed_at, deleted_at
          FROM archived_todos
-         WHERE original_date = ?1 AND deleted_at IS NULL
+         WHERE original_date = ?1 AND project = ?2 AND deleted_at IS NULL
          ORDER BY position ASC",
     )?;
 
-    let items = stmt.query_map([&date_str], TodoRowData::from_row)?;
+    let items = stmt.query_map(params![&date_str, project_name], TodoRowData::from_row)?;
 
     let mut result = Vec::new();
     for item in items {
@@ -329,6 +402,195 @@ pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
     }
 
     Ok(result)
+}
+
+/// Legacy: Loads archived todos for the default project
+/// Use load_archived_todos_for_date_and_project() for project-aware code
+pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
+    load_archived_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME)
+}
+
+// ============================================================================
+// Project database functions
+// ============================================================================
+
+use crate::project::Project;
+
+/// Load all projects from the database
+pub fn load_projects() -> Result<Vec<Project>> {
+    init_database()?;
+    let conn = get_connection()?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, name, created_at FROM projects ORDER BY
+         CASE WHEN name = 'default' THEN 0 ELSE 1 END, name ASC",
+    )?;
+
+    let projects = stmt.query_map([], |row| {
+        let id_str: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        let created_at_str: String = row.get(2)?;
+
+        Ok((id_str, name, created_at_str))
+    })?;
+
+    let mut result = Vec::new();
+    for project in projects {
+        let (id_str, name, created_at_str) = project?;
+        let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
+        let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+
+        result.push(Project { id, name, created_at });
+    }
+
+    Ok(result)
+}
+
+/// Get a project by name
+pub fn get_project_by_name(name: &str) -> Result<Option<Project>> {
+    init_database()?;
+    let conn = get_connection()?;
+
+    let mut stmt = conn.prepare("SELECT id, name, created_at FROM projects WHERE name = ?1")?;
+
+    let result = stmt.query_row([name], |row| {
+        let id_str: String = row.get(0)?;
+        let name: String = row.get(1)?;
+        let created_at_str: String = row.get(2)?;
+        Ok((id_str, name, created_at_str))
+    });
+
+    match result {
+        Ok((id_str, name, created_at_str)) => {
+            let id = Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4());
+            let created_at = DateTime::parse_from_rfc3339(&created_at_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            Ok(Some(Project { id, name, created_at }))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Create a new project in the database
+pub fn create_project(project: &Project) -> Result<()> {
+    init_database()?;
+    let conn = get_connection()?;
+
+    conn.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (?1, ?2, ?3)",
+        params![
+            project.id.to_string(),
+            project.name,
+            project.created_at.to_rfc3339()
+        ],
+    )?;
+
+    Ok(())
+}
+
+/// Rename a project in the database
+pub fn rename_project(old_name: &str, new_name: &str) -> Result<()> {
+    init_database()?;
+    let conn = get_connection()?;
+
+    // Update projects table
+    conn.execute(
+        "UPDATE projects SET name = ?1 WHERE name = ?2",
+        params![new_name, old_name],
+    )?;
+
+    // Update todos table
+    conn.execute(
+        "UPDATE todos SET project = ?1 WHERE project = ?2",
+        params![new_name, old_name],
+    )?;
+
+    // Update archived_todos table
+    conn.execute(
+        "UPDATE archived_todos SET project = ?1 WHERE project = ?2",
+        params![new_name, old_name],
+    )?;
+
+    Ok(())
+}
+
+/// Delete a project from the database
+pub fn delete_project(name: &str) -> Result<()> {
+    init_database()?;
+    let conn = get_connection()?;
+
+    conn.execute("DELETE FROM projects WHERE name = ?1", [name])?;
+
+    Ok(())
+}
+
+/// Ensure the default project exists in the database
+pub fn ensure_default_project_exists() -> Result<Project> {
+    if let Some(project) = get_project_by_name(DEFAULT_PROJECT_NAME)? {
+        return Ok(project);
+    }
+
+    let project = Project::default_project();
+    create_project(&project)?;
+    Ok(project)
+}
+
+/// Discover projects that exist in the todos table but not in the projects table
+/// This handles cases where todos were created with a project name but the project
+/// wasn't properly registered
+pub fn sync_projects_from_todos() -> Result<usize> {
+    init_database()?;
+    let conn = get_connection()?;
+
+    // Find all distinct project names in todos that don't have a corresponding projects entry
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT t.project FROM todos t
+         WHERE t.project IS NOT NULL
+         AND t.project != ''
+         AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.name = t.project)",
+    )?;
+
+    let orphaned_projects: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Also check archived_todos
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT a.project FROM archived_todos a
+         WHERE a.project IS NOT NULL
+         AND a.project != ''
+         AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.name = a.project)",
+    )?;
+
+    let orphaned_archived: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Combine and deduplicate
+    let mut all_orphaned: Vec<String> = orphaned_projects;
+    for name in orphaned_archived {
+        if !all_orphaned.contains(&name) {
+            all_orphaned.push(name);
+        }
+    }
+
+    // Create project entries for each orphaned project
+    let mut created_count = 0;
+    for name in all_orphaned {
+        let project = Project::new(&name);
+        if create_project(&project).is_ok() {
+            tracing::info!("Auto-registered orphaned project: {}", name);
+            created_count += 1;
+        }
+    }
+
+    Ok(created_count)
 }
 
 #[cfg(test)]

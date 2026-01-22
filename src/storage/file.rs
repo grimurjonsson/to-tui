@@ -1,19 +1,19 @@
 use super::database;
 use super::markdown::{parse_todo_list, serialize_todo_list_clean};
 use crate::todo::TodoList;
-use crate::utils::paths::{ensure_directories_exist, get_daily_file_path};
+use crate::utils::paths::{ensure_project_directories_exist, get_daily_file_path_for_project};
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate};
 use std::fs;
 
-pub fn load_todo_list(date: NaiveDate) -> Result<TodoList> {
-    ensure_directories_exist()?;
+pub fn load_todo_list_for_project(project_name: &str, date: NaiveDate) -> Result<TodoList> {
+    ensure_project_directories_exist(project_name)?;
     database::init_database()?;
 
-    let file_path = get_daily_file_path(date)?;
+    let file_path = get_daily_file_path_for_project(project_name, date)?;
 
-    if database::has_todos_for_date(date)? {
-        let items = database::load_todos_for_date(date)?;
+    if database::has_todos_for_date_and_project(date, project_name)? {
+        let items = database::load_todos_for_date_and_project(date, project_name)?;
         return Ok(TodoList::with_items(date, file_path, items));
     }
 
@@ -25,7 +25,7 @@ pub fn load_todo_list(date: NaiveDate) -> Result<TodoList> {
             .with_context(|| "Failed to parse todo list")?;
 
         if !list.items.is_empty() {
-            database::save_todo_list(&list)?;
+            database::save_todo_list_for_project(&list, project_name)?;
         }
 
         return Ok(list);
@@ -34,11 +34,11 @@ pub fn load_todo_list(date: NaiveDate) -> Result<TodoList> {
     Ok(TodoList::new(date, file_path))
 }
 
-pub fn save_todo_list(list: &TodoList) -> Result<()> {
-    ensure_directories_exist()?;
+pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result<()> {
+    ensure_project_directories_exist(project_name)?;
     database::init_database()?;
 
-    database::save_todo_list(list)?;
+    database::save_todo_list_for_project(list, project_name)?;
 
     let content = serialize_todo_list_clean(list);
 
@@ -57,35 +57,35 @@ pub fn save_todo_list(list: &TodoList) -> Result<()> {
     Ok(())
 }
 
-pub fn file_exists(date: NaiveDate) -> Result<bool> {
+pub fn file_exists_for_project(project_name: &str, date: NaiveDate) -> Result<bool> {
     database::init_database()?;
 
-    if database::has_todos_for_date(date)? {
+    if database::has_todos_for_date_and_project(date, project_name)? {
         return Ok(true);
     }
 
-    let file_path = get_daily_file_path(date)?;
+    let file_path = get_daily_file_path_for_project(project_name, date)?;
     Ok(file_path.exists())
 }
 
-pub fn load_todos_for_viewing(date: NaiveDate) -> Result<TodoList> {
-    ensure_directories_exist()?;
+pub fn load_todos_for_viewing_in_project(project_name: &str, date: NaiveDate) -> Result<TodoList> {
+    ensure_project_directories_exist(project_name)?;
     database::init_database()?;
 
     let today = Local::now().date_naive();
-    let file_path = get_daily_file_path(date)?;
+    let file_path = get_daily_file_path_for_project(project_name, date)?;
 
     if date == today {
-        return load_todo_list(date);
+        return load_todo_list_for_project(project_name, date);
     }
 
-    let items = database::load_archived_todos_for_date(date)?;
+    let items = database::load_archived_todos_for_date_and_project(date, project_name)?;
     if !items.is_empty() {
         return Ok(TodoList::with_items(date, file_path, items));
     }
 
-    if database::has_todos_for_date(date)? {
-        let items = database::load_todos_for_date(date)?;
+    if database::has_todos_for_date_and_project(date, project_name)? {
+        let items = database::load_todos_for_date_and_project(date, project_name)?;
         return Ok(TodoList::with_items(date, file_path, items));
     }
 

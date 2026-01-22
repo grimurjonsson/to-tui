@@ -46,13 +46,21 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     } else {
         "? help  q quit"
     };
+    let github_link = "[github repo]";
     let version_text = match &state.new_version_available {
         Some(new_version) => format!("v{VERSION} → v{new_version}"),
         None => format!("v{VERSION}"),
     };
 
+    let project_prefix = if state.current_project.name != crate::project::DEFAULT_PROJECT_NAME {
+        format!("[{}] ", state.current_project.name)
+    } else {
+        String::new()
+    };
+
     let left_content = format!(
-        " {} | {} | {} items{}{}",
+        " {}{} | {} | {} items{}{}",
+        project_prefix,
         mode_text,
         date_label,
         state.todo_list.items.len(),
@@ -60,8 +68,10 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
         save_indicator
     );
 
+    // Format: "{left_content} {nav_hint} {padding} {github_link} {version_text} "
+    // Spaces: 4 spaces between segments + 1 trailing space
     let padding = area.width.saturating_sub(
-        left_content.len() as u16 + nav_hint.len() as u16 + version_text.len() as u16 + 3,
+        left_content.len() as u16 + nav_hint.len() as u16 + github_link.len() as u16 + version_text.len() as u16 + 5,
     );
 
     let base_style = Style::default()
@@ -75,10 +85,11 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     };
 
     let status_line = format!(
-        "{} {} {:>padding$} {}",
+        "{} {} {:>padding$} {} {} ",
         left_content,
         nav_hint,
         "",
+        github_link,
         version_text,
         padding = padding as usize
     );

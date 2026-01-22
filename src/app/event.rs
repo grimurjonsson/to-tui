@@ -1,20 +1,27 @@
 use super::mode::Mode;
-use super::state::{AppState, PluginSubState};
+use super::state::{AppState, PluginSubState, ProjectSubState};
 use crate::clipboard::copy_to_clipboard;
+use crate::config::Config;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::PluginRegistry;
-use crate::storage::{execute_rollover, find_rollover_candidates, save_todo_list, soft_delete_todos};
+use crate::project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
+use crate::storage::file::save_todo_list_for_project;
+use crate::storage::{execute_rollover, find_rollover_candidates, soft_delete_todos};
+use crate::utils::paths::{get_dailies_dir_for_project, get_project_dir};
+use crate::utils::cursor::{set_mouse_cursor_default, set_mouse_cursor_pointer};
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
 use crate::utils::upgrade::{check_write_permission, prepare_binary, replace_and_restart, UpgradeSubState};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use std::fs;
 use std::sync::mpsc;
 use std::thread;
 
 /// Total number of lines in the help content (must match render_help_overlay)
 const HELP_TOTAL_LINES: u16 = 57;
+const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
     // Handle help overlay scrolling when help is visible
@@ -53,6 +60,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
         Mode::Plugin => handle_plugin_mode(key, state)?,
         Mode::Rollover => handle_rollover_mode(key, state)?,
         Mode::UpgradePrompt => handle_upgrade_prompt_mode(key, state)?,
+        Mode::ProjectSelect => handle_project_select_mode(key, state)?,
     }
     Ok(())
 }
@@ -72,6 +80,20 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
                 state.help_scroll = state.help_scroll.saturating_add(3).min(max_scroll);
             }
             _ => {}
+        }
+        return Ok(());
+    }
+
+    // Handle mouse move events for cursor hover effects
+    if let MouseEventKind::Moved = mouse.kind {
+        let is_over_link = is_mouse_over_status_bar_link(state, mouse.row as usize, mouse.column as usize);
+
+        if is_over_link && !state.cursor_is_pointer {
+            set_mouse_cursor_pointer();
+            state.cursor_is_pointer = true;
+        } else if !is_over_link && state.cursor_is_pointer {
+            set_mouse_cursor_default();
+            state.cursor_is_pointer = false;
         }
         return Ok(());
     }
@@ -103,20 +125,31 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
 
         // Check if click is on status bar (bottom row)
         if clicked_row == state.terminal_height.saturating_sub(1) as usize {
-            // Check if version upgrade notification is visible and clicked
-            if let Some(ref new_version) = state.new_version_available {
+            // Check if GitHub link is clicked
+            let github_link = "[github repo] ";
+            let version_text = if let Some(ref new_version) = state.new_version_available {
                 let current_version = env!("CARGO_PKG_VERSION");
-                let version_text = format!("v{} → v{}", current_version, new_version);
-                let version_text_len = version_text.len();
+                format!("v{} → v{}", current_version, new_version)
+            } else {
+                format!("v{}", env!("CARGO_PKG_VERSION"))
+            };
 
-                // Version text is right-aligned at end of status bar
-                let version_start = state.terminal_width.saturating_sub(version_text_len as u16) as usize;
+            // GitHub link is just before version text at the right end
+            let version_start = state.terminal_width.saturating_sub(version_text.len() as u16) as usize;
+            let github_start = version_start.saturating_sub(github_link.len());
+            let github_end = version_start - 1; // -1 to exclude the trailing space
 
-                if clicked_col >= version_start {
-                    // Clicked on version text - open upgrade modal
-                    state.open_upgrade_modal();
-                    return Ok(());
-                }
+            if clicked_col >= github_start && clicked_col < github_end {
+                // Clicked on GitHub link - open browser
+                let _ = open::that(GITHUB_URL);
+                return Ok(());
+            }
+
+            // Check if version upgrade notification is visible and clicked
+            if state.new_version_available.is_some() && clicked_col >= version_start {
+                // Clicked on version text - open upgrade modal
+                state.open_upgrade_modal();
+                return Ok(());
             }
         }
     }
@@ -168,12 +201,49 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
     }
 
     if state.unsaved_changes {
-        save_todo_list(&state.todo_list)?;
+        save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
         state.unsaved_changes = false;
         state.last_save_time = Some(std::time::Instant::now());
     }
 
     Ok(())
+}
+
+/// Check if the mouse is over a clickable link in the status bar.
+/// Returns true if over the GitHub link or the upgrade version text (when available).
+fn is_mouse_over_status_bar_link(state: &AppState, row: usize, col: usize) -> bool {
+    // Check if on status bar (bottom row)
+    if row != state.terminal_height.saturating_sub(1) as usize {
+        return false;
+    }
+
+    let github_link = "[github repo]";
+    let github_link_with_space = "[github repo] ";
+    let version_text = if let Some(ref new_version) = state.new_version_available {
+        let current_version = env!("CARGO_PKG_VERSION");
+        format!("v{} → v{}", current_version, new_version)
+    } else {
+        format!("v{}", env!("CARGO_PKG_VERSION"))
+    };
+
+    // Layout: ... {github_link} {version_text} {trailing_space}
+    // version_text ends at terminal_width - 1 (trailing space)
+    let version_end = state.terminal_width.saturating_sub(1) as usize;
+    let version_start = version_end.saturating_sub(version_text.len());
+    let github_start = version_start.saturating_sub(github_link_with_space.len());
+    let github_end = github_start + github_link.len(); // exclude the trailing space
+
+    // Check if over GitHub link
+    if col >= github_start && col < github_end {
+        return true;
+    }
+
+    // Check if over version text (only clickable when upgrade is available)
+    if state.new_version_available.is_some() && col >= version_start && col < version_end {
+        return true;
+    }
+
+    false
 }
 
 enum ClickZone {
@@ -387,7 +457,7 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
     }
 
     if state.unsaved_changes {
-        save_todo_list(&state.todo_list)?;
+        save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
         state.unsaved_changes = false;
         state.last_save_time = Some(std::time::Instant::now());
     }
@@ -461,7 +531,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 } else {
                     state.save_undo();
                     delete_current_item(state)?;
-                    save_todo_list(&state.todo_list)?;
+                    save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
                     state.unsaved_changes = false;
                     state.last_save_time = Some(std::time::Instant::now());
                 }
@@ -561,7 +631,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::Undo => {
             if state.undo() {
-                save_todo_list(&state.todo_list)?;
+                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
                 state.last_save_time = Some(std::time::Instant::now());
             }
         }
@@ -602,6 +672,9 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 state.set_status_message("No incomplete items to rollover".to_string());
             }
         }
+        Action::OpenProjectModal => {
+            state.open_project_modal();
+        }
         Action::Yank => {
             if let Some(item) = state.selected_item() {
                 let text = item.content.clone();
@@ -632,7 +705,7 @@ fn handle_visual_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
     }
 
     if state.unsaved_changes {
-        save_todo_list(&state.todo_list)?;
+        save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
         state.unsaved_changes = false;
         state.last_save_time = Some(std::time::Instant::now());
     }
@@ -658,7 +731,7 @@ fn execute_visual_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::Undo => {
             if state.undo() {
-                save_todo_list(&state.todo_list)?;
+                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
                 state.last_save_time = Some(std::time::Instant::now());
             }
         }
@@ -708,7 +781,7 @@ fn handle_confirm_delete_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             state.save_undo();
             delete_current_item(state)?;
-            save_todo_list(&state.todo_list)?;
+            save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
             state.unsaved_changes = false;
             state.last_save_time = Some(std::time::Instant::now());
             state.pending_delete_subtask_count = None;
@@ -1241,7 +1314,7 @@ fn handle_plugin_preview(
                 state.todo_list.items.push(item);
             }
             state.unsaved_changes = true;
-            save_todo_list(&state.todo_list)?;
+            save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
             state.unsaved_changes = false;
             state.last_save_time = Some(std::time::Instant::now());
             state.set_status_message(format!("Added {count} item(s) from plugin"));
@@ -1252,6 +1325,375 @@ fn handle_plugin_preview(
         }
         _ => {
             state.plugin_state = Some(PluginSubState::Preview { items });
+        }
+    }
+    Ok(())
+}
+
+fn handle_project_select_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    let project_state = match state.project_state.take() {
+        Some(ps) => ps,
+        None => {
+            state.close_project_modal();
+            return Ok(());
+        }
+    };
+
+    match project_state {
+        ProjectSubState::Selecting {
+            projects,
+            selected_index,
+        } => handle_project_selecting(key, state, projects, selected_index),
+        ProjectSubState::CreateInput {
+            input_buffer,
+            cursor_pos,
+        } => handle_project_create_input(key, state, input_buffer, cursor_pos),
+        ProjectSubState::RenameInput {
+            project_name,
+            input_buffer,
+            cursor_pos,
+        } => handle_project_rename_input(key, state, project_name, input_buffer, cursor_pos),
+        ProjectSubState::ConfirmDelete { project_name } => {
+            handle_project_confirm_delete(key, state, project_name)
+        }
+    }
+}
+
+fn handle_project_selecting(
+    key: KeyEvent,
+    state: &mut AppState,
+    projects: Vec<Project>,
+    mut selected_index: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.close_project_modal();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            selected_index = selected_index.saturating_sub(1);
+            state.project_state = Some(ProjectSubState::Selecting {
+                projects,
+                selected_index,
+            });
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if selected_index < projects.len().saturating_sub(1) {
+                selected_index += 1;
+            }
+            state.project_state = Some(ProjectSubState::Selecting {
+                projects,
+                selected_index,
+            });
+        }
+        KeyCode::Enter => {
+            if let Some(project) = projects.get(selected_index) {
+                if project.name != state.current_project.name {
+                    let project = project.clone();
+
+                    // Save last_used_project to config
+                    if let Ok(mut config) = Config::load() {
+                        config.last_used_project = Some(project.name.clone());
+                        let _ = config.save();
+                    }
+
+                    state.switch_project(project)?;
+                    state.set_status_message("Switched project".to_string());
+                }
+                state.close_project_modal();
+            }
+        }
+        KeyCode::Char('n') => {
+            // Start creating a new project
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer: String::new(),
+                cursor_pos: 0,
+            });
+        }
+        KeyCode::Char('r') => {
+            // Start renaming the selected project
+            if let Some(project) = projects.get(selected_index) {
+                if project.name == DEFAULT_PROJECT_NAME {
+                    state.set_status_message("Cannot rename the default project".to_string());
+                    state.project_state = Some(ProjectSubState::Selecting {
+                        projects,
+                        selected_index,
+                    });
+                } else {
+                    state.project_state = Some(ProjectSubState::RenameInput {
+                        project_name: project.name.clone(),
+                        input_buffer: project.name.clone(),
+                        cursor_pos: project.name.len(),
+                    });
+                }
+            }
+        }
+        KeyCode::Char('d') => {
+            // Start deleting the selected project
+            if let Some(project) = projects.get(selected_index) {
+                if project.name == DEFAULT_PROJECT_NAME {
+                    state.set_status_message("Cannot delete the default project".to_string());
+                    state.project_state = Some(ProjectSubState::Selecting {
+                        projects,
+                        selected_index,
+                    });
+                } else if project.name == state.current_project.name {
+                    state
+                        .set_status_message("Cannot delete the currently active project".to_string());
+                    state.project_state = Some(ProjectSubState::Selecting {
+                        projects,
+                        selected_index,
+                    });
+                } else {
+                    state.project_state = Some(ProjectSubState::ConfirmDelete {
+                        project_name: project.name.clone(),
+                    });
+                }
+            }
+        }
+        _ => {
+            state.project_state = Some(ProjectSubState::Selecting {
+                projects,
+                selected_index,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn handle_project_create_input(
+    key: KeyEvent,
+    state: &mut AppState,
+    mut input_buffer: String,
+    mut cursor_pos: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            // Go back to project list
+            state.open_project_modal();
+        }
+        KeyCode::Enter if !input_buffer.trim().is_empty() => {
+            let name = input_buffer.trim().to_string();
+
+            // Create the project
+            let mut registry = ProjectRegistry::load()?;
+            match registry.create(&name) {
+                Ok(project) => {
+                    let project = project.clone();
+                    // Create the project directory
+                    let dailies_dir = get_dailies_dir_for_project(&project.name)?;
+                    fs::create_dir_all(&dailies_dir)?;
+
+                    state.set_status_message(format!("Created project '{}'", project.name));
+
+                    // Switch to the new project
+                    if let Ok(mut config) = Config::load() {
+                        config.last_used_project = Some(project.name.clone());
+                        let _ = config.save();
+                    }
+                    state.switch_project(project)?;
+                    state.close_project_modal();
+                }
+                Err(e) => {
+                    state.set_status_message(format!("Error: {}", e));
+                    state.open_project_modal();
+                }
+            }
+        }
+        KeyCode::Backspace if cursor_pos > 0 => {
+            let prev = prev_char_boundary(&input_buffer, cursor_pos);
+            input_buffer.drain(prev..cursor_pos);
+            cursor_pos = prev;
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Left if cursor_pos > 0 => {
+            cursor_pos = prev_char_boundary(&input_buffer, cursor_pos);
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Right if cursor_pos < input_buffer.len() => {
+            cursor_pos = next_char_boundary(&input_buffer, cursor_pos);
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Home => {
+            cursor_pos = 0;
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::End => {
+            cursor_pos = input_buffer.len();
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Char(c) => {
+            input_buffer.insert(cursor_pos, c);
+            cursor_pos += c.len_utf8();
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        _ => {
+            state.project_state = Some(ProjectSubState::CreateInput {
+                input_buffer,
+                cursor_pos,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn handle_project_rename_input(
+    key: KeyEvent,
+    state: &mut AppState,
+    project_name: String,
+    mut input_buffer: String,
+    mut cursor_pos: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            // Go back to project list
+            state.open_project_modal();
+        }
+        KeyCode::Enter if !input_buffer.trim().is_empty() => {
+            let new_name = input_buffer.trim().to_string();
+
+            if new_name == project_name {
+                // No change
+                state.open_project_modal();
+                return Ok(());
+            }
+
+            // Rename the project
+            let mut registry = ProjectRegistry::load()?;
+            match registry.rename(&project_name, &new_name) {
+                Ok(()) => {
+                    // Rename the project directory
+                    let old_dir = get_project_dir(&project_name)?;
+                    let new_dir = get_project_dir(&new_name)?;
+                    if old_dir.exists() {
+                        fs::rename(&old_dir, &new_dir)?;
+                    }
+
+                    state.set_status_message(format!(
+                        "Renamed '{}' to '{}'",
+                        project_name, new_name
+                    ));
+                    state.open_project_modal();
+                }
+                Err(e) => {
+                    state.set_status_message(format!("Error: {}", e));
+                    state.open_project_modal();
+                }
+            }
+        }
+        KeyCode::Backspace if cursor_pos > 0 => {
+            let prev = prev_char_boundary(&input_buffer, cursor_pos);
+            input_buffer.drain(prev..cursor_pos);
+            cursor_pos = prev;
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Left if cursor_pos > 0 => {
+            cursor_pos = prev_char_boundary(&input_buffer, cursor_pos);
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Right if cursor_pos < input_buffer.len() => {
+            cursor_pos = next_char_boundary(&input_buffer, cursor_pos);
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Home => {
+            cursor_pos = 0;
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::End => {
+            cursor_pos = input_buffer.len();
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Char(c) => {
+            input_buffer.insert(cursor_pos, c);
+            cursor_pos += c.len_utf8();
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        _ => {
+            state.project_state = Some(ProjectSubState::RenameInput {
+                project_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn handle_project_confirm_delete(
+    key: KeyEvent,
+    state: &mut AppState,
+    project_name: String,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') => {
+            // Delete the project
+            let mut registry = ProjectRegistry::load()?;
+            match registry.delete(&project_name) {
+                Ok(()) => {
+                    // Delete the project directory
+                    let project_dir = get_project_dir(&project_name)?;
+                    if project_dir.exists() {
+                        fs::remove_dir_all(&project_dir)?;
+                    }
+
+                    // TODO: Also delete todos from database for this project
+
+                    state.set_status_message(format!("Deleted project '{}'", project_name));
+                    state.open_project_modal();
+                }
+                Err(e) => {
+                    state.set_status_message(format!("Error: {}", e));
+                    state.open_project_modal();
+                }
+            }
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            // Cancel - go back to project list
+            state.open_project_modal();
+        }
+        _ => {
+            state.project_state = Some(ProjectSubState::ConfirmDelete { project_name });
         }
     }
     Ok(())

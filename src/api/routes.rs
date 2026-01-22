@@ -19,6 +19,7 @@ pub fn create_router() -> Router {
 
     Router::new()
         .route("/api/health", get(health_check))
+        .route("/api/projects", get(handlers::list_projects))
         .route("/api/todos", get(handlers::list_todos))
         .route("/api/todos", post(handlers::create_todo))
         .route("/api/todos/{id}", delete(handlers::delete_todo))

@@ -1,8 +1,8 @@
 use super::mode::Mode;
 use crate::keybindings::{KeyBinding, KeybindingCache};
 use crate::plugin::{GeneratorInfo, PluginRegistry};
-use crate::storage::file::load_todo_list;
-use crate::storage::load_todos_for_viewing;
+use crate::project::{Project, ProjectRegistry};
+use crate::storage::file::{load_todo_list_for_project, load_todos_for_viewing_in_project};
 use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
@@ -44,6 +44,27 @@ pub enum PluginSubState {
 pub struct PendingRollover {
     pub source_date: NaiveDate,
     pub items: Vec<TodoItem>,
+}
+
+/// Project modal sub-state
+#[derive(Debug, Clone)]
+pub enum ProjectSubState {
+    Selecting {
+        projects: Vec<Project>,
+        selected_index: usize,
+    },
+    CreateInput {
+        input_buffer: String,
+        cursor_pos: usize,
+    },
+    RenameInput {
+        project_name: String,
+        input_buffer: String,
+        cursor_pos: usize,
+    },
+    ConfirmDelete {
+        project_name: String,
+    },
 }
 
 pub struct AppState {
@@ -98,6 +119,12 @@ pub struct AppState {
     pub upgrade_sub_state: Option<UpgradeSubState>,
     /// Channel receiver for download progress updates (std::sync::mpsc for thread-based download)
     pub download_progress_rx: Option<mpsc::Receiver<DownloadProgress>>,
+    /// Current active project
+    pub current_project: Project,
+    /// Project selection modal state
+    pub project_state: Option<ProjectSubState>,
+    /// Whether the mouse cursor is currently showing as pointer (for hover effects)
+    pub cursor_is_pointer: bool,
 }
 
 impl AppState {
@@ -109,6 +136,7 @@ impl AppState {
         plugin_registry: PluginRegistry,
         ui_cache: Option<UiCache>,
         skipped_version: Option<String>,
+        current_project: Project,
     ) -> Self {
         let today = Local::now().date_naive();
         let viewing_date = todo_list.date;
@@ -161,6 +189,9 @@ impl AppState {
             pending_release_url: None,
             upgrade_sub_state: None,
             download_progress_rx: None,
+            current_project,
+            project_state: None,
+            cursor_is_pointer: false,
         };
         // Sync list state with cursor position
         state.sync_list_state();
@@ -275,7 +306,7 @@ impl AppState {
         if date > self.today {
             return Ok(());
         }
-        self.todo_list = load_todos_for_viewing(date)?;
+        self.todo_list = load_todos_for_viewing_in_project(&self.current_project.name, date)?;
         self.viewing_date = date;
         self.cursor_position = 0;
         self.undo_stack.clear();
@@ -441,7 +472,7 @@ impl AppState {
     /// Used when external changes are detected (e.g., from API server).
     pub fn reload_from_database(&mut self) -> Result<()> {
         let date = self.todo_list.date;
-        let new_list = load_todo_list(date)?;
+        let new_list = load_todo_list_for_project(&self.current_project.name, date)?;
         self.todo_list = new_list;
         self.clamp_cursor();
         self.unsaved_changes = false;
@@ -794,6 +825,53 @@ impl AppState {
     pub fn has_pending_rollover(&self) -> bool {
         self.pending_rollover.is_some()
     }
+
+    /// Open the project selection modal
+    pub fn open_project_modal(&mut self) {
+        let registry = ProjectRegistry::load().unwrap_or_default();
+        let projects: Vec<Project> = registry.list_sorted().into_iter().cloned().collect();
+
+        // Find the current project's index in the sorted list
+        let selected_index = projects
+            .iter()
+            .position(|p| p.name == self.current_project.name)
+            .unwrap_or(0);
+
+        self.project_state = Some(ProjectSubState::Selecting {
+            projects,
+            selected_index,
+        });
+        self.mode = Mode::ProjectSelect;
+    }
+
+    /// Close the project modal and return to navigate mode
+    pub fn close_project_modal(&mut self) {
+        self.project_state = None;
+        self.mode = Mode::Navigate;
+    }
+
+    /// Switch to a different project
+    pub fn switch_project(&mut self, project: Project) -> Result<()> {
+        // Save any unsaved changes first to the CURRENT project before switching
+        if self.unsaved_changes {
+            crate::storage::file::save_todo_list_for_project(&self.todo_list, &self.current_project.name)?;
+            self.unsaved_changes = false;
+        }
+
+        // Load the new project's todo list
+        let today = Local::now().date_naive();
+        let new_list = load_todo_list_for_project(&project.name, today)?;
+
+        self.current_project = project;
+        self.todo_list = new_list;
+        self.viewing_date = today;
+        self.today = today;
+        self.cursor_position = 0;
+        self.undo_stack.clear();
+        self.sync_list_state();
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -823,6 +901,7 @@ mod tests {
             PluginRegistry::new(),
             None,
             None,
+            Project::default_project(),
         );
 
         // Simulate new version detected
@@ -873,6 +952,7 @@ mod tests {
             PluginRegistry::new(),
             None,
             None,
+            Project::default_project(),
         );
 
         // Set cursor to parent (index 0)
@@ -918,6 +998,7 @@ mod tests {
             PluginRegistry::new(),
             None,
             None,
+            Project::default_project(),
         );
 
         // Set cursor to parent
@@ -967,6 +1048,7 @@ mod tests {
             PluginRegistry::new(),
             None,
             None,
+            Project::default_project(),
         );
 
         // Set cursor to parent

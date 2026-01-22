@@ -7,6 +7,7 @@ pub enum TodoState {
     Question,    // [?]
     Exclamation, // [!]
     InProgress,  // [*]
+    Cancelled,   // [-]
 }
 
 impl TodoState {
@@ -17,6 +18,7 @@ impl TodoState {
             Self::Question => '?',
             Self::Exclamation => '!',
             Self::InProgress => '*',
+            Self::Cancelled => '-',
         }
     }
 
@@ -27,6 +29,7 @@ impl TodoState {
             '?' => Some(Self::Question),
             '!' => Some(Self::Exclamation),
             '*' => Some(Self::InProgress),
+            '-' => Some(Self::Cancelled),
             _ => None,
         }
     }
@@ -37,7 +40,8 @@ impl TodoState {
             Self::Checked => Self::InProgress,
             Self::InProgress => Self::Question,
             Self::Question => Self::Exclamation,
-            Self::Exclamation => Self::Empty,
+            Self::Exclamation => Self::Cancelled,
+            Self::Cancelled => Self::Empty,
         }
     }
 
@@ -53,7 +57,8 @@ impl TodoState {
     }
 
     /// Parse a state from a string representation.
-    /// Accepts: " " or "" for Empty, "x"/"X" for Checked, "?" for Question, "!" for Exclamation, "*" for InProgress
+    /// Accepts: " " or "" for Empty, "x"/"X" for Checked, "?" for Question,
+    /// "!" for Exclamation, "*" for InProgress, "-" for Cancelled
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim() {
             " " | "" => Some(Self::Empty),
@@ -61,10 +66,10 @@ impl TodoState {
             "?" => Some(Self::Question),
             "!" => Some(Self::Exclamation),
             "*" => Some(Self::InProgress),
+            "-" => Some(Self::Cancelled),
             _ => None,
         }
     }
-
 }
 
 impl fmt::Display for TodoState {
@@ -84,6 +89,7 @@ mod tests {
         assert_eq!(TodoState::Question.to_char(), '?');
         assert_eq!(TodoState::Exclamation.to_char(), '!');
         assert_eq!(TodoState::InProgress.to_char(), '*');
+        assert_eq!(TodoState::Cancelled.to_char(), '-');
     }
 
     #[test]
@@ -94,6 +100,7 @@ mod tests {
         assert_eq!(TodoState::from_char('?'), Some(TodoState::Question));
         assert_eq!(TodoState::from_char('!'), Some(TodoState::Exclamation));
         assert_eq!(TodoState::from_char('*'), Some(TodoState::InProgress));
+        assert_eq!(TodoState::from_char('-'), Some(TodoState::Cancelled));
         assert_eq!(TodoState::from_char('z'), None);
     }
 
@@ -103,7 +110,8 @@ mod tests {
         assert_eq!(TodoState::Checked.cycle(), TodoState::InProgress);
         assert_eq!(TodoState::InProgress.cycle(), TodoState::Question);
         assert_eq!(TodoState::Question.cycle(), TodoState::Exclamation);
-        assert_eq!(TodoState::Exclamation.cycle(), TodoState::Empty);
+        assert_eq!(TodoState::Exclamation.cycle(), TodoState::Cancelled);
+        assert_eq!(TodoState::Cancelled.cycle(), TodoState::Empty);
     }
 
     #[test]
@@ -113,6 +121,7 @@ mod tests {
         assert!(!TodoState::Question.is_complete());
         assert!(!TodoState::Exclamation.is_complete());
         assert!(!TodoState::InProgress.is_complete());
+        assert!(!TodoState::Cancelled.is_complete());
     }
 
     #[test]
@@ -122,5 +131,6 @@ mod tests {
         assert_eq!(format!("{}", TodoState::Question), "[?]");
         assert_eq!(format!("{}", TodoState::Exclamation), "[!]");
         assert_eq!(format!("{}", TodoState::InProgress), "[*]");
+        assert_eq!(format!("{}", TodoState::Cancelled), "[-]");
     }
 }

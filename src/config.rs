@@ -18,6 +18,9 @@ pub struct Config {
 
     #[serde(default)]
     pub skipped_version: Option<String>,
+
+    #[serde(default)]
+    pub last_used_project: Option<String>,
 }
 
 fn default_theme() -> String {
@@ -35,6 +38,7 @@ impl Default for Config {
             timeoutlen: default_timeoutlen(),
             keybindings: KeybindingsConfig::default(),
             skipped_version: None,
+            last_used_project: None,
         }
     }
 }

@@ -5,6 +5,7 @@ mod clipboard;
 mod config;
 mod keybindings;
 mod plugin;
+mod project;
 mod storage;
 mod todo;
 mod ui;
@@ -23,20 +24,44 @@ use std::net::TcpStream;
 use std::panic;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use storage::{UiCache, find_rollover_candidates, save_todo_list};
-use storage::file::{file_exists, load_todo_list};
+use project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
+use storage::file::{file_exists_for_project, load_todo_list_for_project};
+use storage::file::save_todo_list_for_project;
+use storage::{ensure_installation_ready, find_rollover_candidates, UiCache};
 use ui::theme::Theme;
-use utils::paths::{get_crash_log_path, get_pid_file_path};
+use utils::paths::{get_crash_log_path, get_daily_file_path_for_project, get_pid_file_path};
 
-/// Load today's todo list without prompting for rollover.
+/// Load today's todo list for a specific project without prompting for rollover.
 /// Creates an empty list if no existing todos are found.
-fn load_today_list() -> Result<todo::TodoList> {
+fn load_today_list_for_project(project_name: &str) -> Result<todo::TodoList> {
     let today = Local::now().date_naive();
-    if file_exists(today)? {
-        load_todo_list(today)
+    if file_exists_for_project(project_name, today)? {
+        load_todo_list_for_project(project_name, today)
     } else {
-        Ok(todo::TodoList::new(today, utils::paths::get_daily_file_path(today)?))
+        Ok(todo::TodoList::new(
+            today,
+            get_daily_file_path_for_project(project_name, today)?,
+        ))
     }
+}
+
+/// Get the current project from config or default
+fn get_current_project(config: &Config) -> Result<Project> {
+    let mut registry = ProjectRegistry::load()?;
+    registry.ensure_default_project()?;
+
+    // Try to use last_used_project from config
+    if let Some(ref last_project_name) = config.last_used_project {
+        if let Some(project) = registry.get_by_name(last_project_name) {
+            return Ok(project.clone());
+        }
+    }
+
+    // Fall back to default project
+    Ok(registry
+        .get_by_name(DEFAULT_PROJECT_NAME)
+        .expect("Default project must exist after ensure_default_project")
+        .clone())
 }
 
 /// Install a panic hook that writes crash information to a log file
@@ -90,6 +115,9 @@ fn main() -> Result<()> {
     // Install crash handler first thing
     install_crash_handler();
 
+    // Ensure installation is properly set up (handles v1 -> v2 migration)
+    ensure_installation_ready()?;
+
     let cli = Cli::parse();
     let config = Config::load()?;
 
@@ -117,7 +145,9 @@ fn main() -> Result<()> {
         None => {
             ensure_server_running(DEFAULT_API_PORT)?;
 
-            let list = load_today_list()?;
+            // Determine which project to load
+            let current_project = get_current_project(&config)?;
+            let list = load_today_list_for_project(&current_project.name)?;
 
             // Load UI cache for restoring cursor position
             let ui_cache = UiCache::load().ok();
@@ -133,6 +163,7 @@ fn main() -> Result<()> {
                 plugin_registry,
                 ui_cache,
                 config.skipped_version.clone(),
+                current_project,
             );
 
             // Check for rollover candidates and show modal on startup if found
@@ -343,10 +374,10 @@ async fn run_server_foreground(port: u16) -> Result<()> {
 }
 
 fn handle_add(task: String) -> Result<()> {
-    let mut list = load_today_list()?;
+    let mut list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
 
     list.add_item(task);
-    save_todo_list(&list)?;
+    save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME)?;
 
     println!("✓ Todo added successfully!");
 
@@ -354,23 +385,24 @@ fn handle_add(task: String) -> Result<()> {
 }
 
 fn handle_show(date: Option<String>) -> Result<()> {
-    let (items, display_date, is_archived) = if let Some(date_str) = date {
-        let parsed_date = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
-            .map_err(|_| anyhow!("Invalid date format. Use YYYY-MM-DD"))?;
+    let (items, display_date, is_archived): (Vec<todo::TodoItem>, chrono::NaiveDate, bool) =
+        if let Some(date_str) = date {
+            let parsed_date = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
+                .map_err(|_| anyhow!("Invalid date format. Use YYYY-MM-DD"))?;
 
-        let today = Local::now().date_naive();
-        if parsed_date == today {
-            let list = load_today_list()?;
-            (list.items, today, false)
+            let today = Local::now().date_naive();
+            if parsed_date == today {
+                let list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
+                (list.items, today, false)
+            } else {
+                let items = storage::load_archived_todos_for_date(parsed_date)?;
+                (items, parsed_date, true)
+            }
         } else {
-            let items = storage::load_archived_todos_for_date(parsed_date)?;
-            (items, parsed_date, true)
-        }
-    } else {
-        let list = load_today_list()?;
-        let date = list.date;
-        (list.items, date, false)
-    };
+            let list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
+            let date = list.date;
+            (list.items, date, false)
+        };
 
     if items.is_empty() {
         if is_archived {
@@ -512,13 +544,13 @@ fn handle_generate(
 }
 
 fn add_items_to_today(items: Vec<todo::TodoItem>) -> Result<()> {
-    let mut list = load_today_list()?;
+    let mut list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
 
     for item in items {
         list.items.push(item);
     }
 
-    save_todo_list(&list)?;
+    save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME)?;
     Ok(())
 }
 
@@ -581,7 +613,7 @@ fn handle_import_archive() -> Result<()> {
                     continue;
                 }
 
-                storage::database::save_todo_list(&list)?;
+                storage::database::save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME)?;
                 let count = archive_todos_for_date(date)?;
                 println!("Imported {count} items from {filename}");
                 imported += count;

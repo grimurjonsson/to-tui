@@ -7,16 +7,17 @@ use rmcp::{
 };
 use tracing::{debug, error, info, warn};
 
+use crate::project::{ProjectRegistry, DEFAULT_PROJECT_NAME};
 use crate::storage::database::soft_delete_todos;
-use crate::storage::file::{file_exists, load_todo_list, save_todo_list};
-use crate::storage::rollover::create_rolled_over_list;
+use crate::storage::file::{file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project};
+use crate::storage::rollover::create_rolled_over_list_for_project;
 use crate::todo::{TodoItem, TodoList};
 
 use super::errors::{IntoMcpError, McpErrorDetail};
 use super::schemas::{
-    CreateTodoRequest, DeleteTodoRequest, DeleteTodoResponse, ListTodosRequest,
-    MarkCompleteRequest, TodoItemResponse, TodoListResponse, UpdateTodoRequest, parse_date,
-    parse_state, parse_uuid,
+    CreateTodoRequest, DeleteTodoRequest, DeleteTodoResponse, ListProjectsRequest, ListTodosRequest,
+    MarkCompleteRequest, ProjectItemResponse, ProjectListResponse, TodoItemResponse, TodoListResponse,
+    UpdateTodoRequest, parse_date, parse_state, parse_uuid,
 };
 
 #[derive(Clone)]
@@ -38,27 +39,28 @@ impl Default for TodoMcpServer {
     }
 }
 
-fn load_list_with_rollover(date: chrono::NaiveDate) -> Result<TodoList, McpErrorDetail> {
+fn load_list_with_rollover(project: &str, date: chrono::NaiveDate) -> Result<TodoList, McpErrorDetail> {
     let today = Local::now().date_naive();
 
-    if date == today && !file_exists(date).into_mcp_storage_error()? {
-        debug!(date = %date, "No todos for today, checking for rollover candidates");
+    if date == today && !file_exists_for_project(project, date).into_mcp_storage_error()? {
+        debug!(date = %date, project = %project, "No todos for today, checking for rollover candidates");
         for days_back in 1..=30 {
             if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back))
-                && file_exists(check_date).into_mcp_storage_error()? {
-                    let list = load_todo_list(check_date).into_mcp_storage_error()?;
+                && file_exists_for_project(project, check_date).into_mcp_storage_error()? {
+                    let list = load_todo_list_for_project(project, check_date).into_mcp_storage_error()?;
                     let incomplete = list.get_incomplete_items();
 
                     if !incomplete.is_empty() {
                         info!(
                             from_date = %check_date,
                             to_date = %today,
+                            project = %project,
                             count = incomplete.len(),
                             "Rolling over incomplete todos"
                         );
                         let rolled_list =
-                            create_rolled_over_list(today, incomplete).into_mcp_storage_error()?;
-                        save_todo_list(&rolled_list).into_mcp_storage_error()?;
+                            create_rolled_over_list_for_project(project, today, incomplete).into_mcp_storage_error()?;
+                        save_todo_list_for_project(&rolled_list, project).into_mcp_storage_error()?;
                         return Ok(rolled_list);
                     }
                     break;
@@ -66,7 +68,22 @@ fn load_list_with_rollover(date: chrono::NaiveDate) -> Result<TodoList, McpError
         }
     }
 
-    load_todo_list(date).into_mcp_storage_error()
+    load_todo_list_for_project(project, date).into_mcp_storage_error()
+}
+
+fn get_validated_project(project: Option<&str>) -> Result<String, McpErrorDetail> {
+    let project_name = project.unwrap_or(DEFAULT_PROJECT_NAME).to_string();
+
+    let registry = ProjectRegistry::load().into_mcp_storage_error()?;
+
+    if registry.get_by_name(&project_name).is_none() {
+        return Err(McpErrorDetail::not_found(
+            format!("Project '{}' not found", project_name),
+            "Use list_projects to see available projects",
+        ));
+    }
+
+    Ok(project_name)
 }
 
 fn format_error(detail: McpErrorDetail) -> String {
@@ -94,28 +111,56 @@ fn parse_uuid_or_err(id_str: &str) -> Result<uuid::Uuid, String> {
 impl TodoMcpServer {
     #[tool(
         name = "list_todos",
-        description = "List all todos for a specific date. Defaults to today. Automatically rolls over incomplete todos from previous days if today's list is empty. Response includes a 'formatted' field - display it directly as markdown to the user."
+        description = "List all todos for a specific date and project. Defaults to today and 'default' project. Automatically rolls over incomplete todos from previous days if today's list is empty. Response includes a 'formatted' field - display it directly as markdown to the user."
     )]
     async fn list_todos(
         &self,
         params: Parameters<ListTodosRequest>,
     ) -> Result<Json<TodoListResponse>, String> {
-        info!(date = ?params.0.date, "list_todos called");
+        info!(date = ?params.0.date, project = ?params.0.project, "list_todos called");
 
+        let project = get_validated_project(params.0.project.as_deref()).map_err(format_error)?;
         let date = parse_date_or_err(params.0.date.as_deref())?;
 
-        let list = load_list_with_rollover(date).map_err(format_error)?;
+        let list = load_list_with_rollover(&project, date).map_err(format_error)?;
 
         let items: Vec<TodoItemResponse> = list.items.iter().map(TodoItemResponse::from).collect();
         let response = TodoListResponse::new(list.date.format("%Y-%m-%d").to_string(), items);
 
-        info!(date = %date, count = response.item_count, "list_todos returning items");
+        info!(date = %date, project = %project, count = response.item_count, "list_todos returning items");
+        Ok(Json(response))
+    }
+
+    #[tool(
+        name = "list_projects",
+        description = "List all available projects. Returns project names, IDs, and creation dates."
+    )]
+    async fn list_projects(
+        &self,
+        _params: Parameters<ListProjectsRequest>,
+    ) -> Result<Json<ProjectListResponse>, String> {
+        info!("list_projects called");
+
+        let registry = ProjectRegistry::load()
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
+
+        let projects: Vec<ProjectItemResponse> = registry
+            .list_sorted()
+            .iter()
+            .map(|p| ProjectItemResponse::from(*p))
+            .collect();
+
+        let count = projects.len();
+        let response = ProjectListResponse { count, projects };
+
+        info!(count = count, "list_projects returning projects");
         Ok(Json(response))
     }
 
     #[tool(
         name = "create_todo",
-        description = "Create a new todo item. Optionally nest under a parent todo by providing parent_id."
+        description = "Create a new todo item in a project. Optionally nest under a parent todo by providing parent_id."
     )]
     async fn create_todo(
         &self,
@@ -125,6 +170,7 @@ impl TodoMcpServer {
         info!(
             content = %req.content,
             date = ?req.date,
+            project = ?req.project,
             parent_id = ?req.parent_id,
             "create_todo called"
         );
@@ -136,9 +182,10 @@ impl TodoMcpServer {
             )));
         }
 
+        let project = get_validated_project(req.project.as_deref()).map_err(format_error)?;
         let date = parse_date_or_err(req.date.as_deref())?;
 
-        let mut list = load_list_with_rollover(date).map_err(format_error)?;
+        let mut list = load_list_with_rollover(&project, date).map_err(format_error)?;
 
         let due_date = req
             .due_date
@@ -170,10 +217,10 @@ impl TodoMcpServer {
         let response = TodoItemResponse::from(&item);
         list.items.insert(insert_index, item);
 
-        save_todo_list(&list)
+        save_todo_list_for_project(&list, &project)
             .into_mcp_storage_error().map_err(format_error)?;
 
-        info!(id = %response.id, content = %response.content, "create_todo completed");
+        info!(id = %response.id, content = %response.content, project = %project, "create_todo completed");
         Ok(Json(response))
     }
 
@@ -189,15 +236,17 @@ impl TodoMcpServer {
         info!(
             id = %req.id,
             date = ?req.date,
+            project = ?req.project,
             content = ?req.content,
             state = ?req.state,
             "update_todo called"
         );
 
+        let project = get_validated_project(req.project.as_deref()).map_err(format_error)?;
         let id = parse_uuid_or_err(&req.id)?;
         let date = parse_date_or_err(req.date.as_deref())?;
 
-        let mut list = load_list_with_rollover(date).map_err(format_error)?;
+        let mut list = load_list_with_rollover(&project, date).map_err(format_error)?;
 
         let item = list
             .items
@@ -244,28 +293,29 @@ impl TodoMcpServer {
 
         let response = TodoItemResponse::from(&*item);
 
-        save_todo_list(&list)
+        save_todo_list_for_project(&list, &project)
             .into_mcp_storage_error().map_err(format_error)?;
 
-        info!(id = %response.id, state = %response.state, "update_todo completed");
+        info!(id = %response.id, state = %response.state, project = %project, "update_todo completed");
         Ok(Json(response))
     }
 
     #[tool(
         name = "delete_todo",
-        description = "Delete a todo and all its children. This action is irreversible."
+        description = "Delete a todo and all its children from a project. This action is irreversible."
     )]
     async fn delete_todo(
         &self,
         params: Parameters<DeleteTodoRequest>,
     ) -> Result<Json<DeleteTodoResponse>, String> {
         let req = params.0;
-        info!(id = %req.id, date = ?req.date, "delete_todo called");
+        info!(id = %req.id, date = ?req.date, project = ?req.project, "delete_todo called");
 
+        let project = get_validated_project(req.project.as_deref()).map_err(format_error)?;
         let id = parse_uuid_or_err(&req.id)?;
         let date = parse_date_or_err(req.date.as_deref())?;
 
-        let mut list = load_list_with_rollover(date).map_err(format_error)?;
+        let mut list = load_list_with_rollover(&project, date).map_err(format_error)?;
 
         let idx = list
             .items
@@ -291,10 +341,10 @@ impl TodoMcpServer {
         list.items.drain(start..end);
         list.recalculate_parent_ids();
 
-        save_todo_list(&list)
+        save_todo_list_for_project(&list, &project)
             .into_mcp_storage_error().map_err(format_error)?;
 
-        info!(deleted_count = deleted_count, "delete_todo completed");
+        info!(deleted_count = deleted_count, project = %project, "delete_todo completed");
         Ok(Json(DeleteTodoResponse {
             deleted_count,
             message: format!("Deleted {deleted_count} item(s)"),
@@ -310,12 +360,13 @@ impl TodoMcpServer {
         params: Parameters<MarkCompleteRequest>,
     ) -> Result<Json<TodoItemResponse>, String> {
         let req = params.0;
-        info!(id = %req.id, date = ?req.date, "mark_complete called");
+        info!(id = %req.id, date = ?req.date, project = ?req.project, "mark_complete called");
 
+        let project = get_validated_project(req.project.as_deref()).map_err(format_error)?;
         let id = parse_uuid_or_err(&req.id)?;
         let date = parse_date_or_err(req.date.as_deref())?;
 
-        let mut list = load_list_with_rollover(date).map_err(format_error)?;
+        let mut list = load_list_with_rollover(&project, date).map_err(format_error)?;
 
         let item = list
             .items
@@ -331,10 +382,10 @@ impl TodoMcpServer {
         item.toggle_state();
         let response = TodoItemResponse::from(&*item);
 
-        save_todo_list(&list)
+        save_todo_list_for_project(&list, &project)
             .into_mcp_storage_error().map_err(format_error)?;
 
-        info!(id = %response.id, new_state = %response.state, "mark_complete completed");
+        info!(id = %response.id, new_state = %response.state, project = %project, "mark_complete completed");
         Ok(Json(response))
     }
 }
@@ -350,12 +401,14 @@ impl rmcp::ServerHandler for TodoMcpServer {
                 - create_todo: Create new todo. Can nest under parent via parent_id.\n\
                 - update_todo: Update content/state/due_date. States: ' '=pending, 'x'=done, '?'=question, '!'=important\n\
                 - delete_todo: Delete todo and children.\n\
-                - mark_complete: Toggle done/pending.\n\n\
+                - mark_complete: Toggle done/pending.\n\
+                - list_projects: List all available projects.\n\n\
                 DISPLAY GUIDELINES:\n\
                 - For list_todos: Display the 'formatted' field directly as markdown. Do NOT create tables.\n\
                 - For single items: Show as '[ ] content' or '[x] content' format.\n\
                 - Dates use YYYY-MM-DD format.\n\
-                - IDs are UUIDs - use list_todos to get valid IDs."
+                - IDs are UUIDs - use list_todos to get valid IDs.\n\
+                - All tools accept optional 'project' parameter. Defaults to 'default' if not provided."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

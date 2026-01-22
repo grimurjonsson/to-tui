@@ -2,8 +2,9 @@ pub mod status_bar;
 pub mod todo_list;
 
 use crate::app::mode::Mode;
-use crate::app::state::PluginSubState;
+use crate::app::state::{PluginSubState, ProjectSubState};
 use crate::app::AppState;
+use crate::project::DEFAULT_PROJECT_NAME;
 use crate::utils::upgrade::{format_bytes, UpgradeSubState};
 use chrono::{Local, NaiveDate};
 
@@ -48,6 +49,12 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 
     if state.mode == Mode::UpgradePrompt {
         render_upgrade_overlay(f, state);
+    }
+
+    if state.mode == Mode::ProjectSelect {
+        if let Some(ref project_state) = state.project_state {
+            render_project_overlay(f, state, project_state);
+        }
     }
 }
 
@@ -97,7 +104,7 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
     ]));
     lines.push(Line::from(vec![
         Span::styled("    Space           ", key_style),
-        Span::styled("Cycle state: [ ]→[x]→[*]→[?]→[!]", desc_style),
+        Span::styled("Cycle: [ ]→[x]→[*]→[?]→[!]→[-]", desc_style),
     ]));
     lines.push(Line::from(""));
 
@@ -108,7 +115,7 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
         Span::styled("New item below", desc_style),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("    O               ", key_style),
+        Span::styled("    O / Shift+Enter ", key_style),
         Span::styled("New item above", desc_style),
     ]));
     lines.push(Line::from(vec![
@@ -165,6 +172,18 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
     ]));
     lines.push(Line::from(""));
 
+    // Priority section
+    lines.push(Line::from(Span::styled("  ── Priority ──", section_style)));
+    lines.push(Line::from(vec![
+        Span::styled("    p               ", key_style),
+        Span::styled("Cycle priority: none→low→medium→high", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    s               ", key_style),
+        Span::styled("Sort items by priority", desc_style),
+    ]));
+    lines.push(Line::from(""));
+
     // Visual Mode section
     lines.push(Line::from(Span::styled("  ── Visual Mode ──", section_style)));
     lines.push(Line::from(vec![
@@ -180,7 +199,7 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
         Span::styled("In visual: ", dim_style),
         Span::styled("j/k", key_style),
         Span::styled(" extend selection, ", dim_style),
-        Span::styled("Tab/Shift+Tab", key_style),
+        Span::styled("Tab/S-Tab", key_style),
         Span::styled(" indent/outdent", dim_style),
     ]));
     lines.push(Line::from(""));
@@ -208,7 +227,11 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
     // Other section
     lines.push(Line::from(Span::styled("  ── Other ──", section_style)));
     lines.push(Line::from(vec![
-        Span::styled("    p               ", key_style),
+        Span::styled("    Ctrl+p          ", key_style),
+        Span::styled("Open project switcher", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    P               ", key_style),
         Span::styled("Open plugins menu", desc_style),
     ]));
     lines.push(Line::from(vec![
@@ -236,8 +259,12 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
         Span::styled("Move cursor", desc_style),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("    Alt+← / Alt+→   ", key_style),
-        Span::styled("Move by word", desc_style),
+        Span::styled("    Alt+b / Alt+←   ", key_style),
+        Span::styled("Move word left", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    Alt+f / Alt+→   ", key_style),
+        Span::styled("Move word right", desc_style),
     ]));
     lines.push(Line::from(vec![
         Span::styled("    Home / Ctrl+a   ", key_style),
@@ -925,6 +952,335 @@ fn render_upgrade_restart_prompt(f: &mut Frame, state: &AppState) {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw("o - Later"),
+    ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+fn render_project_overlay(f: &mut Frame, state: &AppState, project_state: &ProjectSubState) {
+    match project_state {
+        ProjectSubState::Selecting {
+            projects,
+            selected_index,
+        } => render_project_selecting(f, state, projects, *selected_index),
+        ProjectSubState::CreateInput {
+            input_buffer,
+            cursor_pos,
+        } => render_project_create_input(f, state, input_buffer, *cursor_pos),
+        ProjectSubState::RenameInput {
+            project_name,
+            input_buffer,
+            cursor_pos,
+        } => render_project_rename_input(f, state, project_name, input_buffer, *cursor_pos),
+        ProjectSubState::ConfirmDelete { project_name } => {
+            render_project_confirm_delete(f, state, project_name)
+        }
+    }
+}
+
+fn render_project_selecting(
+    f: &mut Frame,
+    state: &AppState,
+    projects: &[crate::project::Project],
+    selected_index: usize,
+) {
+    let area = centered_rect(50, 50, f.area());
+
+    let items: Vec<ListItem> = projects
+        .iter()
+        .enumerate()
+        .map(|(i, project)| {
+            let is_current = project.name == state.current_project.name;
+            let is_default = project.name == DEFAULT_PROJECT_NAME;
+
+            let marker = if is_current { "● " } else { "  " };
+
+            let name_style = if i == selected_index {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else if is_current {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(state.theme.foreground)
+            };
+
+            let suffix = if is_default { " (default)" } else { "" };
+
+            let line = Line::from(vec![
+                Span::styled(marker, Style::default().fg(Color::Green)),
+                Span::styled(format!("{}{}", project.name, suffix), name_style),
+            ]);
+
+            ListItem::new(line)
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Projects (Enter to switch, Esc to cancel) ")
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(list, area);
+
+    // Render footer with options
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[n]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("ew  "),
+        Span::styled(
+            "[r]",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("ename  "),
+        Span::styled(
+            "[d]",
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("elete"),
+    ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+fn render_project_create_input(
+    f: &mut Frame,
+    state: &AppState,
+    input_buffer: &str,
+    cursor_pos: usize,
+) {
+    let area = centered_rect(50, 20, f.area());
+
+    let inner_area = Rect {
+        x: area.x + 1,
+        y: area.y + 2,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(4),
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Create New Project (Esc to cancel) ")
+        .style(Style::default().bg(state.theme.background));
+
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    // Render prompt
+    let prompt_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y,
+        width: inner_area.width,
+        height: 1,
+    };
+    let prompt = Paragraph::new("Project name:")
+        .style(Style::default().fg(state.theme.foreground));
+    f.render_widget(prompt, prompt_area);
+
+    // Render input with cursor
+    let input_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y + 1,
+        width: inner_area.width,
+        height: 1,
+    };
+
+    let before_cursor = &input_buffer[..cursor_pos];
+    let after_cursor = &input_buffer[cursor_pos..];
+
+    let cursor_char = if after_cursor.is_empty() {
+        "█"
+    } else {
+        &after_cursor[..after_cursor
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0)]
+    };
+
+    let after_cursor_rest = if after_cursor.is_empty() {
+        ""
+    } else {
+        &after_cursor[after_cursor
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0)..]
+    };
+
+    let input_line = Line::from(vec![
+        Span::raw(before_cursor),
+        Span::styled(
+            cursor_char,
+            Style::default().bg(Color::Yellow).fg(Color::Black),
+        ),
+        Span::raw(after_cursor_rest),
+    ]);
+
+    let input_paragraph = Paragraph::new(input_line);
+    f.render_widget(input_paragraph, input_area);
+}
+
+fn render_project_rename_input(
+    f: &mut Frame,
+    state: &AppState,
+    project_name: &str,
+    input_buffer: &str,
+    cursor_pos: usize,
+) {
+    let area = centered_rect(50, 25, f.area());
+
+    let inner_area = Rect {
+        x: area.x + 1,
+        y: area.y + 2,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(4),
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Rename '{}' (Esc to cancel) ", project_name))
+        .style(Style::default().bg(state.theme.background));
+
+    f.render_widget(Clear, area);
+    f.render_widget(block, area);
+
+    // Render prompt
+    let prompt_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y,
+        width: inner_area.width,
+        height: 1,
+    };
+    let prompt =
+        Paragraph::new("New name:").style(Style::default().fg(state.theme.foreground));
+    f.render_widget(prompt, prompt_area);
+
+    // Render input with cursor
+    let input_area = Rect {
+        x: inner_area.x,
+        y: inner_area.y + 1,
+        width: inner_area.width,
+        height: 1,
+    };
+
+    let before_cursor = &input_buffer[..cursor_pos];
+    let after_cursor = &input_buffer[cursor_pos..];
+
+    let cursor_char = if after_cursor.is_empty() {
+        "█"
+    } else {
+        &after_cursor[..after_cursor
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0)]
+    };
+
+    let after_cursor_rest = if after_cursor.is_empty() {
+        ""
+    } else {
+        &after_cursor[after_cursor
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(0)..]
+    };
+
+    let input_line = Line::from(vec![
+        Span::raw(before_cursor),
+        Span::styled(
+            cursor_char,
+            Style::default().bg(Color::Yellow).fg(Color::Black),
+        ),
+        Span::raw(after_cursor_rest),
+    ]);
+
+    let input_paragraph = Paragraph::new(input_line);
+    f.render_widget(input_paragraph, input_area);
+}
+
+fn render_project_confirm_delete(f: &mut Frame, state: &AppState, project_name: &str) {
+    let area = centered_rect(50, 25, f.area());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Confirm Delete ")
+        .style(
+            Style::default()
+                .bg(state.theme.background)
+                .fg(Color::Red),
+        );
+
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        format!("  Delete project '{}'?", project_name),
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+    )]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![Span::styled(
+        "  This will delete all todos in this project.",
+        Style::default().fg(state.theme.foreground),
+    )]));
+    lines.push(Line::from(vec![Span::styled(
+        "  This action cannot be undone!",
+        Style::default().fg(Color::Yellow),
+    )]));
+    lines.push(Line::from(""));
+
+    let content = Paragraph::new(lines)
+        .block(block)
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+
+    // Render footer with options
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "[Y]",
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("es - Delete permanently  "),
+        Span::styled(
+            "[N]",
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("o - Cancel"),
     ]));
 
     f.render_widget(footer, footer_area);

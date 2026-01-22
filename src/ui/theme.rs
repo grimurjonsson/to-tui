@@ -8,6 +8,7 @@ pub struct Theme {
     pub question: Color,
     pub exclamation: Color,
     pub in_progress: Color,
+    pub cancelled: Color,
     pub status_bar_bg: Color,
     pub status_bar_fg: Color,
     pub priority_p0: Color,
@@ -23,6 +24,7 @@ impl Theme {
             question: Color::Yellow,
             exclamation: Color::Red,
             in_progress: Color::Cyan,
+            cancelled: Color::DarkGray,
             status_bar_bg: Color::DarkGray,
             status_bar_fg: Color::White,
             priority_p0: Color::Rgb(255, 100, 100), // Red for critical
@@ -38,6 +40,7 @@ impl Theme {
             question: Color::Yellow,
             exclamation: Color::Red,
             in_progress: Color::Cyan,
+            cancelled: Color::DarkGray,
             status_bar_bg: Color::DarkGray,
             status_bar_fg: Color::White,
             priority_p0: Color::Rgb(255, 100, 100),
@@ -53,6 +56,7 @@ impl Theme {
             question: Color::Yellow,
             exclamation: Color::Red,
             in_progress: Color::Blue,
+            cancelled: Color::Gray,
             status_bar_bg: Color::LightBlue,
             status_bar_fg: Color::Black,
             priority_p0: Color::Rgb(200, 50, 50),   // Darker red for light theme

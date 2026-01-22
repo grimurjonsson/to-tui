@@ -1,8 +1,9 @@
 use axum::{Json, body::Body, http::StatusCode, response::{IntoResponse, Response}};
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::project::Project;
 use crate::todo::{TodoItem, TodoState};
 
 #[derive(Debug, Serialize)]
@@ -55,6 +56,29 @@ pub struct UpdateTodoRequest {
 #[derive(Debug, Deserialize)]
 pub struct DateQuery {
     pub date: Option<NaiveDate>,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl From<&Project> for ProjectResponse {
+    fn from(project: &Project) -> Self {
+        Self {
+            id: project.id,
+            name: project.name.clone(),
+            created_at: project.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectListResponse {
+    pub projects: Vec<ProjectResponse>,
 }
 
 #[derive(Debug, Serialize)]

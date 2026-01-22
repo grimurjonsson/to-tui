@@ -1,81 +1,158 @@
+# TO-TUI Configuration File
+# Copy this file to ~/.config/to-tui/config.toml and customize as needed.
+#
+# This file shows ALL available keybindings with their default values.
+# You only need to include keybindings you want to change.
+
 theme = "default"
 
 # Time in milliseconds to wait for a key sequence to complete (neovim default: 1000)
+# This affects multi-key sequences like "dd" for delete
 timeoutlen = 1000
 
+# =============================================================================
+# NAVIGATE MODE KEYBINDINGS
+# =============================================================================
+# These keybindings are active when browsing the todo list (normal mode)
+
 [keybindings.navigate]
-# Navigation
+
+# --- Navigation ---
 "k" = "move_up"
 "j" = "move_down"
 "<Up>" = "move_up"
 "<Down>" = "move_down"
 
-# Visual mode (selection)
+# --- Collapse/Expand ---
+"h" = "collapse_or_parent"      # Collapse item or go to parent
+"l" = "expand"                  # Expand collapsed item
+"<Left>" = "collapse_or_parent"
+"<Right>" = "expand"
+"c" = "toggle_collapse"         # Toggle collapse/expand
+
+# --- Visual Mode (selection) ---
 "v" = "toggle_visual"
 
-# State changes
-"x" = "toggle_state"
-"<Space>" = "cycle_state"
+# --- Item State ---
+"x" = "toggle_state"            # Toggle done/undone
+"<Space>" = "cycle_state"       # Cycle: [ ] -> [x] -> [*] -> [?] -> [!] -> [-]
 
-# Item manipulation
-"dd" = "delete"
-"n" = "new_item"
-"<Enter>" = "new_item_same_level"
+# --- Item Management ---
+"n" = "new_item"                # New item below current
+"o" = "new_item"                # New item below (vim-style alias)
+"O" = "insert_item_above"       # New item above current
+"<S-Enter>" = "insert_item_above"  # Shift+Enter: new item above
+"<C-j>" = "insert_item_above"   # Ctrl+j: new item above (alternative)
+"<Enter>" = "new_item_same_level"  # New item at same indent level
+"i" = "enter_edit_mode"         # Edit current item
+"dd" = "delete"                 # Delete item (with children) - two-key sequence
+"y" = "yank"                    # Copy item to clipboard
+"u" = "undo"                    # Undo last action
 
-# Editing
-"i" = "enter_edit_mode"
+# --- Indentation (single item) ---
+"<Tab>" = "indent"              # Indent item one level
+"<BackTab>" = "outdent"         # Outdent item one level (Shift+Tab)
 
-# Indentation (single item)
-"<Tab>" = "indent"
-"<BackTab>" = "outdent"
+# --- Indentation (with children) ---
+"<S-A-Right>" = "indent_with_children"   # Shift+Alt+Right: indent with all children
+"<S-A-Left>" = "outdent_with_children"   # Shift+Alt+Left: outdent with all children
 
-# Indentation with children
-"<S-A-Right>" = "indent_with_children"
-"<S-A-Left>" = "outdent_with_children"
+# --- Move Items (with children) ---
+"<S-A-Up>" = "move_item_up"     # Shift+Alt+Up: move item up
+"<S-A-Down>" = "move_item_down" # Shift+Alt+Down: move item down
 
-# Move items with children
-"<S-A-Up>" = "move_item_up"
-"<S-A-Down>" = "move_item_down"
+# --- Priority ---
+"p" = "cycle_priority"          # Cycle priority: none -> low -> medium -> high
+"s" = "sort_by_priority"        # Sort items by priority
 
-# Collapse/expand
-"c" = "toggle_collapse"
-"<Right>" = "expand"
-"l" = "expand"
-"<Left>" = "collapse_or_parent"
-"h" = "collapse_or_parent"
+# --- Day Navigation ---
+"<" = "prev_day"                # Previous day (archived, readonly)
+">" = "next_day"                # Next day
+"T" = "go_to_today"             # Jump to today
 
-# Undo
-"u" = "undo"
+# --- Modals ---
+"R" = "open_rollover_modal"     # Open rollover modal
+"P" = "open_plugin_menu"        # Open plugins menu
+"<C-p>" = "open_project_modal"  # Ctrl+p: open project switcher
 
-# UI
-"?" = "toggle_help"
-"<Esc>" = "close_help"
-"q" = "quit"
+# --- UI ---
+"?" = "toggle_help"             # Toggle help overlay
+"<Esc>" = "close_help"          # Close help overlay
+"q" = "quit"                    # Quit application
 
-# Day navigation
-"<" = "prev_day"
-">" = "next_day"
-"T" = "go_to_today"
+# =============================================================================
+# EDIT MODE KEYBINDINGS
+# =============================================================================
+# These keybindings are active when editing a todo item's text
 
 [keybindings.edit]
-"<Esc>" = "edit_cancel"
-"<Enter>" = "edit_confirm"
-"<BS>" = "edit_backspace"
-"<Left>" = "edit_left"
-"<Right>" = "edit_right"
-"<Home>" = "edit_home"
-"<End>" = "edit_end"
-"<Tab>" = "edit_indent"
-"<BackTab>" = "edit_outdent"
+
+# --- Exit Edit Mode ---
+"<Esc>" = "edit_cancel"         # Save and exit edit mode
+"<Enter>" = "edit_confirm"      # Save and create new item below
+
+# --- Cursor Movement ---
+"<Left>" = "edit_left"          # Move cursor left
+"<Right>" = "edit_right"        # Move cursor right
+"<Home>" = "edit_home"          # Go to start of line
+"<End>" = "edit_end"            # Go to end of line
+"<C-a>" = "edit_home"           # Ctrl+a: go to start (emacs-style)
+"<C-e>" = "edit_end"            # Ctrl+e: go to end (emacs-style)
+
+# --- Word Movement ---
+"<A-b>" = "edit_word_left"      # Alt+b: move word left
+"<A-f>" = "edit_word_right"     # Alt+f: move word right
+"<A-Left>" = "edit_word_left"   # Alt+Left: move word left
+"<A-Right>" = "edit_word_right" # Alt+Right: move word right
+
+# --- Editing ---
+"<BS>" = "edit_backspace"       # Delete character before cursor
+
+# --- Indentation (while editing) ---
+"<Tab>" = "edit_indent"         # Indent item while editing
+"<BackTab>" = "edit_outdent"    # Outdent item while editing (Shift+Tab)
+
+# =============================================================================
+# VISUAL MODE KEYBINDINGS
+# =============================================================================
+# These keybindings are active when selecting multiple items
 
 [keybindings.visual]
-"k" = "move_up"
-"j" = "move_down"
+
+# --- Selection ---
+"k" = "move_up"                 # Extend selection up
+"j" = "move_down"               # Extend selection down
 "<Up>" = "move_up"
 "<Down>" = "move_down"
-"<Tab>" = "indent"
-"<BackTab>" = "outdent"
-"u" = "undo"
-"v" = "exit_visual"
+
+# --- Actions on Selection ---
+"<Tab>" = "indent"              # Indent selected items
+"<BackTab>" = "outdent"         # Outdent selected items
+"u" = "undo"                    # Undo last action
+
+# --- Exit Visual Mode ---
+"v" = "exit_visual"             # Exit visual mode
 "<Esc>" = "exit_visual"
 "q" = "exit_visual"
+
+# =============================================================================
+# KEY NOTATION REFERENCE
+# =============================================================================
+# Simple keys:     "k", "j", "x", "?"
+# Special keys:    "<Space>", "<Tab>", "<Enter>", "<Esc>", "<BackTab>"
+# Arrow keys:      "<Up>", "<Down>", "<Left>", "<Right>"
+# Function keys:   "<F1>" through "<F12>"
+# Home/End:        "<Home>", "<End>"
+# Backspace:       "<BS>" or "<Backspace>"
+# Delete:          "<Del>" or "<Delete>"
+# Page Up/Down:    "<PageUp>", "<PageDown>"
+#
+# Modifiers:
+#   Ctrl:          "<C-d>", "<C-a>"
+#   Alt:           "<A-b>", "<A-f>"
+#   Shift:         "<S-Enter>"
+#   Combined:      "<S-A-Up>" (Shift+Alt+Up), "<C-S-d>" (Ctrl+Shift+d)
+#
+# Key Sequences:
+#   Two-key sequences are supported: "dd", "g g"
+#   Maximum sequence length is 2 keys
