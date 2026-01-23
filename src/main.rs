@@ -27,7 +27,7 @@ use std::time::Duration;
 use project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
 use storage::file::{file_exists_for_project, load_todo_list_for_project};
 use storage::file::save_todo_list_for_project;
-use storage::{ensure_installation_ready, find_rollover_candidates, UiCache};
+use storage::{ensure_installation_ready, find_rollover_candidates_for_project, UiCache};
 use ui::theme::Theme;
 use utils::paths::{get_crash_log_path, get_daily_file_path_for_project, get_pid_file_path};
 
@@ -167,7 +167,7 @@ fn main() -> Result<()> {
             );
 
             // Check for rollover candidates and show modal on startup if found
-            if let Ok(Some((source_date, items))) = find_rollover_candidates() {
+            if let Ok(Some((source_date, items))) = find_rollover_candidates_for_project(&state.current_project.name) {
                 state.open_rollover_modal(source_date, items);
             }
 
@@ -395,7 +395,7 @@ fn handle_show(date: Option<String>) -> Result<()> {
                 let list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
                 (list.items, today, false)
             } else {
-                let items = storage::load_archived_todos_for_date(parsed_date)?;
+                let items = storage::load_archived_todos_for_date_and_project(parsed_date, DEFAULT_PROJECT_NAME)?;
                 (items, parsed_date, true)
             }
         } else {
@@ -577,13 +577,13 @@ fn select_items_interactive(items: &[todo::TodoItem]) -> Result<Vec<todo::TodoIt
 }
 
 fn handle_import_archive() -> Result<()> {
-    use storage::database::{archive_todos_for_date, init_database};
+    use storage::database::{archive_todos_for_date_and_project, init_database};
     use storage::markdown::parse_todo_list;
-    use utils::paths::get_dailies_dir;
+    use utils::paths::get_dailies_dir_for_project;
 
     init_database()?;
 
-    let dailies_dir = get_dailies_dir()?;
+    let dailies_dir = get_dailies_dir_for_project(DEFAULT_PROJECT_NAME)?;
     if !dailies_dir.exists() {
         println!("No dailies directory found at {dailies_dir:?}");
         return Ok(());
@@ -614,7 +614,7 @@ fn handle_import_archive() -> Result<()> {
                 }
 
                 storage::database::save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME)?;
-                let count = archive_todos_for_date(date)?;
+                let count = archive_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME)?;
                 println!("Imported {count} items from {filename}");
                 imported += count;
             }

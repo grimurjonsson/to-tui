@@ -1,12 +1,12 @@
 use super::mode::Mode;
-use super::state::{AppState, PluginSubState, ProjectSubState};
+use super::state::{AppState, MoveToProjectSubState, PluginSubState, ProjectSubState};
 use crate::clipboard::copy_to_clipboard;
 use crate::config::Config;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::PluginRegistry;
 use crate::project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
 use crate::storage::file::save_todo_list_for_project;
-use crate::storage::{execute_rollover, find_rollover_candidates, soft_delete_todos};
+use crate::storage::{execute_rollover_for_project, find_rollover_candidates_for_project, soft_delete_todos_for_project};
 use crate::utils::paths::{get_dailies_dir_for_project, get_project_dir};
 use crate::utils::cursor::{set_mouse_cursor_default, set_mouse_cursor_pointer};
 use crate::utils::unicode::{
@@ -61,6 +61,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
         Mode::Rollover => handle_rollover_mode(key, state)?,
         Mode::UpgradePrompt => handle_upgrade_prompt_mode(key, state)?,
         Mode::ProjectSelect => handle_project_select_mode(key, state)?,
+        Mode::MoveToProject => handle_move_to_project_mode(key, state)?,
     }
     Ok(())
 }
@@ -485,6 +486,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             | Action::Undo
             | Action::CyclePriority
             | Action::SortByPriority
+            | Action::MoveToProject
     );
 
     if state.is_readonly() && dominated_by_readonly {
@@ -666,7 +668,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             // Check if we have pending rollover data, or try to find new candidates
             if state.has_pending_rollover() {
                 state.mode = Mode::Rollover;
-            } else if let Ok(Some((source_date, items))) = find_rollover_candidates() {
+            } else if let Ok(Some((source_date, items))) = find_rollover_candidates_for_project(&state.current_project.name) {
                 state.open_rollover_modal(source_date, items);
             } else {
                 state.set_status_message("No incomplete items to rollover".to_string());
@@ -674,6 +676,9 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::OpenProjectModal => {
             state.open_project_modal();
+        }
+        Action::MoveToProject => {
+            state.open_move_to_project_modal();
         }
         Action::Yank => {
             if let Some(item) = state.selected_item() {
@@ -801,7 +806,7 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
             // Execute rollover
             if let Some(pending) = state.pending_rollover.take() {
-                let new_list = execute_rollover(pending.source_date, pending.items)?;
+                let new_list = execute_rollover_for_project(&state.current_project.name, pending.source_date, pending.items)?;
                 state.todo_list = new_list;
                 state.cursor_position = 0;
                 state.set_status_message("Rolled over incomplete items".to_string());
@@ -1063,7 +1068,7 @@ fn delete_current_item(state: &mut AppState) -> Result<()> {
         .map(|item| item.id)
         .collect();
 
-    soft_delete_todos(&ids, date)?;
+    soft_delete_todos_for_project(&ids, date, &state.current_project.name)?;
     state.todo_list.remove_item_range(start, end)?;
     state.clamp_cursor();
     Ok(())
@@ -1694,6 +1699,85 @@ fn handle_project_confirm_delete(
         }
         _ => {
             state.project_state = Some(ProjectSubState::ConfirmDelete { project_name });
+        }
+    }
+    Ok(())
+}
+
+fn handle_move_to_project_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    let move_state = match state.move_to_project_state.take() {
+        Some(ms) => ms,
+        None => {
+            state.close_move_to_project_modal();
+            return Ok(());
+        }
+    };
+
+    match move_state {
+        MoveToProjectSubState::Selecting {
+            projects,
+            mut selected_index,
+            item_index,
+        } => {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    state.close_move_to_project_modal();
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    selected_index = selected_index.saturating_sub(1);
+                    state.move_to_project_state = Some(MoveToProjectSubState::Selecting {
+                        projects,
+                        selected_index,
+                        item_index,
+                    });
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if selected_index < projects.len().saturating_sub(1) {
+                        selected_index += 1;
+                    }
+                    state.move_to_project_state = Some(MoveToProjectSubState::Selecting {
+                        projects,
+                        selected_index,
+                        item_index,
+                    });
+                }
+                KeyCode::Enter => {
+                    if let Some(dest_project) = projects.get(selected_index) {
+                        let dest_project = dest_project.clone();
+                        // Re-set state temporarily so execute_move_to_project can read item_index
+                        state.move_to_project_state = Some(MoveToProjectSubState::Selecting {
+                            projects: projects.clone(),
+                            selected_index,
+                            item_index,
+                        });
+
+                        match state.execute_move_to_project(&dest_project) {
+                            Ok(count) => {
+                                state.set_status_message(format!(
+                                    "Moved {} item(s) to '{}'",
+                                    count,
+                                    dest_project.name
+                                ));
+                                // Save source list
+                                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+                                state.unsaved_changes = false;
+                                state.last_save_time = Some(std::time::Instant::now());
+                            }
+                            Err(e) => {
+                                state.set_status_message(format!("Move failed: {}", e));
+                            }
+                        }
+                        state.close_move_to_project_modal();
+                    }
+                }
+                _ => {
+                    state.move_to_project_state = Some(MoveToProjectSubState::Selecting {
+                        projects,
+                        selected_index,
+                        item_index,
+                    });
+                }
+            }
         }
     }
     Ok(())

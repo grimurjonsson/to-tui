@@ -65,6 +65,7 @@ pub enum Action {
 
     // Project
     OpenProjectModal,
+    MoveToProject,
 
     // Clipboard
     Yank,
@@ -120,6 +121,7 @@ impl fmt::Display for Action {
             Action::OpenPluginMenu => "open_plugin_menu",
             Action::OpenRolloverModal => "open_rollover_modal",
             Action::OpenProjectModal => "open_project_modal",
+            Action::MoveToProject => "move_to_project",
             Action::Yank => "yank",
             Action::CyclePriority => "cycle_priority",
             Action::SortByPriority => "sort_by_priority",
@@ -174,6 +176,7 @@ impl FromStr for Action {
             "open_plugin_menu" => Ok(Action::OpenPluginMenu),
             "open_rollover_modal" => Ok(Action::OpenRolloverModal),
             "open_project_modal" => Ok(Action::OpenProjectModal),
+            "move_to_project" => Ok(Action::MoveToProject),
             "yank" => Ok(Action::Yank),
             "cycle_priority" => Ok(Action::CyclePriority),
             "sort_by_priority" => Ok(Action::SortByPriority),
@@ -614,6 +617,7 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("P".to_string(), "open_plugin_menu".to_string());
     m.insert("R".to_string(), "open_rollover_modal".to_string());
     m.insert("<C-p>".to_string(), "open_project_modal".to_string());
+    m.insert("m".to_string(), "move_to_project".to_string());
     m.insert("y".to_string(), "yank".to_string());
     m.insert("s".to_string(), "sort_by_priority".to_string());
 

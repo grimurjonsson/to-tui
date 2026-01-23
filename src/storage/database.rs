@@ -286,12 +286,6 @@ pub fn soft_delete_todos_for_project(
     Ok(())
 }
 
-/// Legacy: Soft deletes todos for the default project
-/// Use soft_delete_todos_for_project() for project-aware code
-pub fn soft_delete_todos(ids: &[Uuid], date: NaiveDate) -> Result<()> {
-    soft_delete_todos_for_project(ids, date, DEFAULT_PROJECT_NAME)
-}
-
 pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result<()> {
     let conn = get_connection()?;
     let date_str = list.date.format("%Y-%m-%d").to_string();
@@ -374,12 +368,6 @@ pub fn archive_todos_for_date_and_project(date: NaiveDate, project_name: &str) -
     Ok(count)
 }
 
-/// Legacy: Archives todos for the default project
-/// Use archive_todos_for_date_and_project() for project-aware code
-pub fn archive_todos_for_date(date: NaiveDate) -> Result<usize> {
-    archive_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME)
-}
-
 pub fn load_archived_todos_for_date_and_project(
     date: NaiveDate,
     project_name: &str,
@@ -402,12 +390,6 @@ pub fn load_archived_todos_for_date_and_project(
     }
 
     Ok(result)
-}
-
-/// Legacy: Loads archived todos for the default project
-/// Use load_archived_todos_for_date_and_project() for project-aware code
-pub fn load_archived_todos_for_date(date: NaiveDate) -> Result<Vec<TodoItem>> {
-    load_archived_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME)
 }
 
 // ============================================================================

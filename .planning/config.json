@@ -1,4 +1,5 @@
 {
+  "model_profile": "quality",
   "mode": "yolo",
   "depth": "standard",
   "parallelization": {

@@ -11,7 +11,7 @@ See: .planning/PROJECT.md (updated 2026-01-21)
 
 Milestone: v1.0 TUI Enhancements — SHIPPED
 Status: Ready for next milestone
-Last activity: 2026-01-22 — Completed quick-005 (GitHub link status bar)
+Last activity: 2026-01-22 — Completed quick-006 (Move item and subtree to another project)
 Next Action: /gsd:new-milestone
 
 ## Completed Milestones
@@ -31,9 +31,10 @@ Quick tasks are ad-hoc improvements outside milestone planning:
 | 003-cascading-x-toggle | Cascading 'x' toggle for parent and children with undo | ✓ | 2026-01-22 |
 | 004-tar-gz-release-binaries | Change release format to tar.gz/zip archives | ✓ | 2026-01-22 |
 | 005-github-link-status-bar | Add clickable GitHub octopus link to status bar | ✓ | 2026-01-22 |
+| 006-move-item-and-subtree-to-another-project | Move todos between projects with 'm' keybinding | ✓ | 2026-01-22 |
 
 ## Session Continuity
 
 Last session: 2026-01-22
-Stopped at: Completed quick-005 (GitHub link status bar)
+Stopped at: Completed quick-006 (Move item and subtree to another project)
 Resume file: None

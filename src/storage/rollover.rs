@@ -2,7 +2,6 @@ use super::database::archive_todos_for_date_and_project;
 use super::file::{
     file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project,
 };
-use crate::project::DEFAULT_PROJECT_NAME;
 use crate::todo::TodoList;
 use crate::utils::paths::get_daily_file_path_for_project;
 use anyhow::Result;
@@ -41,12 +40,6 @@ pub fn find_rollover_candidates_for_project(
     Ok(None)
 }
 
-/// Legacy: Find rollover candidates for the default project
-/// Use find_rollover_candidates_for_project() for project-aware code
-pub fn find_rollover_candidates() -> Result<Option<(NaiveDate, Vec<crate::todo::TodoItem>)>> {
-    find_rollover_candidates_for_project(DEFAULT_PROJECT_NAME)
-}
-
 /// Execute the rollover for a specific project: archive old todos and create new list.
 pub fn execute_rollover_for_project(
     project_name: &str,
@@ -58,15 +51,6 @@ pub fn execute_rollover_for_project(
     let list = create_rolled_over_list_for_project(project_name, today, items)?;
     save_todo_list_for_project(&list, project_name)?;
     Ok(list)
-}
-
-/// Legacy: Execute rollover for the default project
-/// Use execute_rollover_for_project() for project-aware code
-pub fn execute_rollover(
-    source_date: NaiveDate,
-    items: Vec<crate::todo::TodoItem>,
-) -> Result<TodoList> {
-    execute_rollover_for_project(DEFAULT_PROJECT_NAME, source_date, items)
 }
 
 pub fn create_rolled_over_list_for_project(
@@ -96,6 +80,7 @@ pub fn create_rolled_over_list_for_project(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::DEFAULT_PROJECT_NAME;
     use crate::todo::{TodoItem, TodoState};
 
     #[test]

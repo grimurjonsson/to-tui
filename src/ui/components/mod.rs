@@ -2,7 +2,7 @@ pub mod status_bar;
 pub mod todo_list;
 
 use crate::app::mode::Mode;
-use crate::app::state::{PluginSubState, ProjectSubState};
+use crate::app::state::{MoveToProjectSubState, PluginSubState, ProjectSubState};
 use crate::app::AppState;
 use crate::project::DEFAULT_PROJECT_NAME;
 use crate::utils::upgrade::{format_bytes, UpgradeSubState};
@@ -55,6 +55,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         if let Some(ref project_state) = state.project_state {
             render_project_overlay(f, state, project_state);
         }
+    }
+
+    if state.mode == Mode::MoveToProject {
+        render_move_to_project_modal(f, state);
     }
 }
 
@@ -1285,3 +1289,65 @@ fn render_project_confirm_delete(f: &mut Frame, state: &AppState, project_name: 
 
     f.render_widget(footer, footer_area);
 }
+
+pub fn render_move_to_project_modal(frame: &mut Frame, state: &AppState) {
+    let move_state = match &state.move_to_project_state {
+        Some(s) => s,
+        None => return,
+    };
+
+    let MoveToProjectSubState::Selecting {
+        projects,
+        selected_index,
+        item_index,
+    } = move_state;
+
+    // Get the item being moved for display
+    let item_name = state
+        .todo_list
+        .items
+        .get(*item_index)
+        .map(|i| i.content.as_str())
+        .unwrap_or("(unknown)");
+
+    // Build title with truncated item name
+    let max_title_len = 40;
+    let truncated_name = if item_name.len() > max_title_len {
+        format!("{}...", &item_name[..max_title_len.saturating_sub(3)])
+    } else {
+        item_name.to_string()
+    };
+    let title = format!(" Move '{}' to (j/k to navigate, Enter to select) ", truncated_name);
+
+    let area = centered_rect(60, 50, frame.area());
+
+    // Clear background
+    frame.render_widget(Clear, area);
+
+    // Render project list
+    let items: Vec<ListItem> = projects
+        .iter()
+        .enumerate()
+        .map(|(i, project)| {
+            let name_style = if i == *selected_index {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default().fg(state.theme.foreground)
+            };
+            ListItem::new(Line::from(Span::styled(&project.name, name_style)))
+        })
+        .collect();
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        );
+
+    frame.render_widget(list, area);
+}
+

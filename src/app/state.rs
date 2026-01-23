@@ -67,6 +67,16 @@ pub enum ProjectSubState {
     },
 }
 
+/// Move to project modal sub-state
+#[derive(Debug, Clone)]
+pub enum MoveToProjectSubState {
+    Selecting {
+        projects: Vec<Project>,
+        selected_index: usize,
+        item_index: usize,  // Index of item being moved
+    },
+}
+
 pub struct AppState {
     pub todo_list: TodoList,
     pub cursor_position: usize,
@@ -123,6 +133,8 @@ pub struct AppState {
     pub current_project: Project,
     /// Project selection modal state
     pub project_state: Option<ProjectSubState>,
+    /// Move to project modal state
+    pub move_to_project_state: Option<MoveToProjectSubState>,
     /// Whether the mouse cursor is currently showing as pointer (for hover effects)
     pub cursor_is_pointer: bool,
 }
@@ -191,6 +203,7 @@ impl AppState {
             download_progress_rx: None,
             current_project,
             project_state: None,
+            move_to_project_state: None,
             cursor_is_pointer: false,
         };
         // Sync list state with cursor position
@@ -871,6 +884,85 @@ impl AppState {
         self.sync_list_state();
 
         Ok(())
+    }
+
+    /// Open the move-to-project modal for the current item
+    pub fn open_move_to_project_modal(&mut self) {
+        if self.todo_list.items.is_empty() {
+            return;
+        }
+
+        let registry = ProjectRegistry::load().unwrap_or_default();
+        let projects: Vec<Project> = registry
+            .list_sorted()
+            .into_iter()
+            .filter(|p| p.name != self.current_project.name)  // Exclude current
+            .cloned()
+            .collect();
+
+        if projects.is_empty() {
+            self.set_status_message("No other projects to move to".to_string());
+            return;
+        }
+
+        self.move_to_project_state = Some(MoveToProjectSubState::Selecting {
+            projects,
+            selected_index: 0,
+            item_index: self.cursor_position,
+        });
+        self.mode = Mode::MoveToProject;
+    }
+
+    /// Close the move-to-project modal
+    pub fn close_move_to_project_modal(&mut self) {
+        self.move_to_project_state = None;
+        self.mode = Mode::Navigate;
+    }
+
+    /// Execute the move: extract item+subtree from current list, add to destination
+    pub fn execute_move_to_project(&mut self, dest_project: &Project) -> Result<usize> {
+        use crate::storage::file::{load_todo_list_for_project, save_todo_list_for_project};
+
+        let item_index = match &self.move_to_project_state {
+            Some(MoveToProjectSubState::Selecting { item_index, .. }) => *item_index,
+            None => return Err(anyhow::anyhow!("No move in progress")),
+        };
+
+        // Get the range of the item and its children
+        let (start, end) = self.todo_list.get_item_range(item_index)?;
+        let items_to_move: Vec<crate::todo::TodoItem> = self.todo_list.items[start..end].to_vec();
+        let count = items_to_move.len();
+
+        // Load destination project's todo list (for today)
+        let today = chrono::Local::now().date_naive();
+        let mut dest_list = load_todo_list_for_project(&dest_project.name, today)?;
+
+        // Normalize indent levels: make the moved item's root indent 0
+        let base_indent = items_to_move[0].indent_level;
+        let mut normalized_items: Vec<crate::todo::TodoItem> = items_to_move
+            .into_iter()
+            .map(|mut item| {
+                item.indent_level = item.indent_level.saturating_sub(base_indent);
+                item.id = uuid::Uuid::new_v4();  // New IDs for destination
+                item.parent_id = None;  // Will be recalculated
+                item
+            })
+            .collect();
+
+        // Append to destination list
+        dest_list.items.append(&mut normalized_items);
+        dest_list.recalculate_parent_ids();
+
+        // Save destination list
+        save_todo_list_for_project(&dest_list, &dest_project.name)?;
+
+        // Remove from source list
+        self.save_undo();
+        self.todo_list.remove_item_range(start, end)?;
+        self.clamp_cursor();
+        self.unsaved_changes = true;
+
+        Ok(count)
     }
 }
 

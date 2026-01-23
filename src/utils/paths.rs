@@ -3,8 +3,6 @@ use chrono::NaiveDate;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::project::DEFAULT_PROJECT_NAME;
-
 pub fn get_to_tui_dir() -> Result<PathBuf> {
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
     Ok(home.join(".to-tui"))
@@ -23,12 +21,6 @@ pub fn get_project_dir(project_name: &str) -> Result<PathBuf> {
 pub fn get_dailies_dir_for_project(project_name: &str) -> Result<PathBuf> {
     let project_dir = get_project_dir(project_name)?;
     Ok(project_dir.join("dailies"))
-}
-
-/// Legacy: Returns dailies dir for the default project
-/// Use get_dailies_dir_for_project() for project-aware code
-pub fn get_dailies_dir() -> Result<PathBuf> {
-    get_dailies_dir_for_project(DEFAULT_PROJECT_NAME)
 }
 
 /// Legacy v1 dailies directory (before projects feature)
@@ -81,6 +73,7 @@ pub fn ensure_project_directories_exist(project_name: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::project::DEFAULT_PROJECT_NAME;
     use chrono::NaiveDate;
 
     #[test]
@@ -110,15 +103,6 @@ mod tests {
         assert!(dir.to_string_lossy().contains(".to-tui"));
         assert!(dir.to_string_lossy().contains("projects"));
         assert!(dir.to_string_lossy().contains("Work"));
-        assert!(dir.to_string_lossy().ends_with("dailies"));
-    }
-
-    #[test]
-    fn test_get_dailies_dir() {
-        let dir = get_dailies_dir().unwrap();
-        assert!(dir.to_string_lossy().contains(".to-tui"));
-        assert!(dir.to_string_lossy().contains("projects"));
-        assert!(dir.to_string_lossy().contains("default"));
         assert!(dir.to_string_lossy().ends_with("dailies"));
     }
 

@@ -11,6 +11,7 @@ pub enum Mode {
     Rollover,
     UpgradePrompt,
     ProjectSelect,
+    MoveToProject,
 }
 
 impl fmt::Display for Mode {
@@ -24,6 +25,7 @@ impl fmt::Display for Mode {
             Mode::Rollover => write!(f, "ROLLOVER"),
             Mode::UpgradePrompt => write!(f, "UPGRADE"),
             Mode::ProjectSelect => write!(f, "PROJECT"),
+            Mode::MoveToProject => write!(f, "MOVE"),
         }
     }
 }
