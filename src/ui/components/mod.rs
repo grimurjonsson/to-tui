@@ -1406,10 +1406,10 @@ pub fn render_plugin_error_popup(f: &mut Frame, state: &AppState) {
     let errors = &state.pending_plugin_errors;
     let area = f.area();
 
-    // Center popup, 65% width, height based on error count (max 60% of screen)
-    let popup_width = (area.width * 65) / 100;
-    let content_lines = errors.len() * 2 + 6; // 2 lines per error + header/footer
-    let popup_height = (content_lines as u16 + 4).min((area.height * 60) / 100);
+    // Center popup, 80% width to accommodate longer error messages, height based on error count
+    let popup_width = (area.width * 80) / 100;
+    let content_lines = errors.len() * 3 + 6; // ~3 lines per error (wrapped) + header/footer
+    let popup_height = (content_lines as u16 + 4).min((area.height * 70) / 100);
 
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)

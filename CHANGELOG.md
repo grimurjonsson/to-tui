@@ -5,6 +5,7 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-01-27
 ## [0.5.0] - 2026-01-27
 The v2.0 release introduces a plugin framework that allows external sources (like Jira) to generate todos, along with project support for organizing todos into separate workspaces.
 

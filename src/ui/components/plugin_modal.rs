@@ -33,6 +33,7 @@ pub fn render_plugins_modal(f: &mut Frame, state: &AppState) {
             marketplace_plugins,
             marketplace_loading,
             marketplace_error,
+            marketplace_name,
         } => render_tabs_view(
             f,
             state,
@@ -42,11 +43,9 @@ pub fn render_plugins_modal(f: &mut Frame, state: &AppState) {
             marketplace_plugins.as_deref(),
             *marketplace_loading,
             marketplace_error.as_deref(),
+            marketplace_name,
         ),
         PluginsModalState::Details { plugin, .. } => render_details_view(f, state, plugin),
-        PluginsModalState::Installing { plugin_name, .. } => {
-            render_installing_view(f, state, plugin_name)
-        }
         PluginsModalState::Input {
             plugin_name,
             input_buffer,
@@ -69,6 +68,7 @@ fn render_tabs_view(
     marketplace_plugins: Option<&[PluginEntry]>,
     marketplace_loading: bool,
     marketplace_error: Option<&str>,
+    marketplace_name: &str,
 ) {
     let area = centered_rect(60, 60, f.area());
 
@@ -137,6 +137,7 @@ fn render_tabs_view(
             marketplace_plugins,
             marketplace_loading,
             marketplace_error,
+            marketplace_name,
         ),
     }
 
@@ -157,13 +158,33 @@ fn render_installed_list(f: &mut Frame, state: &AppState, area: Rect, selected_i
     let plugins: Vec<_> = state.plugin_loader.loaded_plugins().collect();
 
     if plugins.is_empty() {
-        let empty_msg = Paragraph::new(Line::from(vec![
-            Span::styled("No plugins installed. ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                "Run `totui plugin install <name>` to install.",
-                Style::default().fg(Color::Yellow),
-            ),
-        ]))
+        // Check if any plugins are installed on disk but not loaded
+        let has_unloaded = crate::utils::paths::get_plugins_dir()
+            .ok()
+            .and_then(|dir| std::fs::read_dir(dir).ok())
+            .map(|entries| entries.filter_map(|e| e.ok()).any(|e| e.path().is_dir()))
+            .unwrap_or(false);
+
+        let empty_msg = if has_unloaded {
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    "Plugins installed but not loaded.",
+                    Style::default().fg(Color::Yellow),
+                )),
+                Line::from(Span::styled(
+                    "Restart totui to load newly installed plugins.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ])
+        } else {
+            Paragraph::new(Line::from(vec![
+                Span::styled("No plugins installed. ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "Use Marketplace tab to browse and install.",
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]))
+        }
         .wrap(Wrap { trim: true });
         f.render_widget(empty_msg, area);
         return;
@@ -225,6 +246,7 @@ fn render_installed_list(f: &mut Frame, state: &AppState, area: Rect, selected_i
 }
 
 /// Render the marketplace plugins list
+#[allow(clippy::too_many_arguments)]
 fn render_marketplace_list(
     f: &mut Frame,
     state: &AppState,
@@ -233,6 +255,7 @@ fn render_marketplace_list(
     plugins: Option<&[PluginEntry]>,
     loading: bool,
     error: Option<&str>,
+    marketplace_name: &str,
 ) {
     // Loading state
     if loading {
@@ -291,19 +314,32 @@ fn render_marketplace_list(
         return;
     }
 
-    // Get installed plugin names for comparison
-    let installed_names: Vec<String> = state
-        .plugin_loader
-        .loaded_plugins()
-        .map(|p| p.name.to_lowercase())
-        .collect();
+    // Split area into header + list
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(1)])
+        .split(area);
+
+    // Render marketplace header
+    let header = Line::from(vec![
+        Span::styled("── ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            marketplace_name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" ──", Style::default().fg(Color::DarkGray)),
+    ]);
+    f.render_widget(Paragraph::new(header), chunks[0]);
 
     let items: Vec<ListItem> = plugins
         .iter()
         .enumerate()
         .map(|(i, plugin)| {
             let is_selected = i == selected_index;
-            let is_installed = installed_names.contains(&plugin.name.to_lowercase());
+            // Check if plugin is installed on disk (not just loaded)
+            let is_installed = crate::plugin::PluginManager::is_plugin_installed(&plugin.name);
 
             // Status indicator
             let status = if is_installed {
@@ -349,7 +385,7 @@ fn render_marketplace_list(
         .collect();
 
     let list = List::new(items).style(Style::default().fg(state.theme.foreground));
-    f.render_widget(list, area);
+    f.render_widget(list, chunks[1]);
 }
 
 /// Render the plugin details view
@@ -372,11 +408,8 @@ fn render_details_view(f: &mut Frame, state: &AppState, plugin: &PluginEntry) {
         height: area.height.saturating_sub(4),
     };
 
-    // Check if already installed
-    let is_installed = state
-        .plugin_loader
-        .loaded_plugins()
-        .any(|p| p.name.eq_ignore_ascii_case(&plugin.name));
+    // Check if already installed (on disk, not just loaded)
+    let is_installed = crate::plugin::PluginManager::is_plugin_installed(&plugin.name);
 
     let lines = vec![
         Line::from(vec![
@@ -419,28 +452,6 @@ fn render_details_view(f: &mut Frame, state: &AppState, plugin: &PluginEntry) {
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
     f.render_widget(paragraph, inner);
-}
-
-/// Render the installing view with spinner
-fn render_installing_view(f: &mut Frame, state: &AppState, plugin_name: &str) {
-    let area = centered_rect(50, 20, f.area());
-
-    f.render_widget(Clear, area);
-
-    let spinner = state.get_spinner_char();
-    let text = format!("{} Installing {}...\n\nDownloading and extracting plugin.", spinner, plugin_name);
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(" Installing Plugin ")
-        .style(Style::default().bg(state.theme.background));
-
-    let paragraph = Paragraph::new(text)
-        .block(block)
-        .style(Style::default().fg(state.theme.foreground))
-        .wrap(Wrap { trim: true });
-
-    f.render_widget(paragraph, area);
 }
 
 /// Render the input view for plugin invocation

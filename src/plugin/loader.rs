@@ -8,7 +8,7 @@
 //! - Session-based disabling for panicked plugins
 
 use abi_stable::{
-    library::{LibraryError, RootModule},
+    library::{LibraryError, LibraryPath, RootModule},
     std_types::{RBox, RString},
 };
 use std::collections::HashMap;
@@ -222,7 +222,7 @@ impl PluginLoader {
 
     /// Load a single plugin from its directory.
     ///
-    /// Uses `PluginModule_Ref::load_from_directory` from abi_stable.
+    /// Finds the dylib file in the plugin directory and loads it via abi_stable.
     /// The library is leaked (never unloaded) - this IS the proxy pattern.
     pub fn load_plugin(
         &self,
@@ -231,9 +231,12 @@ impl PluginLoader {
     ) -> Result<LoadedPlugin, PluginLoadError> {
         let plugin_name = &plugin_info.manifest.name;
 
+        // Find the dylib file in the plugin directory
+        let dylib_path = Self::find_dylib_in_directory(path, plugin_name)?;
+
         // Load the library using abi_stable
         // This leaks the library intentionally - it will never be unloaded
-        let module = PluginModule_Ref::load_from_directory(path).map_err(|lib_err| {
+        let module = PluginModule_Ref::load_from(LibraryPath::FullPath(&dylib_path)).map_err(|lib_err| {
             Self::map_library_error(plugin_name, &lib_err)
         })?;
 
@@ -278,23 +281,62 @@ impl PluginLoader {
         })
     }
 
+    /// Find the dylib file in a plugin directory.
+    ///
+    /// Looks for .dylib (macOS), .so (Linux), or .dll (Windows) files.
+    /// Returns the path to the first matching library file.
+    fn find_dylib_in_directory(dir: &Path, plugin_name: &str) -> Result<std::path::PathBuf, PluginLoadError> {
+        let extensions = if cfg!(target_os = "macos") {
+            &["dylib"][..]
+        } else if cfg!(target_os = "windows") {
+            &["dll"][..]
+        } else {
+            &["so"][..]
+        };
+
+        // Try to find any library file in the directory
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if let Some(ext) = path.extension()
+                    && extensions.iter().any(|e| ext == *e)
+                {
+                    return Ok(path);
+                }
+            }
+        }
+
+        Err(PluginLoadError {
+            plugin_name: plugin_name.to_string(),
+            error_kind: PluginErrorKind::LibraryCorrupted,
+            message: format!(
+                "Plugin {} has no library file in {}",
+                plugin_name,
+                dir.display()
+            ),
+        })
+    }
+
     /// Map abi_stable LibraryError to our PluginLoadError.
     fn map_library_error(plugin_name: &str, lib_err: &LibraryError) -> PluginLoadError {
+        // Include full error details in the message for debugging
+        let error_detail = format!("{:?}", lib_err);
+
         match lib_err {
             LibraryError::OpenError { .. } => PluginLoadError {
                 plugin_name: plugin_name.to_string(),
                 error_kind: PluginErrorKind::LibraryCorrupted,
                 message: format!(
-                    "Plugin {} failed to load - may be corrupted or incompatible",
-                    plugin_name
+                    "Plugin {} failed to open library: {}",
+                    plugin_name, error_detail
                 ),
             },
             LibraryError::GetSymbolError { .. } => PluginLoadError {
                 plugin_name: plugin_name.to_string(),
                 error_kind: PluginErrorKind::SymbolMissing,
                 message: format!(
-                    "Plugin {} failed to load - may be corrupted or incompatible",
-                    plugin_name
+                    "Plugin {} missing required symbol: {}",
+                    plugin_name, error_detail
                 ),
             },
             LibraryError::IncompatibleVersionNumber {
@@ -308,16 +350,16 @@ impl PluginLoader {
                     actual: actual_version.to_string(),
                 },
                 message: format!(
-                    "Plugin {} requires to-tui {}+, you have {}",
+                    "Plugin {} requires interface version {}, but totui provides {}",
                     plugin_name, expected_version, actual_version
                 ),
             },
             _ => PluginLoadError {
                 plugin_name: plugin_name.to_string(),
-                error_kind: PluginErrorKind::Other(format!("{:?}", lib_err)),
+                error_kind: PluginErrorKind::Other(error_detail.clone()),
                 message: format!(
-                    "Plugin {} failed to load - may be corrupted or incompatible",
-                    plugin_name
+                    "Plugin {} failed to load: {}",
+                    plugin_name, error_detail
                 ),
             },
         }

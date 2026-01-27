@@ -60,6 +60,19 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
+    /// Check if a plugin is installed on disk (by name).
+    ///
+    /// This is a quick check that only looks for the plugin directory,
+    /// without loading or validating the plugin.
+    pub fn is_plugin_installed(plugin_name: &str) -> bool {
+        if let Ok(plugins_dir) = get_plugins_dir() {
+            let plugin_dir = plugins_dir.join(plugin_name);
+            plugin_dir.exists() && plugin_dir.join("plugin.toml").exists()
+        } else {
+            false
+        }
+    }
+
     /// Discover plugins from ~/.local/share/to-tui/plugins/
     ///
     /// Scans the plugins directory for subdirectories containing plugin.toml
@@ -145,8 +158,8 @@ impl PluginManager {
             }
         };
 
-        // Parse manifest
-        let manifest: PluginManifest = match toml::from_str(&content) {
+        // Parse manifest (supports both [plugin] section and flat formats)
+        let manifest: PluginManifest = match PluginManifest::parse(&content) {
             Ok(m) => m,
             Err(e) => {
                 return PluginInfo {

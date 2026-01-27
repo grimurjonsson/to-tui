@@ -26,6 +26,16 @@ fn is_valid_action_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Wrapper for plugin.toml files that use `[plugin]` section format.
+///
+/// This allows parsing both formats:
+/// - Flat format: `name = "foo"` at root level
+/// - Sectioned format: `[plugin]\nname = "foo"`
+#[derive(Debug, Clone, Deserialize)]
+struct PluginManifestWrapper {
+    plugin: PluginManifest,
+}
+
 /// Plugin manifest from plugin.toml file.
 ///
 /// Required fields: name, version, description
@@ -94,6 +104,20 @@ impl Default for PluginManifest {
 }
 
 impl PluginManifest {
+    /// Parse a plugin manifest from TOML string.
+    ///
+    /// Supports both formats:
+    /// - Sectioned: `[plugin]\nname = "foo"` (preferred)
+    /// - Flat: `name = "foo"` at root level (legacy)
+    pub fn parse(content: &str) -> Result<Self, toml::de::Error> {
+        // Try sectioned format first (with [plugin] header)
+        if let Ok(wrapper) = toml::from_str::<PluginManifestWrapper>(content) {
+            return Ok(wrapper.plugin);
+        }
+        // Fall back to flat format (fields at root level)
+        toml::from_str(content)
+    }
+
     /// Validate the manifest fields.
     ///
     /// Checks:
@@ -165,6 +189,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_with_plugin_section() {
+        // Test the [plugin] section format (preferred)
+        let toml = r#"
+[plugin]
+name = "jira-claude"
+version = "0.1.6"
+description = "Generate todos from Jira tickets using Claude AI"
+author = "grimurjonsson"
+license = "MIT"
+min_interface_version = "0.1.0"
+
+[permissions]
+subprocess = true
+"#;
+        let manifest = PluginManifest::parse(toml).unwrap();
+        assert_eq!(manifest.name, "jira-claude");
+        assert_eq!(manifest.version, "0.1.6");
+        assert_eq!(manifest.description, "Generate todos from Jira tickets using Claude AI");
+        assert_eq!(manifest.author, Some("grimurjonsson".to_string()));
+        assert!(manifest.validate().is_ok());
+    }
+
+    #[test]
     fn test_parse_valid_manifest() {
         let toml = r#"
 name = "my-plugin"
@@ -176,7 +223,7 @@ homepage = "https://example.com"
 repository = "https://github.com/example/plugin"
 min_interface_version = "0.1.0"
 "#;
-        let manifest: PluginManifest = toml::from_str(toml).unwrap();
+        let manifest = PluginManifest::parse(toml).unwrap();
         assert_eq!(manifest.name, "my-plugin");
         assert_eq!(manifest.version, "1.0.0");
         assert_eq!(manifest.description, "A test plugin");

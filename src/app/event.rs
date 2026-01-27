@@ -1246,6 +1246,7 @@ fn handle_plugins_modal(
             marketplace_plugins,
             marketplace_loading,
             marketplace_error,
+            marketplace_name,
         } => handle_plugins_tabs(
             key,
             state,
@@ -1255,25 +1256,13 @@ fn handle_plugins_modal(
             marketplace_plugins,
             marketplace_loading,
             marketplace_error,
+            marketplace_name,
         ),
         PluginsModalState::Details {
             plugin,
             marketplace_plugins,
             marketplace_index,
         } => handle_plugins_modal_details(key, state, plugin, marketplace_plugins, marketplace_index),
-        PluginsModalState::Installing {
-            plugin_name,
-            marketplace_plugins,
-            marketplace_index,
-        } => {
-            // While installing, ignore keypresses - check for completion
-            state.plugins_modal_state = Some(PluginsModalState::Installing {
-                plugin_name,
-                marketplace_plugins,
-                marketplace_index,
-            });
-            Ok(())
-        }
         PluginsModalState::Input {
             plugin_name,
             input_buffer,
@@ -1300,6 +1289,7 @@ fn handle_plugins_tabs(
     marketplace_plugins: Option<Vec<PluginEntry>>,
     marketplace_loading: bool,
     marketplace_error: Option<String>,
+    marketplace_name: String,
 ) -> Result<()> {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
@@ -1324,6 +1314,7 @@ fn handle_plugins_tabs(
                     marketplace_plugins,
                     marketplace_loading: true,
                     marketplace_error: None,
+                    marketplace_name: marketplace_name.clone(),
                 });
                 state.start_marketplace_fetch();
                 return Ok(());
@@ -1336,6 +1327,7 @@ fn handle_plugins_tabs(
                 marketplace_plugins,
                 marketplace_loading,
                 marketplace_error,
+                marketplace_name: marketplace_name.clone(),
             });
         }
         KeyCode::Up | KeyCode::Char('k') => {
@@ -1354,6 +1346,7 @@ fn handle_plugins_tabs(
                 marketplace_plugins,
                 marketplace_loading,
                 marketplace_error,
+                marketplace_name: marketplace_name.clone(),
             });
         }
         KeyCode::Down | KeyCode::Char('j') => {
@@ -1381,6 +1374,7 @@ fn handle_plugins_tabs(
                 marketplace_plugins,
                 marketplace_loading,
                 marketplace_error,
+                marketplace_name: marketplace_name.clone(),
             });
         }
         KeyCode::Enter => {
@@ -1412,6 +1406,7 @@ fn handle_plugins_tabs(
                             marketplace_plugins,
                             marketplace_loading,
                             marketplace_error,
+                            marketplace_name: marketplace_name.clone(),
                         });
                     }
                 }
@@ -1432,6 +1427,7 @@ fn handle_plugins_tabs(
                                 marketplace_plugins: Some(plugins),
                                 marketplace_loading,
                                 marketplace_error,
+                                marketplace_name: marketplace_name.clone(),
                             });
                         }
                     } else {
@@ -1442,6 +1438,7 @@ fn handle_plugins_tabs(
                             marketplace_plugins: None,
                             marketplace_loading,
                             marketplace_error,
+                            marketplace_name: marketplace_name.clone(),
                         });
                     }
                 }
@@ -1455,6 +1452,7 @@ fn handle_plugins_tabs(
                 marketplace_plugins,
                 marketplace_loading,
                 marketplace_error,
+                marketplace_name,
             });
         }
     }
@@ -1472,6 +1470,11 @@ fn handle_plugins_modal_input(
     match key.code {
         KeyCode::Esc => {
             // Go back to Tabs view with Installed tab
+            use crate::config::Config;
+            use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+            let marketplace_name = Config::load()
+                .map(|c| c.marketplaces.default)
+                .unwrap_or_else(|_| DEFAULT_MARKETPLACE.to_string());
             state.plugins_modal_state = Some(PluginsModalState::Tabs {
                 active_tab: PluginsTab::Installed,
                 installed_index: 0,
@@ -1479,6 +1482,7 @@ fn handle_plugins_modal_input(
                 marketplace_plugins: None,
                 marketplace_loading: false,
                 marketplace_error: None,
+                marketplace_name,
             });
         }
         KeyCode::Enter if !input_buffer.trim().is_empty() => {
@@ -1578,6 +1582,12 @@ fn handle_plugins_modal_details(
     marketplace_plugins: Vec<PluginEntry>,
     marketplace_index: usize,
 ) -> Result<()> {
+    use crate::config::Config;
+    use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+    let marketplace_name = Config::load()
+        .map(|c| c.marketplaces.default)
+        .unwrap_or_else(|_| DEFAULT_MARKETPLACE.to_string());
+
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
             // Go back to Marketplace tab
@@ -1588,6 +1598,7 @@ fn handle_plugins_modal_details(
                 marketplace_plugins: Some(marketplace_plugins),
                 marketplace_loading: false,
                 marketplace_error: None,
+                marketplace_name,
             });
         }
         KeyCode::Char('i') | KeyCode::Enter => {
@@ -1647,6 +1658,7 @@ fn handle_plugins_modal_details(
                         marketplace_plugins: Some(marketplace_plugins),
                         marketplace_loading: false,
                         marketplace_error: None,
+                        marketplace_name,
                     });
                 }
                 Err(e) => {

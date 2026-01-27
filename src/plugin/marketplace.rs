@@ -21,6 +21,9 @@ pub struct PluginEntry {
     /// Repository URL (defaults to marketplace repo)
     #[serde(default)]
     pub repository: Option<String>,
+    /// Platform-specific download URLs (populated by CI)
+    #[serde(default)]
+    pub downloads: std::collections::HashMap<String, String>,
 }
 
 /// Marketplace manifest (marketplace.toml)
@@ -107,6 +110,9 @@ name = "github"
 description = "GitHub issues integration"
 version = "0.2.0"
 repository = "https://github.com/other/repo"
+
+[plugins.downloads]
+x86_64-unknown-linux-gnu = "https://example.com/github-linux.tar.gz"
 "#;
         let manifest = MarketplaceManifest::parse(toml).unwrap();
         assert_eq!(manifest.marketplace.name, "to-tui-plugins");
@@ -114,7 +120,9 @@ repository = "https://github.com/other/repo"
         assert_eq!(manifest.plugins[0].name, "jira");
         assert_eq!(manifest.plugins[0].version, "1.0.0");
         assert!(manifest.plugins[0].repository.is_none());
+        assert!(manifest.plugins[0].downloads.is_empty());
         assert!(manifest.plugins[1].repository.is_some());
+        assert_eq!(manifest.plugins[1].downloads.len(), 1);
     }
 
     #[test]

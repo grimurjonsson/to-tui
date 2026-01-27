@@ -41,17 +41,12 @@ pub enum PluginsModalState {
         marketplace_plugins: Option<Vec<PluginEntry>>,
         marketplace_loading: bool,
         marketplace_error: Option<String>,
+        /// Name of the marketplace (owner/repo format)
+        marketplace_name: String,
     },
     /// Plugin details view (from Marketplace tab)
     Details {
         plugin: PluginEntry,
-        /// Cached marketplace state to return to
-        marketplace_plugins: Vec<PluginEntry>,
-        marketplace_index: usize,
-    },
-    /// Installing plugin from marketplace
-    Installing {
-        plugin_name: String,
         /// Cached marketplace state to return to
         marketplace_plugins: Vec<PluginEntry>,
         marketplace_index: usize,
@@ -577,29 +572,6 @@ impl AppState {
         Ok(())
     }
 
-    pub fn open_plugin_menu(&mut self) {
-        // Build GeneratorInfo list from loaded plugins
-        let plugins: Vec<GeneratorInfo> = self
-            .plugin_loader
-            .loaded_plugins()
-            .map(|p| GeneratorInfo {
-                name: p.name.clone(),
-                description: p.description.clone(),
-                available: !p.session_disabled,
-                unavailable_reason: if p.session_disabled {
-                    Some("Disabled after error".to_string())
-                } else {
-                    None
-                },
-            })
-            .collect();
-        self.plugin_state = Some(PluginSubState::Selecting {
-            plugins,
-            selected_index: 0,
-        });
-        self.mode = Mode::Plugin;
-    }
-
     pub fn close_plugin_menu(&mut self) {
         self.plugin_state = None;
         self.mode = Mode::Navigate;
@@ -607,6 +579,13 @@ impl AppState {
 
     /// Open plugins modal with Installed tab selected
     pub fn open_plugins_modal(&mut self) {
+        use crate::config::Config;
+        use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+
+        let marketplace_name = Config::load()
+            .map(|c| c.marketplaces.default)
+            .unwrap_or_else(|_| DEFAULT_MARKETPLACE.to_string());
+
         self.plugins_modal_state = Some(PluginsModalState::Tabs {
             active_tab: PluginsTab::Installed,
             installed_index: 0,
@@ -614,6 +593,7 @@ impl AppState {
             marketplace_plugins: None,
             marketplace_loading: false,
             marketplace_error: None,
+            marketplace_name,
         });
         self.mode = Mode::Plugin;
     }

@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use tar::Archive;
 use tempfile::tempdir;
 use totui_plugin_interface::{is_version_compatible, INTERFACE_VERSION};
+use tracing::debug;
 
 /// Result of a successful plugin installation.
 #[derive(Debug, Clone)]
@@ -284,23 +285,23 @@ impl PluginInstaller {
 
         // 2. Construct download URL
         let url = get_plugin_download_url(source)?;
-        println!("Downloading from: {}", url);
+        debug!("Downloading from: {}", url);
 
         // 3. Download to temp directory
         let temp_dir = tempdir().context("Failed to create temp directory")?;
         let archive_path = temp_dir.path().join("plugin.tar.gz");
 
-        println!("Downloading...");
+        debug!("Downloading plugin archive...");
         download_plugin_blocking(&url, &archive_path)?;
-        println!("Download complete.");
+        debug!("Download complete.");
 
         // 4. Extract archive
-        println!("Extracting...");
+        debug!("Extracting archive...");
         let extracted_dir = extract_plugin_archive(&archive_path, temp_dir.path())?;
-        println!("Extraction complete.");
+        debug!("Extraction complete.");
 
         // 5. Validate manifest
-        println!("Verifying...");
+        debug!("Verifying plugin...");
         let info = PluginManager::load_plugin_info(&extracted_dir);
         if let Some(err) = &info.error {
             bail!("Invalid plugin: {}", err);
@@ -323,7 +324,7 @@ impl PluginInstaller {
         }
 
         // 7. Move to plugins directory
-        println!("Installing...");
+        debug!("Installing to {:?}...", target_dir);
         if target_dir.exists() {
             fs::remove_dir_all(&target_dir).context("Failed to remove existing plugin")?;
         }
@@ -345,7 +346,7 @@ impl PluginInstaller {
         let source_file = target_dir.join(".source");
         fs::write(&source_file, &source_content).ok(); // Non-fatal if fails
 
-        println!("Done!");
+        debug!("Plugin installation complete.");
 
         Ok(InstallResult {
             plugin_name: info.manifest.name,
@@ -367,7 +368,7 @@ impl PluginInstaller {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Cannot resolve version for local install"))?;
 
-        println!("Fetching marketplace manifest...");
+        debug!("Fetching marketplace manifest from {}/{}...", owner, repo);
         let manifest = fetch_marketplace(owner, repo)?;
 
         let entry = manifest.find_plugin(&source.plugin_name).ok_or_else(|| {
@@ -386,7 +387,7 @@ impl PluginInstaller {
 
 /// Constructs the download URL for a plugin release.
 ///
-/// URL format: https://github.com/{owner}/{repo}/releases/download/v{version}/{plugin}-{target}.tar.gz
+/// URL format: https://github.com/{owner}/{repo}/releases/download/{plugin}-v{version}/{plugin}-{target}.tar.gz
 fn get_plugin_download_url(source: &PluginSource) -> Result<String> {
     let target = get_target_triple();
     let version = source
@@ -403,8 +404,8 @@ fn get_plugin_download_url(source: &PluginSource) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("Repo required for remote install"))?;
 
     Ok(format!(
-        "https://github.com/{}/{}/releases/download/v{}/{}-{}.tar.gz",
-        owner, repo, version, source.plugin_name, target
+        "https://github.com/{}/{}/releases/download/{}-v{}/{}-{}.tar.gz",
+        owner, repo, source.plugin_name, version, source.plugin_name, target
     ))
 }
 
