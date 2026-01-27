@@ -86,6 +86,7 @@ Quick tasks are ad-hoc improvements outside milestone planning:
 | 006-move-item-and-subtree-to-another-project | Move todos between projects with 'm' keybinding | Done | 2026-01-22 |
 | 007-project-filter-mcp-api | Update plugin to v0.4.0 (project filtering) | Done | 2026-01-23 |
 | 001-fix-statusbar-color-readability | Fix status bar color contrast for better text legibility | Done | 2026-01-27 |
+| 002-add-fficonfigtype-select-variant | Add Select config type with dropdown validation | Done | 2026-01-27 |
 
 ## Accumulated Context
 
@@ -178,6 +179,8 @@ Recent decisions affecting current work:
 - 15-02: Remove plugin_registry field from AppState entirely
 - 15-02: Call plugins synchronously instead of spawning thread
 - 15-02: Add description field alongside version for UI display
+- quick-002: Select config type stores values as FfiConfigValue::String
+- quick-002: Empty options list allows any string (flexible usage)
 
 ### Pending Todos
 
@@ -190,6 +193,6 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-01-27
-Stopped at: Completed quick/001-fix-statusbar-color-readability
+Stopped at: Completed quick/002-add-fficonfigtype-select-variant
 Resume file: None
 Next action: Execute 15-03-PLAN.md (cleanup and documentation)

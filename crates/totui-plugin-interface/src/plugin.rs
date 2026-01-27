@@ -36,7 +36,7 @@ use crate::types::FfiTodoItem;
 ///     }
 ///
 ///     fn min_interface_version(&self) -> RString {
-///         "0.1.0".into()
+///         "0.2.0".into()
 ///     }
 ///
 ///     fn generate(&self, input: RString) -> RResult<RVec<FfiTodoItem>, RString> {

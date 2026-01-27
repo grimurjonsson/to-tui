@@ -978,9 +978,16 @@ fn handle_plugin_config(name: &str, init: bool) -> Result<()> {
                         totui_plugin_interface::FfiConfigType::Integer => "integer",
                         totui_plugin_interface::FfiConfigType::Boolean => "boolean",
                         totui_plugin_interface::FfiConfigType::StringArray => "string[]",
+                        totui_plugin_interface::FfiConfigType::Select => "select",
                     };
                     let req = if field.required { "*" } else { "" };
                     println!("  {}{}: {}", field.name, req, type_name);
+
+                    // Show options for Select fields
+                    if field.field_type == totui_plugin_interface::FfiConfigType::Select && !field.options.is_empty() {
+                        let opts: Vec<_> = field.options.iter().map(|s| s.as_str()).collect();
+                        println!("      Options: {}", opts.join(", "));
+                    }
                 }
                 println!("\n  * = required");
             }

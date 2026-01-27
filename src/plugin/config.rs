@@ -83,8 +83,13 @@ impl PluginConfigLoader {
             match table.get(&field_name) {
                 Some(value) => {
                     // Validate type matches schema
+                    let options = if field.field_type == FfiConfigType::Select {
+                        Some(&field.options)
+                    } else {
+                        None
+                    };
                     let typed_value =
-                        Self::validate_field_type(&field_name, value, field.field_type)?;
+                        Self::validate_field_type(&field_name, value, field.field_type, options)?;
                     result.insert(field_name, typed_value);
                 }
                 None => {
@@ -120,6 +125,7 @@ impl PluginConfigLoader {
     /// * `field_name` - The field name for error messages
     /// * `value` - The TOML value to validate
     /// * `expected` - The expected type from the schema
+    /// * `options` - For Select type, the allowed options (ignored for other types)
     ///
     /// # Returns
     ///
@@ -128,6 +134,7 @@ impl PluginConfigLoader {
         field_name: &str,
         value: &Value,
         expected: FfiConfigType,
+        options: Option<&RVec<RString>>,
     ) -> Result<ConfigValue> {
         match (expected, value) {
             (FfiConfigType::String, Value::String(s)) => Ok(ConfigValue::String(s.clone())),
@@ -142,6 +149,21 @@ impl PluginConfigLoader {
                     })
                     .collect();
                 Ok(ConfigValue::StringArray(strings?))
+            }
+            (FfiConfigType::Select, Value::String(s)) => {
+                // Validate that value is in allowed options (if options provided)
+                if let Some(opts) = options
+                    && !opts.is_empty() && !opts.iter().any(|opt| opt.as_str() == s)
+                {
+                    let opts_list: Vec<_> = opts.iter().map(|o| format!("\"{}\"", o)).collect();
+                    bail!(
+                        "{}: value '{}' is not one of the allowed options: {}",
+                        field_name,
+                        s,
+                        opts_list.join(", ")
+                    );
+                }
+                Ok(ConfigValue::String(s.clone()))
             }
             _ => bail!(
                 "{}: expected {:?}, got {}",
@@ -219,6 +241,7 @@ pub fn generate_config_template(schema: &FfiConfigSchema) -> String {
             FfiConfigType::Integer => "integer",
             FfiConfigType::Boolean => "boolean",
             FfiConfigType::StringArray => "string array",
+            FfiConfigType::Select => "select",
         };
 
         // Add description as comment if present
@@ -229,6 +252,12 @@ pub fn generate_config_template(schema: &FfiConfigSchema) -> String {
         // Add type and required/optional info
         let req_str = if field.required { "required" } else { "optional" };
         lines.push(format!("# Type: {} ({})", type_name, req_str));
+
+        // For Select type, add options comment
+        if field.field_type == FfiConfigType::Select && !field.options.is_empty() {
+            let opts: Vec<_> = field.options.iter().map(|s| format!("\"{}\"", s)).collect();
+            lines.push(format!("# Options: {}", opts.join(", ")));
+        }
 
         // Generate the field line
         let example_value = match &field.default {
@@ -270,6 +299,7 @@ fn get_example_value(field_type: FfiConfigType) -> String {
         FfiConfigType::Integer => "0".to_string(),
         FfiConfigType::Boolean => "false".to_string(),
         FfiConfigType::StringArray => "[\"item1\", \"item2\"]".to_string(),
+        FfiConfigType::Select => "\"option\"".to_string(),
     }
 }
 
@@ -282,7 +312,7 @@ mod tests {
     #[test]
     fn test_validate_field_type_string() {
         let value = Value::String("hello".to_string());
-        let result = PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::String);
+        let result = PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::String, None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ConfigValue::String("hello".to_string()));
     }
@@ -291,7 +321,7 @@ mod tests {
     fn test_validate_field_type_integer() {
         let value = Value::Integer(42);
         let result =
-            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::Integer);
+            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::Integer, None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ConfigValue::Integer(42));
     }
@@ -300,7 +330,7 @@ mod tests {
     fn test_validate_field_type_boolean() {
         let value = Value::Boolean(true);
         let result =
-            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::Boolean);
+            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::Boolean, None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ConfigValue::Boolean(true));
     }
@@ -312,7 +342,7 @@ mod tests {
             Value::String("b".to_string()),
         ]);
         let result =
-            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::StringArray);
+            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::StringArray, None);
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap(),
@@ -324,7 +354,7 @@ mod tests {
     fn test_validate_field_type_mismatch_includes_field_name() {
         let value = Value::String("not an integer".to_string());
         let result =
-            PluginConfigLoader::validate_field_type("my_field", &value, FfiConfigType::Integer);
+            PluginConfigLoader::validate_field_type("my_field", &value, FfiConfigType::Integer, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -338,7 +368,7 @@ mod tests {
     fn test_validate_field_type_string_array_mixed_types() {
         let value = Value::Array(vec![Value::String("a".to_string()), Value::Integer(42)]);
         let result =
-            PluginConfigLoader::validate_field_type("tags", &value, FfiConfigType::StringArray);
+            PluginConfigLoader::validate_field_type("tags", &value, FfiConfigType::StringArray, None);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("tags"), "Error should contain field name: {}", err);
@@ -355,6 +385,7 @@ mod tests {
                     required: false,
                     default: ROption::RSome(FfiConfigValue::Integer(30)),
                     description: ROption::RNone,
+                    options: RVec::new(),
                 },
                 FfiConfigField {
                     name: RString::from("debug"),
@@ -362,6 +393,7 @@ mod tests {
                     required: false,
                     default: ROption::RSome(FfiConfigValue::Boolean(false)),
                     description: ROption::RNone,
+                    options: RVec::new(),
                 },
                 FfiConfigField {
                     name: RString::from("api_key"),
@@ -369,6 +401,7 @@ mod tests {
                     required: true,
                     default: ROption::RNone,
                     description: ROption::RNone,
+                    options: RVec::new(),
                 },
             ]),
         };
@@ -437,6 +470,7 @@ mod tests {
                 required: true,
                 default: ROption::RNone,
                 description: ROption::RNone,
+                options: RVec::new(),
             }]),
         };
 
@@ -461,6 +495,7 @@ mod tests {
                 required: false,
                 default: ROption::RSome(FfiConfigValue::Integer(30)),
                 description: ROption::RNone,
+                options: RVec::new(),
             }]),
         };
 
@@ -484,6 +519,7 @@ mod tests {
                 required: true,
                 default: ROption::RNone,
                 description: ROption::RSome(RString::from("Your API key for authentication")),
+                options: RVec::new(),
             }]),
         };
 
@@ -491,5 +527,89 @@ mod tests {
 
         // Description should appear as comment
         assert!(template.contains("# Your API key for authentication"));
+    }
+
+    #[test]
+    fn test_validate_field_type_select_valid_option() {
+        let value = Value::String("prod".to_string());
+        let options = RVec::from(vec![
+            RString::from("dev"),
+            RString::from("staging"),
+            RString::from("prod"),
+        ]);
+        let result = PluginConfigLoader::validate_field_type(
+            "environment",
+            &value,
+            FfiConfigType::Select,
+            Some(&options),
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ConfigValue::String("prod".to_string()));
+    }
+
+    #[test]
+    fn test_validate_field_type_select_invalid_option() {
+        let value = Value::String("production".to_string());
+        let options = RVec::from(vec![
+            RString::from("dev"),
+            RString::from("staging"),
+            RString::from("prod"),
+        ]);
+        let result = PluginConfigLoader::validate_field_type(
+            "environment",
+            &value,
+            FfiConfigType::Select,
+            Some(&options),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("environment"));
+        assert!(err.contains("production"));
+        assert!(err.contains("not one of the allowed options"));
+    }
+
+    #[test]
+    fn test_validate_field_type_select_empty_options() {
+        // Empty options means any string is valid
+        let value = Value::String("anything".to_string());
+        let options = RVec::new();
+        let result = PluginConfigLoader::validate_field_type(
+            "freeform",
+            &value,
+            FfiConfigType::Select,
+            Some(&options),
+        );
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ConfigValue::String("anything".to_string()));
+    }
+
+    #[test]
+    fn test_generate_template_select_with_options() {
+        use super::generate_config_template;
+
+        let schema = FfiConfigSchema {
+            config_required: true,
+            fields: RVec::from(vec![FfiConfigField {
+                name: RString::from("environment"),
+                field_type: FfiConfigType::Select,
+                required: true,
+                default: ROption::RSome(FfiConfigValue::String(RString::from("dev"))),
+                description: ROption::RSome(RString::from("Target environment")),
+                options: RVec::from(vec![
+                    RString::from("dev"),
+                    RString::from("staging"),
+                    RString::from("prod"),
+                ]),
+            }]),
+        };
+
+        let template = generate_config_template(&schema);
+
+        // Should show select type
+        assert!(template.contains("# Type: select (required)"));
+        // Should list options
+        assert!(template.contains("# Options: \"dev\", \"staging\", \"prod\""));
+        // Should use default value
+        assert!(template.contains("environment = \"dev\""));
     }
 }

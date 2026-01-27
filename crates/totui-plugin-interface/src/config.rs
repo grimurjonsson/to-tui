@@ -37,6 +37,8 @@ pub enum FfiConfigType {
     Boolean = 2,
     /// Array of strings type
     StringArray = 3,
+    /// Select type (string value from a predefined list of options)
+    Select = 4,
 }
 
 /// FFI-safe config field definition.
@@ -56,6 +58,8 @@ pub struct FfiConfigField {
     pub default: ROption<FfiConfigValue>,
     /// Human-readable description (for `totui plugin config <name> --init`)
     pub description: ROption<RString>,
+    /// Allowed options for Select type (empty for other types)
+    pub options: RVec<RString>,
 }
 
 /// FFI-safe config schema.
