@@ -1,3 +1,4 @@
+pub mod plugin_modal;
 pub mod status_bar;
 pub mod todo_list;
 
@@ -39,7 +40,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         render_help_overlay(f, state);
     }
 
-    if let Some(ref plugin_state) = state.plugin_state {
+    // Render new plugins modal if active, otherwise fall back to old plugin overlay
+    if state.plugins_modal_state.is_some() {
+        plugin_modal::render_plugins_modal(f, state);
+    } else if let Some(ref plugin_state) = state.plugin_state {
         render_plugin_overlay(f, state, plugin_state);
     }
 
@@ -47,14 +51,19 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
         render_rollover_overlay(f, state);
     }
 
+    // Render plugin error popup overlay
+    if state.show_plugin_error_popup {
+        render_plugin_error_popup(f, state);
+    }
+
     if state.mode == Mode::UpgradePrompt {
         render_upgrade_overlay(f, state);
     }
 
-    if state.mode == Mode::ProjectSelect {
-        if let Some(ref project_state) = state.project_state {
-            render_project_overlay(f, state, project_state);
-        }
+    if state.mode == Mode::ProjectSelect
+        && let Some(ref project_state) = state.project_state
+    {
+        render_project_overlay(f, state, project_state);
     }
 
     if state.mode == Mode::MoveToProject {
@@ -62,6 +71,7 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     }
 }
 
+#[allow(clippy::vec_init_then_push)]
 fn render_help_overlay(f: &mut Frame, state: &AppState) {
     let key_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(state.theme.foreground);
@@ -286,6 +296,46 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
         Span::styled("    Backspace       ", key_style),
         Span::styled("Delete character", desc_style),
     ]));
+
+    // Plugin Actions section (only if any enabled plugins have actions)
+    let actions_by_plugin = state.plugin_action_registry.actions_by_plugin();
+    if !actions_by_plugin.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ── Plugin Actions ──",
+            section_style,
+        )));
+
+        // Sort plugin names for consistent display
+        let mut plugin_names: Vec<_> = actions_by_plugin.keys().collect();
+        plugin_names.sort();
+
+        for plugin_name in plugin_names {
+            let actions = &actions_by_plugin[plugin_name];
+
+            lines.push(Line::from(vec![Span::styled(
+                format!("  [{}]", plugin_name),
+                Style::default()
+                    .fg(Color::Blue)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+
+            for action in actions {
+                // Format the KeyBinding directly using its Display impl
+                let key_text = action
+                    .keybinding
+                    .as_ref()
+                    .map(|kb| format!("{:<16}", kb))
+                    .unwrap_or_else(|| "(no binding)    ".to_string());
+
+                lines.push(Line::from(vec![
+                    Span::styled(format!("    {}  ", key_text), key_style),
+                    Span::styled(&action.description, desc_style),
+                ]));
+            }
+        }
+    }
+
     lines.push(Line::from(""));
 
     // Footer hint
@@ -900,31 +950,26 @@ fn render_upgrade_restart_prompt(f: &mut Frame, state: &AppState) {
         .title(" Update Ready ")
         .style(Style::default().bg(state.theme.background));
 
-    let mut lines: Vec<Line> = vec![];
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(
+    let lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(vec![Span::styled(
             "  Download complete!",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
             "  The application will restart to complete the update.",
             Style::default().fg(state.theme.foreground),
-        ),
-    ]));
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
             "  Any unsaved changes will be lost.",
             Style::default().fg(Color::Yellow),
-        ),
-    ]));
-    lines.push(Line::from(""));
+        )]),
+        Line::from(""),
+    ];
 
     let content = Paragraph::new(lines)
         .block(block)
@@ -1349,5 +1394,90 @@ pub fn render_move_to_project_modal(frame: &mut Frame, state: &AppState) {
         );
 
     frame.render_widget(list, area);
+}
+
+/// Render the plugin error popup overlay.
+/// Shows loading errors with plugin names and messages, plus a hint to run `totui plugin status`.
+pub fn render_plugin_error_popup(f: &mut Frame, state: &AppState) {
+    if !state.show_plugin_error_popup || state.pending_plugin_errors.is_empty() {
+        return;
+    }
+
+    let errors = &state.pending_plugin_errors;
+    let area = f.area();
+
+    // Center popup, 65% width, height based on error count (max 60% of screen)
+    let popup_width = (area.width * 65) / 100;
+    let content_lines = errors.len() * 2 + 6; // 2 lines per error + header/footer
+    let popup_height = (content_lines as u16 + 4).min((area.height * 60) / 100);
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length((area.height - popup_height) / 2),
+            Constraint::Length(popup_height),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let popup_area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length((area.width - popup_width) / 2),
+            Constraint::Length(popup_width),
+            Constraint::Min(0),
+        ])
+        .split(popup_layout[1])[1];
+
+    // Clear background
+    f.render_widget(Clear, popup_area);
+
+    // Build error text
+    let mut lines = vec![
+        Line::from(Span::styled(
+            format!("{} plugin(s) failed to load:", errors.len()),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+    ];
+
+    for error in errors {
+        lines.push(Line::from(vec![
+            Span::styled("  - ", Style::default().fg(Color::Red)),
+            Span::styled(
+                &error.plugin_name,
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(&error.message, Style::default().fg(Color::DarkGray)),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Run `totui plugin status` for details",
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::ITALIC),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Press any key to dismiss",
+        Style::default().fg(Color::Yellow),
+    )));
+
+    let paragraph = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .title(" Plugin Loading Errors ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Red)),
+        )
+        .wrap(Wrap { trim: false })
+        .style(Style::default().bg(state.theme.background));
+
+    f.render_widget(paragraph, popup_area);
 }
 

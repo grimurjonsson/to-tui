@@ -54,7 +54,10 @@ pub fn get_asset_download_url(version: &str) -> String {
 }
 
 /// Returns the target triple for the current platform.
-fn get_target_triple() -> &'static str {
+///
+/// Used for downloading platform-specific binaries from GitHub releases.
+/// Supports: macOS (ARM/Intel), Linux (x86_64).
+pub fn get_target_triple() -> &'static str {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         "aarch64-apple-darwin"

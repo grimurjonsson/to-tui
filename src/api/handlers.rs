@@ -17,6 +17,7 @@ use super::models::{
 };
 
 /// Helper to get project name with validation
+#[allow(clippy::result_large_err)]
 fn get_validated_project(project: Option<String>) -> Result<String, axum::response::Response<axum::body::Body>> {
     let project_name = project.unwrap_or_else(|| DEFAULT_PROJECT_NAME.to_string());
 

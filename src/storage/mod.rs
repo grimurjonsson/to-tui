@@ -1,6 +1,7 @@
 pub mod database;
 pub mod file;
 pub mod markdown;
+pub mod metadata;
 pub mod migration;
 pub mod rollover;
 pub mod ui_cache;

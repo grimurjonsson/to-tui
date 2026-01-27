@@ -1,173 +1,367 @@
-# Stack Research: Rust TUI Clipboard Integration
+# Stack Research: Dynamic Plugin System
 
-**Domain:** Rust TUI clipboard integration
-**Researched:** 2026-01-17
-**Confidence:** HIGH
+**Project:** to-tui
+**Researched:** 2026-01-24
+**Focus:** Dynamic plugin loading for Rust TUI application
+**Confidence:** HIGH (verified with official docs)
 
-## Summary
+## Executive Summary
 
-Cross-platform clipboard support in Rust TUI applications is well-served by a mature ecosystem. The clear winner is **arboard**, maintained by 1Password, which provides a simple API for text and image clipboard operations across macOS, Windows, and Linux (X11/Wayland).
-
-For to-tui's use case (copying todo text to system clipboard with Cmd-C/Ctrl-C), arboard provides exactly what's needed: a simple `set_text()` API that works cross-platform with no external daemon requirements on macOS/Windows. On Linux, clipboard data persists as long as the TUI app is running (which is the expected use case).
-
-**Primary recommendation:** Use `arboard = "3.6"` with the `wayland-data-control` feature for full Linux support.
+For a dynamic plugin system in to-tui, the recommended approach is **`abi_stable`** for FFI-safe plugin interfaces combined with **`libloading`** (used internally by abi_stable) for cross-platform dynamic library loading. The existing `reqwest` in the codebase can handle GitHub release downloads for plugin auto-installation.
 
 ## Recommended Stack
 
-### Core Technologies
-
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| arboard | 3.6.1 | System clipboard access | 1Password-maintained, simple API, cross-platform, 21M+ downloads, active development (Aug 2025 release) |
-
-### Cargo.toml Addition
+### Dynamic Loading & ABI Stability
 
 ```toml
-arboard = { version = "3.6", features = ["wayland-data-control"] }
+[dependencies]
+abi_stable = "0.11"
 ```
 
-**Feature rationale:**
-- `wayland-data-control`: Enables native Wayland clipboard support. Without this, Linux users on pure Wayland (increasingly common in 2025+) won't have clipboard access. The feature falls back to X11 automatically if Wayland isn't available.
+- **Purpose:** Provides stable ABI for Rust-to-Rust FFI, enabling plugins compiled with different rustc versions to work together
+- **Why this one:**
+  - Built on `libloading` internally, but adds crucial ABI stability layer
+  - Provides `StableAbi` derive macro for FFI-safe types
+  - Includes FFI-safe alternatives to std types: `RVec<T>`, `RString`, `ROption<T>`
+  - Load-time type checking prevents version mismatches from causing segfaults
+  - Active maintenance (0.11.3 current, targets Rust 1.61+)
+  - Well-documented with examples
+- **Cross-platform:** Yes (Windows, macOS, Linux) - uses platform-appropriate loading primitives
 
-### API Usage
+### Plugin Interface Crate Pattern
 
-```rust
-use arboard::Clipboard;
+The project needs a **separate interface crate** that both to-tui and plugins depend on:
 
-// Create clipboard instance
-let mut clipboard = Clipboard::new()?;
-
-// Copy text (accepts &str, String, or Cow<str>)
-clipboard.set_text("Todo text to copy")?;
-
-// Read text (if needed later)
-let text = clipboard.get_text()?;
+```
+to-tui-plugin-interface/
+  Cargo.toml
+  src/lib.rs  <- Defines FFI-safe TodoGenerator trait and types
 ```
 
-The API is straightforward and error-handling aligns with anyhow::Result patterns already used in to-tui.
+This follows the recommended three-crate architecture:
+1. **Interface crate** (to-tui-plugin-interface) - defines types/traits
+2. **Implementation crate** (each plugin) - implements the interface
+3. **User crate** (to-tui) - loads plugins via the interface
 
-## Alternatives Considered
+### FFI-Safe Type Wrappers
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| arboard 3.6 | copypasta 0.10.2 | Only if you need Alacritty-ecosystem compatibility or already use smithay-clipboard |
-| arboard 3.6 | clipboard-rs 0.3.1 | Only if you need iOS/Android support (both in beta/WIP) |
-| arboard 3.6 | cli-clipboard | Never - wrapper around arboard with less maintenance |
+`abi_stable` provides these FFI-safe replacements needed for `TodoItem`:
 
-### Detailed Alternative Analysis
+| Standard Type | FFI-Safe Equivalent | Notes |
+|---------------|---------------------|-------|
+| `String` | `RString` | O(1) conversion via `ManuallyDrop` |
+| `Vec<T>` | `RVec<T>` | O(1) conversion |
+| `Option<T>` | `ROption<T>` | Works with any StableAbi T |
+| `Box<dyn Trait>` | `#[sabi_trait]` macro | FFI-safe trait objects |
+| `Result<T,E>` | `RResult<T,E>` | For error handling across FFI |
 
-**copypasta 0.10.2** (Alacritty team)
-- Pros: Battle-tested in Alacritty terminal, good Wayland support
-- Cons: Different API pattern (trait-based ClipboardProvider), less active than arboard
-- Last updated: April 2025
-- Decision: arboard's simpler API and 1Password backing makes it the better choice
+### Plugin Registry & Manifest Format
 
-**clipboard-rs 0.3.1**
-- Pros: Supports file lists, RTF, custom types, change monitoring
-- Cons: Newer with less ecosystem adoption, mobile support incomplete
-- Last updated: November 2025
-- Decision: Over-engineered for to-tui's text-only needs
+**Recommended: TOML manifest** (already used via `toml = "0.9"` in codebase)
 
-**clipboard (rust-clipboard) 0.5.0**
-- Unmaintained (arboard is its successor fork)
-- Do not use
+```toml
+# ~/.config/to-tui/plugins/example-plugin/manifest.toml
+[plugin]
+name = "example-plugin"
+version = "1.0.0"
+api_version = "1"  # to-tui-plugin-interface version
+description = "An example todo generator plugin"
+authors = ["Author Name"]
+license = "MIT"
+repository = "https://github.com/user/example-plugin"
 
-## What NOT to Use
+[source]
+github = "user/example-plugin"
+asset_pattern = "to-tui-plugin-{target}-{version}"
 
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| clipboard (rust-clipboard) | Unmaintained since arboard forked | arboard |
-| cli-clipboard | Thin wrapper with no added value | arboard directly |
-| copypasta-ext | Extensions for copypasta, not needed | arboard |
-| Manual platform-specific code | Reinventing the wheel, error-prone | arboard |
+[build]
+# For local development
+lib_name = "libtotui_example_plugin"
+```
+
+**Why TOML:**
+- Already in the codebase dependency tree
+- Familiar Cargo.toml-like syntax for Rust developers
+- Human-readable and editable
+- Serde support via existing `serde = { features = ["derive"] }`
+
+### GitHub Release Downloads
+
+**Use existing `reqwest`** (already in Cargo.toml with `stream` feature):
+
+```toml
+# Already present:
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking", "stream"] }
+futures-util = "0.3"
+```
+
+For more ergonomic GitHub API access, optionally add:
+
+```toml
+[dependencies]
+octocrab = { version = "0.47", default-features = false, features = ["rustls", "stream"] }
+```
+
+- **Purpose:** GitHub API client for listing releases, getting asset URLs
+- **Why:** Cleaner than raw reqwest for GitHub-specific operations (release listing, asset streaming)
+- **Optional:** Can use raw reqwest + GitHub API directly if minimizing dependencies
+
+### Async Considerations
+
+`abi_stable` does not directly support async. For async plugin operations:
+
+```toml
+[dependencies]
+async_ffi = "0.5"  # If async plugin methods are needed
+```
+
+**Recommendation:** Keep plugin interface synchronous where possible. The `generate()` method in the existing `TodoGenerator` trait is sync, which is simpler for FFI. Plugins that need async (e.g., HTTP calls) should handle it internally and block.
+
+## Complete Dependencies Addition
+
+```toml
+# Add to existing Cargo.toml [dependencies]
+
+# Core plugin system
+abi_stable = "0.11"
+
+# Optional: Better GitHub API ergonomics
+octocrab = { version = "0.47", default-features = false, features = ["rustls", "stream"] }
+
+# Existing deps already satisfy:
+# - toml (manifest parsing)
+# - reqwest + futures-util (downloading)
+# - serde (serialization)
+```
 
 ## Integration Notes
 
-### ratatui/crossterm Compatibility
+### Compatibility with Existing Stack
 
-arboard has no conflicts with ratatui or crossterm. They operate at different levels:
-- crossterm: Terminal I/O and raw mode
-- ratatui: UI rendering
-- arboard: System clipboard (separate from terminal)
+| Existing | Plugin System | Integration |
+|----------|---------------|-------------|
+| `ratatui` | No interaction | Plugins run before UI display |
+| `axum` | No interaction | Plugins are local, not HTTP |
+| `tokio` | Plugin loading in async context | Load in `spawn_blocking` |
+| `rusqlite` | Plugin data may write to DB | Plugins return `Vec<TodoItem>`, host writes |
+| `serde` | `abi_stable` has serde support | Enable `abi_stable/serde` feature if needed |
 
-**Verified integration:** The `ratatui-code-editor` crate (a syntax-highlighted code editor widget) uses exactly this stack: ratatui + crossterm + arboard.
+### Existing TodoGenerator Trait
 
-### Key Pattern for TUI Apps
-
+Current trait in `src/plugin/mod.rs`:
 ```rust
-// In your event handler (e.g., src/app/event.rs)
-use arboard::Clipboard;
-
-fn handle_copy(todo_text: &str) -> anyhow::Result<()> {
-    let mut clipboard = Clipboard::new()
-        .with_context(|| "Failed to access system clipboard")?;
-    clipboard.set_text(todo_text)
-        .with_context(|| "Failed to copy to clipboard")?;
-    Ok(())
+pub trait TodoGenerator: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn check_available(&self) -> Result<(), String>;
+    fn generate(&self, input: &str) -> Result<Vec<TodoItem>>;
 }
 ```
 
-### Linux-Specific Behavior
+This will need an FFI-safe equivalent using `#[sabi_trait]`:
+```rust
+#[sabi_trait]
+pub trait TodoGeneratorFfi: Send + Sync {
+    fn name(&self) -> RStr<'_>;
+    fn description(&self) -> RStr<'_>;
+    fn check_available(&self) -> RResult<(), RString>;
+    fn generate(&self, input: RStr<'_>) -> RResult<RVec<FfiTodoItem>, RString>;
+}
+```
 
-On Linux (X11/Wayland), clipboard ownership means:
-- Data stays available as long as your TUI app is running
-- When the app exits, clipboard contents may become unavailable
-- This is normal Linux behavior, not an arboard limitation
-- For long-running TUI apps like to-tui, this is fine
+### Type Conversions Needed
 
-**No daemon needed:** Unlike some clipboard tools that require external daemons (like xclip or wl-copy), arboard handles clipboard operations directly through system APIs. No additional system packages required at runtime (though X11 development libraries needed at compile time on Linux).
+The existing types need FFI-safe mirrors:
 
-### macOS/Windows
+```rust
+// FFI-safe TodoState
+#[repr(u8)]
+#[derive(StableAbi)]
+pub enum FfiTodoState {
+    Empty = 0,
+    Checked = 1,
+    Question = 2,
+    Exclamation = 3,
+    InProgress = 4,
+    Cancelled = 5,
+}
 
-No special considerations. Clipboard operations work synchronously and persist after the app exits.
+// FFI-safe Priority
+#[repr(u8)]
+#[derive(StableAbi)]
+pub enum FfiPriority {
+    P0 = 0,
+    P1 = 1,
+    P2 = 2,
+}
 
-### MSRV Compatibility
+// FFI-safe TodoItem
+#[repr(C)]
+#[derive(StableAbi)]
+pub struct FfiTodoItem {
+    pub id: [u8; 16],  // UUID as bytes
+    pub content: RString,
+    pub state: FfiTodoState,
+    pub indent_level: usize,
+    pub parent_id: ROption<[u8; 16]>,
+    pub due_date: ROption<i64>,  // Unix timestamp
+    pub description: ROption<RString>,
+    pub priority: ROption<FfiPriority>,
+    // Omit internal fields (created_at, etc.) - host manages those
+}
+```
 
-arboard requires Rust 1.71.0+. to-tui uses Rust 2024 edition, so this is not a concern.
+## What NOT to Use
 
-## Platform Requirements
+### dlopen2 - Rejected
 
-### Compile-time Dependencies
+```toml
+# Don't use:
+# dlopen2 = "0.8"
+```
 
-| Platform | Requirements |
-|----------|--------------|
-| macOS | None (uses native Cocoa APIs via objc2) |
-| Windows | None (uses native win32 APIs via clipboard-win) |
-| Linux | `xorg-dev`, `libxcb-composite0-dev` for X11 support |
+**Why rejected:**
+- `abi_stable` uses `libloading` internally
+- Adding `dlopen2` creates redundant dependency
+- `dlopen2`'s "nicer interface" benefits are superseded by `abi_stable`'s higher-level abstractions
 
-### Runtime Dependencies
+### stabby - Considered but Not Recommended
 
-| Platform | Requirements |
-|----------|--------------|
-| macOS | None |
-| Windows | None |
-| Linux | Running X11 or Wayland compositor with data-control protocol |
+```toml
+# Alternative, not primary:
+# stabby = "6.0"
+```
+
+**Why not primary:**
+- Newer, less ecosystem adoption than `abi_stable`
+- Uses canary symbols for version checking (creative but less mature)
+- `abi_stable` has more battle-tested FFI-safe std replacements
+- Could reconsider if `abi_stable` maintenance stalls
+
+### cglue - Too Limited
+
+```toml
+# Don't use:
+# cglue = "0.3"
+```
+
+**Why rejected:**
+- Only handles FFI-safe trait objects
+- `abi_stable`'s `#[sabi_trait]` covers this use case
+- Doesn't provide the broader type system needed
+
+### WASM (Wasmtime/Wasmer) - Overkill
+
+```toml
+# Don't use for this project:
+# wasmtime = "..."
+```
+
+**Why rejected:**
+- Adds significant complexity and runtime overhead
+- to-tui plugins are trusted first-party/community code
+- WASM sandboxing benefits not needed for this use case
+- Would require plugins to be compiled to WASM, limiting Rust ecosystem access
+
+### Raw libloading Alone - Too Low Level
+
+```toml
+# Don't use directly:
+# libloading = "0.9"
+```
+
+**Why not alone:**
+- Requires manual `#[repr(C)]` everywhere
+- No load-time type checking
+- No FFI-safe std types
+- Use `abi_stable` which wraps it properly
+
+## Cross-Platform Notes
+
+### Library File Extensions
+
+`libloading` (via `abi_stable`) handles platform differences:
+
+| Platform | Extension | Notes |
+|----------|-----------|-------|
+| Linux | `.so` | `libplugin.so` |
+| macOS | `.dylib` | `libplugin.dylib` |
+| Windows | `.dll` | `plugin.dll` (no `lib` prefix) |
+
+Use `libloading::library_filename()` to get the correct name.
+
+### Plugin Directory Structure
+
+```
+~/.local/share/to-tui/plugins/
+  installed.json                    # Registry of installed plugins
+  example-plugin/
+    manifest.toml                   # Plugin metadata
+    libexample_plugin.so            # Linux
+    libexample_plugin.dylib         # macOS
+    example_plugin.dll              # Windows
+```
+
+### Build Matrix for Plugins
+
+Plugin authors will need to build for:
+- `x86_64-unknown-linux-gnu`
+- `x86_64-apple-darwin`
+- `aarch64-apple-darwin`
+- `x86_64-pc-windows-msvc`
+
+GitHub Actions can automate this with the same approach to-tui already uses for releases.
+
+## Version Compatibility Strategy
+
+### API Versioning
+
+```rust
+// In to-tui-plugin-interface
+pub const API_VERSION: u32 = 1;
+```
+
+- Bump when breaking changes to FFI types
+- Plugins declare required `api_version` in manifest
+- Host refuses to load incompatible versions
+
+### abi_stable Versioning
+
+Each `0.y.0` version of `abi_stable` defines its own incompatible ABI. Strategy:
+- Pin to specific minor version (e.g., `0.11`)
+- Document required `abi_stable` version for plugins
+- Rare updates, coordinated with community
 
 ## Sources
 
-### Primary (HIGH confidence)
-- [arboard GitHub repository](https://github.com/1Password/arboard) - Version 3.6.1, August 2025
-- [arboard docs.rs documentation](https://docs.rs/arboard/latest/arboard/) - API reference
-- [lib.rs arboard page](https://lib.rs/crates/arboard) - Version and feature verification
+### HIGH Confidence (Official Documentation)
+- [abi_stable docs.rs](https://docs.rs/abi_stable/0.11.3/abi_stable/) - Version 0.11.3, API reference
+- [libloading docs.rs](https://docs.rs/libloading/0.9.0/libloading/) - Version 0.9.0
+- [octocrab docs.rs](https://docs.rs/octocrab/latest/octocrab/repos/struct.ReleasesHandler.html) - Release asset streaming
 
-### Secondary (MEDIUM confidence)
-- [copypasta GitHub repository](https://github.com/alacritty/copypasta) - Alternative comparison
-- [clipboard-rs docs.rs](https://docs.rs/crate/clipboard-rs/latest) - Alternative comparison
-- [ratatui-code-editor crates.io](https://crates.io/crates/ratatui-code-editor) - Integration pattern verification
+### MEDIUM Confidence (Verified Blog Posts)
+- [NullDeref: Plugins in Rust with abi_stable](https://nullderef.com/blog/plugin-abi-stable/) - October 2025, detailed tutorial
+- [NullDeref: Dynamic Loading](https://nullderef.com/blog/plugin-dynload/) - Foundation concepts
+- [Arroyo: Rust Plugin Systems](https://www.arroyo.dev/blog/rust-plugin-systems/) - Comparison of approaches
 
-### Verification Notes
-- arboard version 3.6.1 confirmed via GitHub releases (August 23, 2025)
-- copypasta version 0.10.2 confirmed via lib.rs (April 25, 2025)
-- clipboard-rs version 0.3.1 confirmed via lib.rs (November 11, 2025)
-- ratatui + crossterm + arboard integration verified via ratatui-code-editor dependency list
+### GitHub Repositories
+- [abi_stable_crates](https://github.com/rodrimati1992/abi_stable_crates) - Examples in repo
+- [rust_libloading](https://github.com/nagisa/rust_libloading) - Platform support details
+- [octocrab](https://github.com/XAMPPRocky/octocrab) - GitHub API client
 
-## Metadata
+## Summary
 
-**Confidence breakdown:**
-- Crate selection: HIGH - arboard is clearly the ecosystem standard, 1Password-maintained
-- Version: HIGH - verified via multiple sources (GitHub, lib.rs, docs.rs)
-- API: HIGH - verified via docs.rs documentation
-- Integration: HIGH - verified via ratatui-code-editor real-world usage
+**Add these dependencies:**
+```toml
+abi_stable = "0.11"
+# Optional:
+octocrab = { version = "0.47", default-features = false, features = ["rustls", "stream"] }
+```
 
-**Research date:** 2026-01-17
-**Valid until:** 2026-04-17 (clipboard crates are stable, 90-day validity reasonable)
+**Create interface crate:** `to-tui-plugin-interface` with FFI-safe types and traits.
+
+**Use TOML manifests** for plugin metadata (leverages existing `toml` crate).
+
+**Use existing `reqwest`** for downloading, or add `octocrab` for cleaner GitHub API.
+
+**Cross-platform verified:** All recommended crates support Windows, macOS, and Linux.

@@ -65,6 +65,7 @@ impl TodoItem {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn full(
         content: String,
         state: TodoState,

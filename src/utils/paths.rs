@@ -44,6 +44,34 @@ pub fn get_pid_file_path() -> Result<PathBuf> {
     Ok(todo_dir.join("server.pid"))
 }
 
+/// Get the plugins directory path.
+///
+/// Following CONTEXT.md: ~/.local/share/to-tui/plugins/
+/// This uses XDG data directory for cross-platform compatibility.
+pub fn get_plugins_dir() -> Result<PathBuf> {
+    let data_dir =
+        dirs::data_local_dir().ok_or_else(|| anyhow!("Could not find local data directory"))?;
+    Ok(data_dir.join("to-tui").join("plugins"))
+}
+
+/// Get the config directory for a specific plugin.
+///
+/// Returns ~/.config/to-tui/plugins/<name>/ using XDG config directory.
+pub fn get_plugin_config_dir(plugin_name: &str) -> Result<PathBuf> {
+    let config_dir = dirs::config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
+    Ok(config_dir
+        .join("to-tui")
+        .join("plugins")
+        .join(plugin_name))
+}
+
+/// Get the config file path for a specific plugin.
+///
+/// Returns ~/.config/to-tui/plugins/<name>/config.toml
+pub fn get_plugin_config_path(plugin_name: &str) -> Result<PathBuf> {
+    Ok(get_plugin_config_dir(plugin_name)?.join("config.toml"))
+}
+
 pub fn get_ui_cache_path() -> Result<PathBuf> {
     let todo_dir = get_to_tui_dir()?;
     Ok(todo_dir.join("ui_cache.json"))
@@ -155,5 +183,29 @@ mod tests {
         let path = get_pid_file_path().unwrap();
         assert!(path.to_string_lossy().contains(".to-tui"));
         assert!(path.to_string_lossy().ends_with("server.pid"));
+    }
+
+    #[test]
+    fn test_get_plugins_dir() {
+        let dir = get_plugins_dir().unwrap();
+        assert!(dir.to_string_lossy().contains("to-tui"));
+        assert!(dir.to_string_lossy().ends_with("plugins"));
+    }
+
+    #[test]
+    fn test_get_plugin_config_dir() {
+        let dir = get_plugin_config_dir("my-plugin").unwrap();
+        assert!(dir.to_string_lossy().contains("to-tui"));
+        assert!(dir.to_string_lossy().contains("plugins"));
+        assert!(dir.to_string_lossy().ends_with("my-plugin"));
+    }
+
+    #[test]
+    fn test_get_plugin_config_path() {
+        let path = get_plugin_config_path("my-plugin").unwrap();
+        assert!(path.to_string_lossy().contains("to-tui"));
+        assert!(path.to_string_lossy().contains("plugins"));
+        assert!(path.to_string_lossy().contains("my-plugin"));
+        assert!(path.to_string_lossy().ends_with("config.toml"));
     }
 }

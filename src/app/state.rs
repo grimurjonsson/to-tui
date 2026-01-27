@@ -1,21 +1,80 @@
 use super::mode::Mode;
 use crate::keybindings::{KeyBinding, KeybindingCache};
-use crate::plugin::{GeneratorInfo, PluginRegistry};
+use crate::plugin::{
+    marketplace::PluginEntry, GeneratorInfo, HookDispatcher, PluginActionRegistry, PluginLoadError,
+    PluginLoader,
+};
 use crate::project::{Project, ProjectRegistry};
 use crate::storage::file::{load_todo_list_for_project, load_todos_for_viewing_in_project};
 use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
-use crate::utils::upgrade::{get_asset_download_url, spawn_download, DownloadProgress, UpgradeSubState};
+use crate::utils::upgrade::{
+    get_asset_download_url, spawn_download, DownloadProgress, UpgradeSubState,
+};
 use crate::utils::version_check::{spawn_version_checker, VersionCheckResult};
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
 use std::sync::mpsc;
 use std::time::Instant;
+use totui_plugin_interface::{FfiEvent, FfiFieldChange};
 use uuid::Uuid;
 
 const MAX_UNDO_HISTORY: usize = 50;
+
+/// Tab selection in plugins modal
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginsTab {
+    Installed,
+    Marketplace,
+}
+
+/// State for the tabbed plugins modal
+#[derive(Debug, Clone)]
+pub enum PluginsModalState {
+    /// Tab selection mode with list navigation
+    Tabs {
+        active_tab: PluginsTab,
+        installed_index: usize,
+        marketplace_index: usize,
+        marketplace_plugins: Option<Vec<PluginEntry>>,
+        marketplace_loading: bool,
+        marketplace_error: Option<String>,
+    },
+    /// Plugin details view (from Marketplace tab)
+    Details {
+        plugin: PluginEntry,
+        /// Cached marketplace state to return to
+        marketplace_plugins: Vec<PluginEntry>,
+        marketplace_index: usize,
+    },
+    /// Installing plugin from marketplace
+    Installing {
+        plugin_name: String,
+        /// Cached marketplace state to return to
+        marketplace_plugins: Vec<PluginEntry>,
+        marketplace_index: usize,
+    },
+    /// Plugin input prompt (invoking installed plugin)
+    Input {
+        plugin_name: String,
+        input_buffer: String,
+        cursor_pos: usize,
+    },
+    /// Executing plugin
+    Executing {
+        plugin_name: String,
+    },
+    /// Preview generated items
+    Preview {
+        items: Vec<TodoItem>,
+    },
+    /// Error display
+    Error {
+        message: String,
+    },
+}
 
 #[derive(Debug, Clone)]
 pub enum PluginSubState {
@@ -100,8 +159,11 @@ pub struct AppState {
     pub viewing_date: NaiveDate,
     pub today: NaiveDate,
     pub pending_delete_subtask_count: Option<usize>,
-    pub plugin_registry: PluginRegistry,
     pub plugin_state: Option<PluginSubState>,
+    /// New tabbed plugins modal state (replaces plugin_state for P key)
+    pub plugins_modal_state: Option<PluginsModalState>,
+    /// Receiver for marketplace fetch results
+    pub marketplace_fetch_rx: Option<mpsc::Receiver<Result<Vec<PluginEntry>, String>>>,
     pub status_message: Option<(String, Instant)>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
     pub spinner_frame: usize,
@@ -137,18 +199,33 @@ pub struct AppState {
     pub move_to_project_state: Option<MoveToProjectSubState>,
     /// Whether the mouse cursor is currently showing as pointer (for hover effects)
     pub cursor_is_pointer: bool,
+    /// Plugin loader with dynamically loaded plugins
+    pub plugin_loader: PluginLoader,
+    /// Plugin loading errors to display on first render
+    pub pending_plugin_errors: Vec<PluginLoadError>,
+    /// Whether to show plugin error popup
+    pub show_plugin_error_popup: bool,
+    /// Registry of plugin actions with keybinding mappings
+    pub plugin_action_registry: PluginActionRegistry,
+    /// Hook dispatcher for async event handling.
+    pub hook_dispatcher: HookDispatcher,
+    /// True when applying hook-returned commands (prevents cascade).
+    in_hook_apply: bool,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         todo_list: TodoList,
         theme: Theme,
         keybindings: KeybindingCache,
         timeoutlen: u64,
-        plugin_registry: PluginRegistry,
         ui_cache: Option<UiCache>,
         skipped_version: Option<String>,
         current_project: Project,
+        plugin_loader: PluginLoader,
+        plugin_errors: Vec<PluginLoadError>,
+        plugin_action_registry: PluginActionRegistry,
     ) -> Self {
         let today = Local::now().date_naive();
         let viewing_date = todo_list.date;
@@ -183,8 +260,9 @@ impl AppState {
             viewing_date,
             today,
             pending_delete_subtask_count: None,
-            plugin_registry,
             plugin_state: None,
+            plugins_modal_state: None,
+            marketplace_fetch_rx: None,
             status_message: None,
             plugin_result_rx: None,
             spinner_frame: 0,
@@ -205,6 +283,12 @@ impl AppState {
             project_state: None,
             move_to_project_state: None,
             cursor_is_pointer: false,
+            show_plugin_error_popup: !plugin_errors.is_empty(),
+            pending_plugin_errors: plugin_errors,
+            plugin_loader,
+            plugin_action_registry,
+            hook_dispatcher: HookDispatcher::new(),
+            in_hook_apply: false,
         };
         // Sync list state with cursor position
         state.sync_list_state();
@@ -305,10 +389,11 @@ impl AppState {
             let mut offset = 1;
 
             // If current item has expanded description, that's another ListItem between
-            if let Some(item) = self.todo_list.items.get(self.cursor_position) {
-                if !item.collapsed && item.description.is_some() {
-                    offset += 1;
-                }
+            if let Some(item) = self.todo_list.items.get(self.cursor_position)
+                && !item.collapsed
+                && item.description.is_some()
+            {
+                offset += 1;
             }
 
             self.list_state.select(Some(current + offset));
@@ -493,7 +578,21 @@ impl AppState {
     }
 
     pub fn open_plugin_menu(&mut self) {
-        let plugins = self.plugin_registry.list();
+        // Build GeneratorInfo list from loaded plugins
+        let plugins: Vec<GeneratorInfo> = self
+            .plugin_loader
+            .loaded_plugins()
+            .map(|p| GeneratorInfo {
+                name: p.name.clone(),
+                description: p.description.clone(),
+                available: !p.session_disabled,
+                unavailable_reason: if p.session_disabled {
+                    Some("Disabled after error".to_string())
+                } else {
+                    None
+                },
+            })
+            .collect();
         self.plugin_state = Some(PluginSubState::Selecting {
             plugins,
             selected_index: 0,
@@ -504,6 +603,113 @@ impl AppState {
     pub fn close_plugin_menu(&mut self) {
         self.plugin_state = None;
         self.mode = Mode::Navigate;
+    }
+
+    /// Open plugins modal with Installed tab selected
+    pub fn open_plugins_modal(&mut self) {
+        self.plugins_modal_state = Some(PluginsModalState::Tabs {
+            active_tab: PluginsTab::Installed,
+            installed_index: 0,
+            marketplace_index: 0,
+            marketplace_plugins: None,
+            marketplace_loading: false,
+            marketplace_error: None,
+        });
+        self.mode = Mode::Plugin;
+    }
+
+    /// Close plugins modal and return to Navigate mode
+    pub fn close_plugins_modal(&mut self) {
+        self.plugins_modal_state = None;
+        self.marketplace_fetch_rx = None;
+        self.mode = Mode::Navigate;
+    }
+
+    /// Start async marketplace fetch
+    pub fn start_marketplace_fetch(&mut self) {
+        use crate::config::Config;
+        use crate::plugin::marketplace::fetch_marketplace;
+
+        let (tx, rx) = mpsc::channel();
+        self.marketplace_fetch_rx = Some(rx);
+
+        // Get marketplace URL from config (format: "owner/repo")
+        let marketplace_ref = Config::load()
+            .map(|c| c.marketplaces.default.clone())
+            .unwrap_or_else(|_| "grimurjonsson/to-tui-plugins".to_string());
+
+        // Parse owner/repo
+        let parts: Vec<&str> = marketplace_ref.split('/').collect();
+        let (owner, repo) = if parts.len() == 2 {
+            (parts[0].to_string(), parts[1].to_string())
+        } else {
+            ("grimurjonsson".to_string(), "to-tui-plugins".to_string())
+        };
+
+        std::thread::spawn(move || {
+            let result = fetch_marketplace(&owner, &repo)
+                .map(|manifest| manifest.plugins)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(result);
+        });
+
+        // Update state to show loading
+        if let Some(PluginsModalState::Tabs {
+            marketplace_loading,
+            ..
+        }) = &mut self.plugins_modal_state
+        {
+            *marketplace_loading = true;
+        }
+    }
+
+    /// Check for marketplace fetch results (non-blocking)
+    pub fn check_marketplace_fetch(&mut self) {
+        if let Some(rx) = &self.marketplace_fetch_rx {
+            match rx.try_recv() {
+                Ok(Ok(plugins)) => {
+                    self.marketplace_fetch_rx = None;
+                    if let Some(PluginsModalState::Tabs {
+                        marketplace_plugins,
+                        marketplace_loading,
+                        marketplace_error,
+                        ..
+                    }) = &mut self.plugins_modal_state
+                    {
+                        *marketplace_plugins = Some(plugins);
+                        *marketplace_loading = false;
+                        *marketplace_error = None;
+                    }
+                }
+                Ok(Err(e)) => {
+                    self.marketplace_fetch_rx = None;
+                    if let Some(PluginsModalState::Tabs {
+                        marketplace_loading,
+                        marketplace_error,
+                        ..
+                    }) = &mut self.plugins_modal_state
+                    {
+                        *marketplace_loading = false;
+                        *marketplace_error = Some(e);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => {
+                    // Still loading, do nothing
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.marketplace_fetch_rx = None;
+                    if let Some(PluginsModalState::Tabs {
+                        marketplace_loading,
+                        marketplace_error,
+                        ..
+                    }) = &mut self.plugins_modal_state
+                    {
+                        *marketplace_loading = false;
+                        *marketplace_error = Some("Marketplace fetch failed".to_string());
+                    }
+                }
+            }
+        }
     }
 
     pub fn set_status_message(&mut self, message: String) {
@@ -694,6 +900,20 @@ impl AppState {
         }
 
         self.unsaved_changes = true;
+
+        // Fire event for state change on the main item (not all children)
+        if let Some(ffi_item) = self.todo_to_ffi(self.cursor_position) {
+            let event = if self.todo_list.items[self.cursor_position].state.is_complete() {
+                FfiEvent::OnComplete { todo: ffi_item }
+            } else {
+                FfiEvent::OnModify {
+                    todo: ffi_item,
+                    field_changed: FfiFieldChange::State,
+                }
+            };
+            self.fire_event(event);
+        }
+
         true
     }
 
@@ -705,6 +925,20 @@ impl AppState {
             if let Some(item) = self.selected_item_mut() {
                 item.cycle_state();
                 self.unsaved_changes = true;
+
+                // Fire event for state change
+                if let Some(ffi_item) = self.todo_to_ffi(self.cursor_position) {
+                    let event = if self.todo_list.items[self.cursor_position].state.is_complete() {
+                        FfiEvent::OnComplete { todo: ffi_item }
+                    } else {
+                        FfiEvent::OnModify {
+                            todo: ffi_item,
+                            field_changed: FfiFieldChange::State,
+                        }
+                    };
+                    self.fire_event(event);
+                }
+
                 return true;
             }
         }
@@ -919,6 +1153,36 @@ impl AppState {
         self.mode = Mode::Navigate;
     }
 
+    /// Dismiss the plugin error popup without clearing the errors.
+    /// Errors stay in pending_plugin_errors for `totui plugin status` command.
+    pub fn dismiss_plugin_error_popup(&mut self) {
+        self.show_plugin_error_popup = false;
+        // Note: errors stay in pending_plugin_errors for totui plugin status
+    }
+
+    /// Get the count of loaded dynamic plugins.
+    pub fn loaded_plugin_count(&self) -> usize {
+        self.plugin_loader.loaded_plugins().count()
+    }
+
+    /// Handle a plugin panic by adding it to pending errors and showing the popup.
+    /// Called when a runtime panic occurs during plugin execution.
+    /// Note: Currently only used in tests, will be called from generate workflow in future phases.
+    #[cfg(test)]
+    pub fn handle_plugin_panic(&mut self, error: PluginLoadError) {
+        // Add to pending errors for display
+        self.pending_plugin_errors.push(error);
+        self.show_plugin_error_popup = true;
+    }
+
+    /// Get a mutable reference to the plugin loader.
+    /// Used for calling plugin methods safely with panic catching.
+    /// Note: Currently only used in tests, will be called from generate workflow in future phases.
+    #[cfg(test)]
+    pub fn plugin_loader_mut(&mut self) -> &mut PluginLoader {
+        &mut self.plugin_loader
+    }
+
     /// Execute the move: extract item+subtree from current list, add to destination
     pub fn execute_move_to_project(&mut self, dest_project: &Project) -> Result<usize> {
         use crate::storage::file::{load_todo_list_for_project, save_todo_list_for_project};
@@ -964,6 +1228,97 @@ impl AppState {
 
         Ok(count)
     }
+
+    /// Fire an event to all subscribed plugins.
+    ///
+    /// Does nothing if currently applying hook results (cascade prevention).
+    pub fn fire_event(&self, event: FfiEvent) {
+        if self.in_hook_apply {
+            return; // Prevent cascade
+        }
+
+        let event_type = event.event_type();
+        let subscribed = self.plugin_loader.plugins_for_event(event_type);
+
+        for (plugin, timeout) in subscribed {
+            self.hook_dispatcher
+                .dispatch_to_plugin(event.clone(), plugin, timeout);
+        }
+    }
+
+    /// Poll hook results and apply commands.
+    ///
+    /// Called from UI event loop each frame.
+    /// Commands are applied without undo (hooks are secondary effects).
+    pub fn apply_pending_hook_results(&mut self) {
+        let results = self.hook_dispatcher.poll_results();
+
+        for result in results {
+            // Handle errors
+            if let Some(error) = result.error {
+                self.pending_plugin_errors
+                    .push(crate::plugin::loader::PluginLoadError {
+                        plugin_name: result.plugin_name.clone(),
+                        error_kind: crate::plugin::loader::PluginErrorKind::Panicked {
+                            message: error.clone(),
+                        },
+                        message: format!("Hook failed: {}", error),
+                    });
+                self.show_plugin_error_popup = true;
+                continue;
+            }
+
+            if result.commands.is_empty() {
+                continue;
+            }
+
+            // Apply commands WITHOUT undo snapshot (intentional design decision).
+            // Hook modifications are secondary effects, not user-initiated actions.
+            // If user undoes the original action, hook effects would become orphaned.
+            // This is consistent with Phase 9's CommandExecutor which provides the
+            // execute_batch() method - undo snapshot is caller's responsibility.
+            // For hooks, we deliberately skip the snapshot.
+            self.in_hook_apply = true;
+
+            let mut executor =
+                crate::plugin::command_executor::CommandExecutor::new(result.plugin_name.clone());
+
+            match executor.execute_batch(result.commands, &mut self.todo_list) {
+                Ok(_) => {
+                    self.unsaved_changes = true;
+                    tracing::debug!(
+                        plugin = %result.plugin_name,
+                        "Applied hook commands"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = %result.plugin_name,
+                        error = %e,
+                        "Hook command execution failed"
+                    );
+                }
+            }
+
+            self.in_hook_apply = false;
+        }
+    }
+
+    /// Convert a TodoItem to FfiTodoItem at the given index.
+    fn todo_to_ffi(&self, index: usize) -> Option<totui_plugin_interface::FfiTodoItem> {
+        self.todo_list.items.get(index).map(|item| item.into())
+    }
+
+    /// Fire OnLoad event to subscribed plugins.
+    ///
+    /// Called once after todo list is loaded, before first render.
+    pub fn fire_on_load_event(&self) {
+        let event = FfiEvent::OnLoad {
+            project_name: self.current_project.name.clone().into(),
+            date: self.todo_list.date.format("%Y-%m-%d").to_string().into(),
+        };
+        self.fire_event(event);
+    }
 }
 
 #[cfg(test)]
@@ -973,7 +1328,7 @@ mod tests {
     #[test]
     fn test_session_dismiss_upgrade() {
         use crate::keybindings::KeybindingCache;
-        use crate::plugin::PluginRegistry;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
         use crate::todo::TodoList;
         use crate::ui::theme::Theme;
         use chrono::Local;
@@ -990,10 +1345,12 @@ mod tests {
             Theme::default(),
             KeybindingCache::default(),
             1000,
-            PluginRegistry::new(),
             None,
             None,
             Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
         );
 
         // Simulate new version detected
@@ -1019,7 +1376,7 @@ mod tests {
     #[test]
     fn test_toggle_cascades_to_children() {
         use crate::keybindings::KeybindingCache;
-        use crate::plugin::PluginRegistry;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
         use crate::todo::{TodoList, TodoState};
         use crate::ui::theme::Theme;
         use chrono::Local;
@@ -1041,10 +1398,12 @@ mod tests {
             Theme::default(),
             KeybindingCache::default(),
             1000,
-            PluginRegistry::new(),
             None,
             None,
             Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
         );
 
         // Set cursor to parent (index 0)
@@ -1062,7 +1421,7 @@ mod tests {
     #[test]
     fn test_toggle_cascade_undo_restores_all() {
         use crate::keybindings::KeybindingCache;
-        use crate::plugin::PluginRegistry;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
         use crate::todo::{TodoList, TodoState};
         use crate::ui::theme::Theme;
         use chrono::Local;
@@ -1087,10 +1446,12 @@ mod tests {
             Theme::default(),
             KeybindingCache::default(),
             1000,
-            PluginRegistry::new(),
             None,
             None,
             Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
         );
 
         // Set cursor to parent
@@ -1112,7 +1473,7 @@ mod tests {
     #[test]
     fn test_toggle_cascade_unchecks_all() {
         use crate::keybindings::KeybindingCache;
-        use crate::plugin::PluginRegistry;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
         use crate::todo::{TodoList, TodoState};
         use crate::ui::theme::Theme;
         use chrono::Local;
@@ -1137,10 +1498,12 @@ mod tests {
             Theme::default(),
             KeybindingCache::default(),
             1000,
-            PluginRegistry::new(),
             None,
             None,
             Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
         );
 
         // Set cursor to parent
@@ -1150,5 +1513,183 @@ mod tests {
         state.toggle_current_item_state();
         assert_eq!(state.todo_list.items[0].state, TodoState::Empty);
         assert_eq!(state.todo_list.items[1].state, TodoState::Empty);
+    }
+
+    #[test]
+    fn test_handle_plugin_panic() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{
+            PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader,
+        };
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+        );
+
+        // Initially no errors and popup not shown
+        assert!(state.pending_plugin_errors.is_empty());
+        assert!(!state.show_plugin_error_popup);
+
+        // Handle a plugin panic
+        let error = PluginLoadError {
+            plugin_name: "test-plugin".to_string(),
+            error_kind: PluginErrorKind::Panicked {
+                message: "test panic".to_string(),
+            },
+            message: "Plugin test-plugin panicked: test panic".to_string(),
+        };
+        state.handle_plugin_panic(error);
+
+        // Now should have error and popup shown
+        assert_eq!(state.pending_plugin_errors.len(), 1);
+        assert!(state.show_plugin_error_popup);
+        assert_eq!(state.pending_plugin_errors[0].plugin_name, "test-plugin");
+    }
+
+    #[test]
+    fn test_plugin_loader_mut() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+        );
+
+        // Should be able to get mutable reference to plugin loader
+        let loader = state.plugin_loader_mut();
+        // Verify it's the loader (no plugins loaded by default)
+        assert_eq!(loader.loaded_plugins().count(), 0);
+    }
+
+    #[test]
+    fn test_config_error_appears_in_pending_errors() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader};
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        // Create a config error (simulating what main.rs does when converting ConfigError)
+        let config_error = PluginLoadError {
+            plugin_name: "jira-plugin".to_string(),
+            error_kind: PluginErrorKind::Other(
+                "Config: Missing required field 'api_key'".to_string(),
+            ),
+            message: "Missing required field 'api_key'".to_string(),
+        };
+
+        let state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![config_error],
+            PluginActionRegistry::new(),
+        );
+
+        // Config errors passed during construction should appear in pending_plugin_errors
+        assert_eq!(state.pending_plugin_errors.len(), 1);
+        assert_eq!(state.pending_plugin_errors[0].plugin_name, "jira-plugin");
+        assert!(state.pending_plugin_errors[0].message.contains("api_key"));
+
+        // Popup should be shown when there are errors
+        assert!(state.show_plugin_error_popup);
+    }
+
+    #[test]
+    fn test_dismiss_plugin_error_popup() {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{
+            PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader,
+        };
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        // Create error to trigger popup
+        let error = PluginLoadError {
+            plugin_name: "test-plugin".to_string(),
+            error_kind: PluginErrorKind::LibraryCorrupted,
+            message: "Plugin corrupted".to_string(),
+        };
+
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![error],
+            PluginActionRegistry::new(),
+        );
+
+        // Popup should be shown initially
+        assert!(state.show_plugin_error_popup);
+
+        // Dismiss popup
+        state.dismiss_plugin_error_popup();
+
+        // Popup should be hidden but errors still accessible
+        assert!(!state.show_plugin_error_popup);
+        assert_eq!(state.pending_plugin_errors.len(), 1);
     }
 }

@@ -48,6 +48,56 @@ pub enum Commands {
         #[arg(short, long)]
         yes: bool,
     },
+    /// Manage plugins
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum PluginCommand {
+    /// List installed plugins
+    List,
+    /// Install a plugin from local directory or GitHub
+    Install {
+        /// Plugin source: local path or owner/repo/plugin-name
+        source: String,
+        /// Version to install (remote only, default: latest)
+        #[arg(long)]
+        version: Option<String>,
+        /// Overwrite existing installation
+        #[arg(long)]
+        force: bool,
+    },
+    /// Enable a plugin
+    Enable {
+        /// Plugin name
+        name: String,
+    },
+    /// Disable a plugin
+    Disable {
+        /// Plugin name
+        name: String,
+    },
+    /// Show detailed plugin status
+    Status {
+        /// Plugin name
+        name: String,
+    },
+    /// Validate a plugin's configuration
+    Validate {
+        /// Plugin name
+        name: String,
+    },
+    /// Show or initialize plugin config
+    Config {
+        /// Plugin name
+        name: String,
+        /// Generate template config from schema
+        #[arg(long)]
+        init: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

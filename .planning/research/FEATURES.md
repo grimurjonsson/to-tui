@@ -1,162 +1,338 @@
-# Feature Research
+# Features Research: Plugin System
 
-**Domain:** Terminal clipboard UX
-**Researched:** 2026-01-17
-**Confidence:** MEDIUM
+**Domain:** TUI application plugin system for todo management
+**Researched:** 2026-01-24
+**Confidence:** MEDIUM (based on established patterns from Neovim, Zellij, Taskwarrior, WezTerm)
 
-## Summary
+## Table Stakes
 
-Terminal clipboard operations in vim-style TUI apps follow established conventions from vim's yank/put system, but with important differences for system clipboard integration. The to-tui project already has the infrastructure needed (status bar with timed messages, modal state machine, keybinding system) to implement clipboard support cleanly.
+Features users expect from any plugin system. Missing these means the system feels incomplete or unusable.
 
-**Key insight:** Users expect instant visual feedback when copying. The existing `status_message` mechanism with 3-second timeout is appropriate for copy confirmation.
+### Plugin Lifecycle
 
-## Feature Landscape
+- **Plugin Registration**: Ability to register plugins with the host application
+  - Complexity: LOW
+  - Depends on: None
+  - Notes: Current `PluginRegistry` already does this for generators
 
-### Table Stakes (Users Expect These)
+- **Plugin Discovery**: Auto-discover plugins from a known location
+  - Complexity: LOW
+  - Depends on: Plugin Registration
+  - Notes: Follow pattern of `~/.config/to-tui/plugins/` or similar
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Single-item copy to system clipboard | Core use case - user wants todo text elsewhere | LOW | Use `arboard` or `cli-clipboard` crate |
-| Visual feedback on copy success | Vim shows "X lines yanked", lazygit shows toast | LOW | Already have `set_status_message()` with green highlight |
-| Copy current line content only (no checkbox) | User specified; matches "clean paste" expectation | LOW | Just `item.content.clone()` |
-| Cmd-C on macOS / Ctrl-C alternative on Linux | Platform convention for copy | MEDIUM | See technical notes below |
-| Graceful failure on clipboard errors | Wayland/X11 can fail; SSH sessions problematic | LOW | Show error in status bar |
+- **Plugin Enable/Disable**: Toggle plugins on/off without uninstalling
+  - Complexity: LOW
+  - Depends on: Plugin Registration
+  - Notes: Config-based enable flag
 
-### Differentiators (Nice to Have)
+- **Plugin Availability Check**: Report why a plugin cannot run (missing dependencies)
+  - Complexity: LOW
+  - Depends on: None
+  - Notes: Current `check_available()` trait method handles this
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| `y` key to yank (vim convention) | Familiar to vim users, single keypress | LOW | Add to keybindings as `Action::Copy` |
-| Visual mode multi-select copy | Copy multiple todos at once | MEDIUM | Already have Visual mode; join with newlines |
-| Copy with hierarchy (indented text) | Preserve structure when pasting | LOW | Format indentation as spaces/tabs |
-| Copy todo ID (UUID) | Useful for API/MCP integration | LOW | Different keybinding e.g., `yid` |
-| Highlight yanked item briefly | Vim-highlightedyank style feedback | MEDIUM | Requires render state for timed highlight |
-| Configurable copy format | User chooses: plain text, markdown, with checkbox | HIGH | Config file option |
+### Todo Manipulation
 
-### Anti-Features (Don't Implement)
+- **Create Todos**: Plugins can create new todo items
+  - Complexity: LOW
+  - Depends on: TodoList access
+  - Notes: Current generators already do this via return values
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Clipboard history / paste menu | Power users want multiple clipboards | Scope creep; system clipboard managers exist (clipse, CopyQ) | Let OS handle history |
-| Internal yank registers (vim a-z) | Full vim emulation | Massive complexity for niche use; vim users have vim | Single system clipboard |
-| Paste from clipboard (Ctrl-V) | Symmetry with copy | Ambiguous: paste as new todo? Into edit buffer? Where in hierarchy? | Only support paste in Edit mode (already works via terminal) |
-| Auto-copy on selection | Some terminals do this | Conflicts with Visual mode for other operations (indent, delete) | Explicit copy action only |
-| Copy with ANSI colors | Preserve styling | Garbage when pasted to plain text apps | Plain text only |
-| OSC52 remote clipboard | SSH clipboard sync | Terminal-dependent, complex setup; out of scope | Document as user responsibility |
+- **Read Todos**: Plugins can query the current todo list
+  - Complexity: LOW
+  - Depends on: TodoList access
+  - Notes: Essential for any plugin that processes existing todos
 
-## UX Conventions
+- **Update Todos**: Plugins can modify existing todo items
+  - Complexity: MEDIUM
+  - Depends on: Todo identification (UUID)
+  - Notes: Need safe mutation API that respects undo stack
 
-### Vim/Terminal Clipboard Patterns
+- **Delete Todos**: Plugins can remove todo items (soft delete)
+  - Complexity: MEDIUM
+  - Depends on: Todo identification (UUID)
+  - Notes: Must integrate with undo system; prefer soft delete
 
-**Vim's model:**
-- `y` = yank (copy) to internal register
-- `"+y` = yank to system clipboard (+ register)
-- `yy` = yank current line
-- Visual mode `y` = yank selection
+### Plugin Input/Output
 
-**Simplified for TUI apps:**
-- Most TUI apps skip internal registers entirely
-- Copy goes directly to system clipboard
-- Single keybinding (not chords like `"+y`)
-- Lazygit uses `y` and `Ctrl-o` for different copy operations
+- **Receive Input from User**: Plugin can prompt for input
+  - Complexity: LOW
+  - Depends on: TUI mode system
+  - Notes: Current `PluginSubState::InputPrompt` handles this
 
-**Recommended for to-tui:**
-- `y` in Navigate mode = copy current todo content to system clipboard
-- `y` in Visual mode = copy selected todos (newline-separated)
-- Cmd-C / Ctrl-Shift-C as alternative (platform-dependent)
+- **Display Status Messages**: Plugin can show feedback to user
+  - Complexity: LOW
+  - Depends on: Status message system
+  - Notes: Current `set_status_message()` available
 
-### Feedback Patterns
+- **Show Plugin Results Preview**: User can review before accepting changes
+  - Complexity: MEDIUM
+  - Depends on: TUI modal system
+  - Notes: Current `PluginSubState::Preview` handles this
 
-**What vim does:**
-- Text feedback: "1 line yanked" in command line
-- Modern vim/neovim: Brief highlight of yanked region (via plugin or built-in)
-- Duration: ~500-1000ms for highlight
+### Error Handling
 
-**What lazygit does:**
-- Toast message in status area
-- Shows "Copied to clipboard" or similar
-- Disappears after ~2-3 seconds
+- **Graceful Error Reporting**: Plugin errors don't crash the app
+  - Complexity: MEDIUM
+  - Depends on: Result handling
+  - Notes: Current system handles this via `PluginSubState::Error`
 
-**What to-tui should do:**
-- Use existing `set_status_message()` mechanism
-- Message: "Copied: {truncated content}" or "Copied {n} items"
-- Green background (already implemented for status messages)
-- 3-second timeout (already implemented)
-- On error: Show error message (e.g., "Clipboard unavailable")
+- **Plugin Timeout Handling**: Long-running plugins don't freeze UI
+  - Complexity: MEDIUM
+  - Depends on: Async execution
+  - Notes: Need timeout mechanism for subprocess plugins
 
-**Example flow:**
-1. User presses `y` in Navigate mode
-2. Status bar turns green with "Copied: Buy groceries..."
-3. After 3 seconds, returns to normal status bar
 
-### Keyboard Shortcut Considerations
+## Differentiators
 
-**The Ctrl-C problem:**
-- In terminals, Ctrl-C sends SIGINT (interrupt signal)
-- TUI apps in raw mode can intercept this, but users expect Ctrl-C to interrupt
-- Most terminal apps use Ctrl-Shift-C for copy instead
+Features that would make this plugin system stand out. Not expected, but add significant value.
 
-**The Cmd-C problem (macOS):**
-- Cmd key (Super) detection requires `KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES`
-- Many terminals don't properly support Cmd key combinations
-- Known crossterm issue: Cmd+key often doesn't trigger events
+### Data Access
 
-**Recommended approach:**
-1. Primary: `y` key (vim convention, always works)
-2. Secondary: Ctrl-Shift-C (if terminal supports it)
-3. Document that Cmd-C depends on terminal emulator support
-4. Do NOT intercept plain Ctrl-C (let it send SIGINT for expected behavior)
+- **Database Read-Only Access**: Plugins can query historical todos, archived data
+  - Complexity: MEDIUM
+  - Value: Enables analytics plugins, reporting, cross-day operations
+  - Depends on: Database module
+  - Notes: Read-only is safer than read-write; use prepared queries
 
-## Technical Notes
+- **Project-Aware Operations**: Plugins can work with project boundaries
+  - Complexity: MEDIUM
+  - Value: Enables project-specific plugins (e.g., Jira per project)
+  - Depends on: Project system
+  - Notes: Plugin should know current project context
 
-### Rust Clipboard Libraries
+- **Custom Metadata on Todos**: Plugins can attach key-value data to todos
+  - Complexity: HIGH
+  - Value: Enables rich plugins (time tracking, tags, links)
+  - Depends on: Database schema extension
+  - Notes: Consider JSON blob column for flexibility
 
-| Library | Wayland | X11 | macOS | Windows | Notes |
-|---------|---------|-----|-------|---------|-------|
-| `arboard` (1Password) | Yes* | Yes | Yes | Yes | *Requires `wayland-data-control` feature |
-| `cli-clipboard` | Yes | Yes | Yes | Yes | Fork of rust-clipboard with Wayland support |
-| `terminal-clipboard` | Yes | Yes | Yes | Yes | Focused on terminal apps |
+- **Custom Metadata on Projects**: Plugins can attach data to projects
+  - Complexity: HIGH
+  - Value: Plugin-specific project settings (API keys, URLs)
+  - Depends on: Project system, Database schema
+  - Notes: Could enable per-project Jira configuration
 
-**Recommendation:** Use `arboard` with appropriate features. Well-maintained by 1Password.
+### Keybinding Integration
 
-### Integration Points in to-tui
+- **Register Custom Keybindings**: Plugin can add new key mappings
+  - Complexity: MEDIUM
+  - Value: Native feel for plugin actions
+  - Depends on: Keybinding system (Action enum, KeybindingCache)
+  - Notes: Must avoid conflicts with built-in bindings; need namespace
 
-1. **Keybindings** (`src/keybindings.rs`): Add `Action::CopyToClipboard`
-2. **Event handling** (`src/app/event.rs`): Handle action in navigate/visual modes
-3. **Status bar** (`src/ui/components/status_bar.rs`): Already supports timed messages
-4. **AppState** (`src/app/state.rs`): Already has `set_status_message()`
+- **Register Custom Commands**: Plugin can add slash-commands or similar
+  - Complexity: MEDIUM
+  - Value: Discoverable plugin actions
+  - Depends on: Command system (would need to build)
+  - Notes: Alternative to keybindings; more discoverable
 
-### Error Cases to Handle
+### Advanced Lifecycle
 
-- Clipboard unavailable (Wayland compositor not running, X11 not available)
-- SSH session without OSC52 support
-- Permission denied
-- Empty selection (nothing to copy)
+- **Hot Reload**: Plugins can be updated without restarting app
+  - Complexity: HIGH
+  - Value: Better DX for plugin development
+  - Depends on: Dynamic loading infrastructure
+  - Notes: Rust makes this challenging without WASM
 
-## Complexity Assessment
+- **Plugin Dependencies**: Plugin can declare dependencies on other plugins
+  - Complexity: HIGH
+  - Value: Enables plugin ecosystem
+  - Depends on: Plugin metadata system
+  - Notes: Only valuable if ecosystem grows
 
-| Implementation | Effort | Risk |
-|----------------|--------|------|
-| Basic `y` to copy current item | 2-4 hours | Low |
-| Status bar feedback | Already done | None |
-| Visual mode multi-copy | 1-2 hours | Low |
-| Cmd-C/Ctrl-Shift-C support | 2-4 hours | Medium (terminal-dependent) |
-| Highlight yanked item | 4-8 hours | Medium (render complexity) |
+- **Async Operations with Progress**: Long operations show progress
+  - Complexity: MEDIUM
+  - Value: Better UX for slow operations
+  - Depends on: Async runtime
+  - Notes: Current system uses channels for plugin results
+
+### Plugin Configuration
+
+- **Per-Plugin Config**: Each plugin can store its own settings
+  - Complexity: MEDIUM
+  - Value: Essential for plugins like Jira that need API URLs
+  - Depends on: Config system
+  - Notes: Could use `~/.config/to-tui/plugins/<name>/config.toml`
+
+- **Plugin Settings UI**: Configure plugins through TUI interface
+  - Complexity: HIGH
+  - Value: User-friendly plugin management
+  - Depends on: Modal system, Config system
+  - Notes: Complex but very user-friendly
+
+### Hooks/Events
+
+- **On-Add Hook**: Plugin notified when todo is added
+  - Complexity: MEDIUM
+  - Value: Enables auto-tagging, validation, enrichment
+  - Depends on: Event system
+  - Notes: Taskwarrior pattern; powerful for workflows
+
+- **On-Modify Hook**: Plugin notified when todo is changed
+  - Complexity: MEDIUM
+  - Value: Enables time tracking, audit logging
+  - Depends on: Event system
+  - Notes: Could enable "log hours when marked complete"
+
+- **On-Rollover Hook**: Plugin notified during daily rollover
+  - Complexity: MEDIUM
+  - Value: Custom rollover logic (archive to external system)
+  - Depends on: Event system
+  - Notes: Good for integrations
+
+- **Scheduled Execution**: Plugin runs on schedule (not just user action)
+  - Complexity: HIGH
+  - Value: Background sync, reminders
+  - Depends on: Background task infrastructure
+  - Notes: Significant complexity increase
+
+
+## Anti-Features
+
+Features to deliberately NOT build. Common mistakes to avoid.
+
+- **Full UI Theming by Plugins**: Plugins should NOT control colors/styles
+  - Why not: Leads to inconsistent UX, visual chaos
+  - What to do instead: Plugins use host theme; maybe allow accent color hints
+
+- **Arbitrary Code Execution Without Sandbox**: Running untrusted code unsafely
+  - Why not: Security risk; could damage user data
+  - What to do instead: If supporting external plugins, use WASM sandbox
+
+- **Direct Database Write Access**: Plugins directly modifying SQLite
+  - Why not: Could corrupt data, bypass soft delete, break consistency
+  - What to do instead: Provide mutation API that enforces invariants
+
+- **Blocking UI During Plugin Execution**: Plugin operations freeze the app
+  - Why not: Terrible UX; appears crashed
+  - What to do instead: Async execution with spinner/progress indicator
+
+- **Plugin-Defined TUI Widgets**: Plugins rendering arbitrary UI
+  - Why not: Massive complexity; hard to maintain consistency
+  - What to do instead: Plugins work through defined interaction patterns
+
+- **Global State Mutation**: Plugins modifying app state directly
+  - Why not: Race conditions, hard to debug, breaks undo
+  - What to do instead: Plugins return changes; host applies them
+
+- **Unlimited Network Access**: Plugins making arbitrary HTTP requests
+  - Why not: Security/privacy concerns; unexpected network usage
+  - What to do instead: If network needed, require explicit permission model
+
+- **Bundling Claude Skills into Plugins**: LLM-powered plugins as v2.0 scope
+  - Why not: Adds significant complexity; authentication, rate limits, costs
+  - What to do instead: Keep LLM integration separate from plugin system initially
+
+
+## User Workflows
+
+Common plugin developer and user workflows to design for.
+
+### 1. Create a Generator Plugin (Like Jira)
+
+Steps a developer takes:
+1. Create new crate/module implementing `TodoGenerator` trait
+2. Implement `name()`, `description()`, `check_available()`, `generate()`
+3. Register with `PluginRegistry` (either built-in or discovered)
+4. User invokes via `P` key, selects plugin, provides input
+5. Plugin returns `Vec<TodoItem>`, user previews, accepts/rejects
+
+### 2. Create a Query Plugin
+
+Steps a developer takes:
+1. Create plugin that reads todos matching criteria
+2. Query database for todos with specific state/date/project
+3. Format output (copy to clipboard, display summary)
+4. User invokes, sees results
+
+### 3. Add Custom Keybinding for Plugin
+
+Steps a user takes:
+1. Install/enable plugin
+2. Edit `~/.config/to-tui/config.toml` keybindings section
+3. Add custom binding: `"z" = "plugin:my_plugin"`
+4. Restart app (or hot-reload if supported)
+5. Press `z` to invoke plugin directly
+
+### 4. Configure Plugin Settings
+
+Steps a user takes:
+1. Plugin provides configuration schema
+2. User edits `~/.config/to-tui/plugins/<name>/config.toml`
+3. Or: User accesses plugin settings through TUI modal
+4. Plugin reads its config on invocation
+
+### 5. Hook into Todo Lifecycle
+
+Steps a developer takes:
+1. Register hook function: `on_add`, `on_modify`, `on_complete`
+2. Hook receives todo item context
+3. Hook can return modifications or side effects
+4. Changes applied by host after validation
+
+
+## Feature Dependencies Map
+
+```
+Plugin Registration
+    |
+    v
+Plugin Discovery <-- Plugin Enable/Disable
+    |
+    v
+Create Todos (basic) --> Read Todos --> Update Todos --> Delete Todos
+    |                         |
+    |                         v
+    |                    Database Read-Only Access
+    |                         |
+    v                         v
+Custom Keybindings       Custom Metadata
+    |                         |
+    v                         v
+Command System           Per-Plugin Config
+    |
+    v
+Plugin Settings UI
+```
+
+## MVP Recommendation
+
+For initial plugin system v2.0, prioritize:
+
+1. **Table stakes first**: All items in Table Stakes section
+2. **Key differentiators**:
+   - Database Read-Only Access (enables powerful queries)
+   - Custom Keybindings (native integration feel)
+   - Per-Plugin Config (essential for external integrations)
+   - Custom Metadata on Todos (extensibility foundation)
+
+Defer to post-v2.0:
+- Plugin Settings UI (complex, can use file-based config initially)
+- Hot Reload (Rust makes this hard)
+- Hooks/Events (powerful but complex; build after core is solid)
+- Scheduled Execution (significant infrastructure)
+- Plugin Dependencies (only needed with large ecosystem)
 
 ## Sources
 
-### Primary (HIGH confidence)
-- [Ratatui GitHub](https://github.com/ratatui/ratatui) - TUI framework docs
-- [arboard GitHub](https://github.com/1Password/arboard) - Clipboard library
-- [cli-clipboard GitHub](https://github.com/allie-wake-up/cli-clipboard) - Alternative clipboard library
-- [terminal-clipboard GitHub](https://github.com/Canop/terminal-clipboard) - Terminal-focused clipboard
+### Plugin Architecture Patterns
+- [Plugin Architecture Overview](https://www.dotcms.com/blog/plugin-achitecture) - General plugin design principles
+- [Plugins in Rust: The Technologies](https://nullderef.com/blog/plugin-tech/) - Rust-specific plugin approaches
+- [How to build a plugin system in Rust](https://www.arroyo.dev/blog/rust-plugin-systems/) - WASM-based plugin patterns
 
-### Secondary (MEDIUM confidence)
-- [vim-highlightedyank](https://github.com/machakann/vim-highlightedyank) - Vim yank feedback patterns
-- [lazygit keybindings](https://github.com/jesseduffield/lazygit/blob/master/docs/keybindings/Keybindings_en.md) - TUI copy patterns
-- [crossterm KeyModifiers](https://docs.rs/crossterm/latest/crossterm/event/struct.KeyModifiers.html) - Modifier key handling
-- [Alacritty copy mode](https://wiki.archlinux.org/title/Alacritty) - Terminal emulator conventions
+### Terminal Application Plugin Systems
+- [Zellij Plugin API](https://zellij.dev/documentation/plugin-api) - WASM-based terminal multiplexer plugins
+- [WezTerm Event Hooks](https://wezterm.org/config/lua/wezterm/on.html) - Lua-based terminal configuration
+- [Neovim Lua Plugin Guide](https://neovim.io/doc/user/lua-guide.html) - Comprehensive plugin API example
 
-### Tertiary (LOW confidence - WebSearch only)
-- [NN/G UI Copy Guidelines](https://www.nngroup.com/articles/ui-copy/) - General UX patterns
-- [Neovim clipboard docs](https://ofirgall.github.io/learn-nvim/chapters/04-copy-paste-visual.html) - Register conventions
+### Todo/Task Application Patterns
+- [Taskwarrior Hooks v2](https://taskwarrior.org/docs/hooks2/) - CLI-based hook system for task management
+- [Taskwarrior::Kusarigama](https://github.com/yanick/Taskwarrior-Kusarigama) - Plugin framework for Taskwarrior
+
+### Security Considerations
+- [Wasmtime Security](https://docs.wasmtime.dev/security.html) - WASM sandbox security model
+- [wasm-sandbox crate](https://docs.rs/wasm-sandbox/latest/wasm_sandbox/) - Rust WASM sandboxing
+
+### Keybinding Patterns
+- [crossterm-keybind](https://github.com/yanganto/crossterm-keybind) - Configurable keybindings for TUI apps
+- [Ratatui Keymap Discussion](https://github.com/ratatui/ratatui/discussions/627) - Community patterns for TUI keybindings

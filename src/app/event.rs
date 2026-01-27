@@ -1,9 +1,15 @@
 use super::mode::Mode;
-use super::state::{AppState, MoveToProjectSubState, PluginSubState, ProjectSubState};
+use super::state::{
+    AppState, MoveToProjectSubState, PluginSubState, PluginsModalState, PluginsTab,
+    ProjectSubState,
+};
 use crate::clipboard::copy_to_clipboard;
 use crate::config::Config;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
-use crate::plugin::PluginRegistry;
+use crate::plugin::{
+    marketplace::PluginEntry, CommandExecutor, GeneratorInfo, PluginAction, PluginErrorKind,
+    PluginHostApiImpl, PluginLoadError,
+};
 use crate::project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
 use crate::storage::file::save_todo_list_for_project;
 use crate::storage::{execute_rollover_for_project, find_rollover_candidates_for_project, soft_delete_todos_for_project};
@@ -13,11 +19,15 @@ use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
 use crate::utils::upgrade::{check_write_permission, prepare_binary, replace_and_restart, UpgradeSubState};
+use abi_stable::sabi_trait::TD_Opaque;
+use abi_stable::std_types::RBox;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use std::collections::HashSet;
 use std::fs;
-use std::sync::mpsc;
-use std::thread;
+use totui_plugin_interface::{
+    call_plugin_execute_with_host, FfiEvent, FfiEventSource, FfiFieldChange, HostApi_TO,
+};
 
 /// Total number of lines in the help content (must match render_help_overlay)
 const HELP_TOTAL_LINES: u16 = 57;
@@ -386,14 +396,13 @@ fn calculate_item_visual_height(
 
     let content_len = item.content.len() + due_date_len + collapse_indicator_len;
     let wrapped_lines = if content_max_width > 0 {
-        (content_len + content_max_width - 1) / content_max_width
+        content_len.div_ceil(content_max_width)
     } else {
         1
     };
-    let height = wrapped_lines.max(1);
 
     // Note: Description boxes are handled separately via calculate_description_visual_height
-    height
+    wrapped_lines.max(1)
 }
 
 /// Calculate the visual height of an expanded description box.
@@ -416,7 +425,7 @@ fn calculate_description_visual_height(
             } else {
                 let para_len = paragraph.len();
                 let wrapped = if inner_width > 0 {
-                    (para_len + inner_width - 1) / inner_width
+                    para_len.div_ceil(inner_width)
                 } else {
                     1
                 };
@@ -454,7 +463,13 @@ fn handle_navigate_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         KeyLookupResult::Action(action) => {
             execute_navigate_action(action, state)?;
         }
-        KeyLookupResult::None => {}
+        KeyLookupResult::None => {
+            // Check plugin actions when host keybinding returns None
+            let binding = KeyBinding::from_event(&key);
+            if let Some(plugin_action) = state.plugin_action_registry.lookup(&binding) {
+                execute_plugin_action(plugin_action.clone(), state)?;
+            }
+        }
     }
 
     if state.unsaved_changes {
@@ -662,7 +677,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             state.navigate_to_today()?;
         }
         Action::OpenPluginMenu => {
-            state.open_plugin_menu();
+            state.open_plugins_modal();
         }
         Action::OpenRolloverModal => {
             // Check if we have pending rollover data, or try to find new candidates
@@ -1063,6 +1078,13 @@ fn delete_current_item(state: &mut AppState) -> Result<()> {
         .get_item_range(state.cursor_position)
         .unwrap_or((state.cursor_position, state.cursor_position + 1));
 
+    // Fire OnDelete event BEFORE deletion (to capture item data)
+    if let Some(item) = state.todo_list.items.get(state.cursor_position) {
+        let ffi_item: totui_plugin_interface::FfiTodoItem = item.into();
+        let event = FfiEvent::OnDelete { todo: ffi_item };
+        state.fire_event(event);
+    }
+
     let ids: Vec<_> = state.todo_list.items[start..end]
         .iter()
         .map(|item| item.id)
@@ -1090,12 +1112,17 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
 
     state.save_undo();
 
+    // Track whether this is a new item or content edit
+    let was_creating = state.is_creating_new_item;
+    let mut new_item_index: Option<usize> = None;
+
     if state.is_creating_new_item {
         if state.todo_list.items.is_empty() {
             state
                 .todo_list
                 .add_item_with_indent(state.edit_buffer.clone(), state.pending_indent_level);
             state.cursor_position = 0;
+            new_item_index = Some(0);
         } else {
             let insert_position = if state.insert_above {
                 state.cursor_position
@@ -1121,8 +1148,10 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
             )?;
             if state.insert_above {
                 state.cursor_position += 1;
+                new_item_index = Some(state.cursor_position - 1);
             } else {
                 state.cursor_position = insert_position;
+                new_item_index = Some(insert_position);
             }
         }
         state.is_creating_new_item = false;
@@ -1134,6 +1163,32 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
             .todo_list
             .add_item_with_indent(state.edit_buffer.clone(), 0);
         state.cursor_position = state.todo_list.items.len() - 1;
+        new_item_index = Some(state.cursor_position);
+    }
+
+    // Fire appropriate event based on whether this was a new item or edit
+    if let Some(idx) = new_item_index {
+        // New item created - fire OnAdd
+        if let Some(item) = state.todo_list.items.get(idx) {
+            let ffi_item: totui_plugin_interface::FfiTodoItem = item.into();
+            let event = FfiEvent::OnAdd {
+                todo: ffi_item,
+                source: FfiEventSource::Manual,
+            };
+            state.fire_event(event);
+        }
+    } else if was_creating {
+        // was_creating but no new_item_index means edge case - skip
+    } else if state.cursor_position < state.todo_list.items.len() {
+        // Content was edited - fire OnModify
+        if let Some(item) = state.todo_list.items.get(state.cursor_position) {
+            let ffi_item: totui_plugin_interface::FfiTodoItem = item.into();
+            let event = FfiEvent::OnModify {
+                todo: ffi_item,
+                field_changed: FfiFieldChange::Content,
+            };
+            state.fire_event(event);
+        }
     }
 
     state.edit_buffer.clear();
@@ -1144,6 +1199,12 @@ fn save_edit_buffer(state: &mut AppState) -> Result<()> {
 }
 
 fn handle_plugin_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    // First check for new plugins modal state (tabbed UI)
+    if let Some(modal_state) = state.plugins_modal_state.take() {
+        return handle_plugins_modal(key, state, modal_state);
+    }
+
+    // Fall back to old plugin_state for backward compatibility
     let plugin_state = match state.plugin_state.take() {
         Some(ps) => ps,
         None => {
@@ -1169,6 +1230,484 @@ fn handle_plugin_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         PluginSubState::Error { message } => handle_plugin_error(key, state, message),
         PluginSubState::Preview { items } => handle_plugin_preview(key, state, items),
     }
+}
+
+/// Handle events for the new tabbed plugins modal
+fn handle_plugins_modal(
+    key: KeyEvent,
+    state: &mut AppState,
+    modal_state: PluginsModalState,
+) -> Result<()> {
+    match modal_state {
+        PluginsModalState::Tabs {
+            active_tab,
+            installed_index,
+            marketplace_index,
+            marketplace_plugins,
+            marketplace_loading,
+            marketplace_error,
+        } => handle_plugins_tabs(
+            key,
+            state,
+            active_tab,
+            installed_index,
+            marketplace_index,
+            marketplace_plugins,
+            marketplace_loading,
+            marketplace_error,
+        ),
+        PluginsModalState::Details {
+            plugin,
+            marketplace_plugins,
+            marketplace_index,
+        } => handle_plugins_modal_details(key, state, plugin, marketplace_plugins, marketplace_index),
+        PluginsModalState::Installing {
+            plugin_name,
+            marketplace_plugins,
+            marketplace_index,
+        } => {
+            // While installing, ignore keypresses - check for completion
+            state.plugins_modal_state = Some(PluginsModalState::Installing {
+                plugin_name,
+                marketplace_plugins,
+                marketplace_index,
+            });
+            Ok(())
+        }
+        PluginsModalState::Input {
+            plugin_name,
+            input_buffer,
+            cursor_pos,
+        } => handle_plugins_modal_input(key, state, plugin_name, input_buffer, cursor_pos),
+        PluginsModalState::Executing { plugin_name } => {
+            // While executing, ignore keypresses - state is managed by async result
+            state.plugins_modal_state = Some(PluginsModalState::Executing { plugin_name });
+            Ok(())
+        }
+        PluginsModalState::Preview { items } => handle_plugins_modal_preview(key, state, items),
+        PluginsModalState::Error { message } => handle_plugins_modal_error(key, state, message),
+    }
+}
+
+/// Handle key events in the Tabs view of plugins modal
+#[allow(clippy::too_many_arguments)]
+fn handle_plugins_tabs(
+    key: KeyEvent,
+    state: &mut AppState,
+    mut active_tab: PluginsTab,
+    mut installed_index: usize,
+    mut marketplace_index: usize,
+    marketplace_plugins: Option<Vec<PluginEntry>>,
+    marketplace_loading: bool,
+    marketplace_error: Option<String>,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.close_plugins_modal();
+        }
+        KeyCode::Tab | KeyCode::BackTab => {
+            // Switch tabs
+            active_tab = match active_tab {
+                PluginsTab::Installed => PluginsTab::Marketplace,
+                PluginsTab::Marketplace => PluginsTab::Installed,
+            };
+
+            // Start marketplace fetch when switching to Marketplace tab if not loaded
+            if active_tab == PluginsTab::Marketplace
+                && marketplace_plugins.is_none()
+                && !marketplace_loading
+            {
+                state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                    active_tab,
+                    installed_index,
+                    marketplace_index,
+                    marketplace_plugins,
+                    marketplace_loading: true,
+                    marketplace_error: None,
+                });
+                state.start_marketplace_fetch();
+                return Ok(());
+            }
+
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab,
+                installed_index,
+                marketplace_index,
+                marketplace_plugins,
+                marketplace_loading,
+                marketplace_error,
+            });
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            match active_tab {
+                PluginsTab::Installed => {
+                    installed_index = installed_index.saturating_sub(1);
+                }
+                PluginsTab::Marketplace => {
+                    marketplace_index = marketplace_index.saturating_sub(1);
+                }
+            }
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab,
+                installed_index,
+                marketplace_index,
+                marketplace_plugins,
+                marketplace_loading,
+                marketplace_error,
+            });
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            match active_tab {
+                PluginsTab::Installed => {
+                    let max = state.plugin_loader.loaded_plugins().count().saturating_sub(1);
+                    if installed_index < max {
+                        installed_index += 1;
+                    }
+                }
+                PluginsTab::Marketplace => {
+                    let max = marketplace_plugins
+                        .as_ref()
+                        .map(|p| p.len().saturating_sub(1))
+                        .unwrap_or(0);
+                    if marketplace_index < max {
+                        marketplace_index += 1;
+                    }
+                }
+            }
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab,
+                installed_index,
+                marketplace_index,
+                marketplace_plugins,
+                marketplace_loading,
+                marketplace_error,
+            });
+        }
+        KeyCode::Enter => {
+            match active_tab {
+                PluginsTab::Installed => {
+                    // Get selected plugin from loader
+                    let plugins: Vec<_> = state.plugin_loader.loaded_plugins().collect();
+                    if let Some(plugin) = plugins.get(installed_index) {
+                        if !plugin.session_disabled {
+                            state.plugins_modal_state = Some(PluginsModalState::Input {
+                                plugin_name: plugin.name.clone(),
+                                input_buffer: String::new(),
+                                cursor_pos: 0,
+                            });
+                        } else {
+                            state.plugins_modal_state = Some(PluginsModalState::Error {
+                                message: format!(
+                                    "Plugin '{}' is disabled for this session",
+                                    plugin.name
+                                ),
+                            });
+                        }
+                    } else {
+                        // No plugins available
+                        state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                            active_tab,
+                            installed_index,
+                            marketplace_index,
+                            marketplace_plugins,
+                            marketplace_loading,
+                            marketplace_error,
+                        });
+                    }
+                }
+                PluginsTab::Marketplace => {
+                    // Open details view for selected marketplace plugin
+                    if let Some(plugins) = marketplace_plugins {
+                        if let Some(plugin) = plugins.get(marketplace_index).cloned() {
+                            state.plugins_modal_state = Some(PluginsModalState::Details {
+                                plugin,
+                                marketplace_plugins: plugins,
+                                marketplace_index,
+                            });
+                        } else {
+                            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                                active_tab,
+                                installed_index,
+                                marketplace_index,
+                                marketplace_plugins: Some(plugins),
+                                marketplace_loading,
+                                marketplace_error,
+                            });
+                        }
+                    } else {
+                        state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                            active_tab,
+                            installed_index,
+                            marketplace_index,
+                            marketplace_plugins: None,
+                            marketplace_loading,
+                            marketplace_error,
+                        });
+                    }
+                }
+            }
+        }
+        _ => {
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab,
+                installed_index,
+                marketplace_index,
+                marketplace_plugins,
+                marketplace_loading,
+                marketplace_error,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Handle input in the plugins modal
+fn handle_plugins_modal_input(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin_name: String,
+    mut input_buffer: String,
+    mut cursor_pos: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            // Go back to Tabs view with Installed tab
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab: PluginsTab::Installed,
+                installed_index: 0,
+                marketplace_index: 0,
+                marketplace_plugins: None,
+                marketplace_loading: false,
+                marketplace_error: None,
+            });
+        }
+        KeyCode::Enter if !input_buffer.trim().is_empty() => {
+            // Execute plugin
+            state.plugins_modal_state = Some(PluginsModalState::Executing {
+                plugin_name: plugin_name.clone(),
+            });
+
+            // Call plugin generate synchronously
+            let result = state
+                .plugin_loader
+                .call_generate(&plugin_name, &input_buffer)
+                .map_err(|e| e.message);
+
+            match result {
+                Ok(items) => {
+                    if items.is_empty() {
+                        state.plugins_modal_state = Some(PluginsModalState::Error {
+                            message: "Plugin generated no items".to_string(),
+                        });
+                    } else {
+                        state.plugins_modal_state = Some(PluginsModalState::Preview { items });
+                    }
+                }
+                Err(message) => {
+                    state.plugins_modal_state = Some(PluginsModalState::Error { message });
+                }
+            }
+        }
+        KeyCode::Backspace if cursor_pos > 0 => {
+            let prev = prev_char_boundary(&input_buffer, cursor_pos);
+            input_buffer.drain(prev..cursor_pos);
+            cursor_pos = prev;
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Left if cursor_pos > 0 => {
+            cursor_pos = prev_char_boundary(&input_buffer, cursor_pos);
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Right if cursor_pos < input_buffer.len() => {
+            cursor_pos = next_char_boundary(&input_buffer, cursor_pos);
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Home => {
+            cursor_pos = 0;
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::End => {
+            cursor_pos = input_buffer.len();
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        KeyCode::Char(c) => {
+            input_buffer.insert(cursor_pos, c);
+            cursor_pos += c.len_utf8();
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+        _ => {
+            state.plugins_modal_state = Some(PluginsModalState::Input {
+                plugin_name,
+                input_buffer,
+                cursor_pos,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Handle details view in plugins modal
+fn handle_plugins_modal_details(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin: PluginEntry,
+    marketplace_plugins: Vec<PluginEntry>,
+    marketplace_index: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Backspace => {
+            // Go back to Marketplace tab
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab: PluginsTab::Marketplace,
+                installed_index: 0,
+                marketplace_index,
+                marketplace_plugins: Some(marketplace_plugins),
+                marketplace_loading: false,
+                marketplace_error: None,
+            });
+        }
+        KeyCode::Char('i') | KeyCode::Enter => {
+            // Install the plugin
+            let plugin_name = plugin.name.clone();
+            let plugin_version = plugin.version.clone();
+
+            // Check if already installed
+            let is_installed = state
+                .plugin_loader
+                .loaded_plugins()
+                .any(|p| p.name.eq_ignore_ascii_case(&plugin_name));
+
+            if is_installed {
+                state.set_status_message(format!("{} is already installed", plugin_name));
+                state.plugins_modal_state = Some(PluginsModalState::Details {
+                    plugin,
+                    marketplace_plugins,
+                    marketplace_index,
+                });
+                return Ok(());
+            }
+
+            // Run plugin install synchronously
+            use crate::plugin::installer::{PluginInstaller, PluginSource};
+            use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+
+            // Build source for marketplace install
+            let parts: Vec<&str> = DEFAULT_MARKETPLACE.split('/').collect();
+            if parts.len() != 2 {
+                state.plugins_modal_state = Some(PluginsModalState::Error {
+                    message: "Invalid marketplace configuration".to_string(),
+                });
+                return Ok(());
+            }
+
+            let source = PluginSource {
+                owner: Some(parts[0].to_string()),
+                repo: Some(parts[1].to_string()),
+                plugin_name: plugin_name.clone(),
+                version: Some(plugin_version),
+                local_path: None,
+            };
+
+            // Install from remote
+            match PluginInstaller::install_from_remote(&source, false) {
+                Ok(result) => {
+                    state.set_status_message(format!(
+                        "Installed {} v{} - restart to load",
+                        result.plugin_name, result.version
+                    ));
+                    // Go back to marketplace tab
+                    state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                        active_tab: PluginsTab::Marketplace,
+                        installed_index: 0,
+                        marketplace_index,
+                        marketplace_plugins: Some(marketplace_plugins),
+                        marketplace_loading: false,
+                        marketplace_error: None,
+                    });
+                }
+                Err(e) => {
+                    state.plugins_modal_state = Some(PluginsModalState::Error {
+                        message: format!("Install failed: {}", e),
+                    });
+                }
+            }
+        }
+        _ => {
+            state.plugins_modal_state = Some(PluginsModalState::Details {
+                plugin,
+                marketplace_plugins,
+                marketplace_index,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Handle preview in plugins modal
+fn handle_plugins_modal_preview(
+    key: KeyEvent,
+    state: &mut AppState,
+    items: Vec<crate::todo::TodoItem>,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            let count = items.len();
+            state.save_undo();
+            for item in items {
+                state.todo_list.items.push(item);
+            }
+            state.unsaved_changes = true;
+            save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+            state.unsaved_changes = false;
+            state.last_save_time = Some(std::time::Instant::now());
+            state.set_status_message(format!("Added {} item(s) from plugin", count));
+            state.close_plugins_modal();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            state.close_plugins_modal();
+        }
+        _ => {
+            state.plugins_modal_state = Some(PluginsModalState::Preview { items });
+        }
+    }
+    Ok(())
+}
+
+/// Handle error in plugins modal
+fn handle_plugins_modal_error(key: KeyEvent, state: &mut AppState, message: String) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
+            state.close_plugins_modal();
+        }
+        _ => {
+            state.plugins_modal_state = Some(PluginsModalState::Error { message });
+        }
+    }
+    Ok(())
 }
 
 fn handle_plugin_selecting(
@@ -1235,7 +1774,21 @@ fn handle_plugin_input(
 ) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
-            let plugins = state.plugin_registry.list();
+            // Build GeneratorInfo list from loaded plugins
+            let plugins: Vec<GeneratorInfo> = state
+                .plugin_loader
+                .loaded_plugins()
+                .map(|p| GeneratorInfo {
+                    name: p.name.clone(),
+                    description: p.description.clone(),
+                    available: !p.session_disabled,
+                    unavailable_reason: if p.session_disabled {
+                        Some("Disabled after error".to_string())
+                    } else {
+                        None
+                    },
+                })
+                .collect();
             state.plugin_state = Some(PluginSubState::Selecting {
                 plugins,
                 selected_index: 0,
@@ -1247,22 +1800,21 @@ fn handle_plugin_input(
                 plugin_name: plugin_name.clone(),
             });
 
-            let (tx, rx) = mpsc::channel();
-            state.plugin_result_rx = Some(rx);
+            // Call plugin generate synchronously via plugin loader
+            // (External plugins are already loaded, no need to spawn thread)
+            let result = state
+                .plugin_loader
+                .call_generate(&plugin_name, &input_buffer)
+                .map_err(|e| e.message);
 
-            let input = input_buffer.clone();
-            let name = plugin_name.clone();
-
-            thread::spawn(move || {
-                let registry = PluginRegistry::new();
-                let result = match registry.get(&name) {
-                    Some(generator) => generator
-                        .generate(&input)
-                        .map_err(|e| format!("Plugin error: {e}")),
-                    None => Err(format!("Plugin '{name}' not found")),
-                };
-                let _ = tx.send(result);
-            });
+            match result {
+                Ok(items) => {
+                    state.plugin_state = Some(PluginSubState::Preview { items });
+                }
+                Err(message) => {
+                    state.plugin_state = Some(PluginSubState::Error { message });
+                }
+            }
             return Ok(());
         }
         KeyCode::Backspace if cursor_pos > 0 => {
@@ -1780,5 +2332,89 @@ fn handle_move_to_project_mode(key: KeyEvent, state: &mut AppState) -> Result<()
             }
         }
     }
+    Ok(())
+}
+
+/// Execute a plugin action triggered by keybinding.
+///
+/// This function:
+/// 1. Shows a status message while running
+/// 2. Finds the loaded plugin
+/// 3. Calls execute_with_host with the action name as input
+/// 4. Processes returned commands
+/// 5. Shows completion message or error popup
+fn execute_plugin_action(action: PluginAction, state: &mut AppState) -> Result<()> {
+    // Show status message while running
+    state.set_status_message(format!("Running {}...", action.action_name));
+
+    // Find the loaded plugin
+    let loaded_plugin = state
+        .plugin_loader
+        .loaded_plugins()
+        .find(|p| p.name == action.plugin_name);
+
+    let loaded_plugin = match loaded_plugin {
+        Some(p) => p,
+        None => {
+            state.pending_plugin_errors.push(PluginLoadError {
+                plugin_name: action.plugin_name.clone(),
+                error_kind: PluginErrorKind::Other("Plugin not loaded".to_string()),
+                message: format!("Plugin '{}' is not loaded", action.plugin_name),
+            });
+            state.show_plugin_error_popup = true;
+            return Ok(());
+        }
+    };
+
+    // Build enabled projects set (for now, just current project)
+    let mut enabled_projects = HashSet::new();
+    enabled_projects.insert(state.current_project.name.clone());
+
+    // Create HostApi implementation
+    let host_api = PluginHostApiImpl::new(
+        &state.todo_list,
+        &state.current_project,
+        enabled_projects,
+        action.plugin_name.clone(),
+    );
+
+    // Convert to FFI-safe trait object
+    let host_to: HostApi_TO<'_, RBox<()>> = HostApi_TO::from_value(host_api, TD_Opaque);
+
+    // Execute plugin action (blocking)
+    // The plugin's execute_with_host receives action name as input string
+    let result = call_plugin_execute_with_host(
+        &loaded_plugin.plugin,
+        action.action_name.as_str().into(),
+        host_to,
+    );
+
+    match result.into_result() {
+        Ok(commands) => {
+            if !commands.is_empty() {
+                state.save_undo();
+                let mut executor = CommandExecutor::new(action.plugin_name.clone());
+                let commands_vec: Vec<_> = commands.into_iter().collect();
+                if let Err(e) = executor.execute_batch(commands_vec, &mut state.todo_list) {
+                    state.set_status_message(format!("Error: {}", e));
+                } else {
+                    state.unsaved_changes = true;
+                    state.set_status_message(format!("{} complete", action.action_name));
+                }
+            } else {
+                state.set_status_message(format!("{} complete", action.action_name));
+            }
+        }
+        Err(e) => {
+            // Show error in popup
+            state.pending_plugin_errors.push(PluginLoadError {
+                plugin_name: action.plugin_name.clone(),
+                error_kind: PluginErrorKind::Other(e.to_string()),
+                message: e.to_string(),
+            });
+            state.show_plugin_error_popup = true;
+        }
+    }
+
     Ok(())
 }

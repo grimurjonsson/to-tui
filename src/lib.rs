@@ -1,4 +1,6 @@
 pub mod clipboard;
+pub mod config;
+pub mod keybindings;
 pub mod mcp;
 pub mod plugin;
 pub mod project;

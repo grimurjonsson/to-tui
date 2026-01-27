@@ -110,7 +110,7 @@ fn migrate_dailies_directory() -> Result<()> {
         let entry = entry?;
         let path = entry.path();
 
-        if path.extension().map_or(false, |ext| ext == "md") {
+        if path.extension().is_some_and(|ext| ext == "md") {
             let filename = path
                 .file_name()
                 .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;

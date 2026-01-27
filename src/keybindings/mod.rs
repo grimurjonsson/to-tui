@@ -290,6 +290,20 @@ impl KeySequence {
     }
 }
 
+impl fmt::Display for KeySequence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for binding in &self.0 {
+            if !first {
+                write!(f, " ")?;
+            }
+            first = false;
+            write!(f, "{}", binding)?;
+        }
+        Ok(())
+    }
+}
+
 /// Parse key sequence: "d", "dd", "<C-d>", "<C-d><C-d>", "g g", etc.
 impl FromStr for KeySequence {
     type Err = String;
@@ -541,6 +555,13 @@ pub struct KeybindingsConfig {
 
     #[serde(default)]
     pub visual: HashMap<String, String>,
+
+    /// Plugin keybinding overrides.
+    /// Structure: plugins.{plugin_name}.{action_name} = "keybinding"
+    /// Example: plugins.jira.fetch = "<C-j>"
+    /// Set to "" or "none" to disable an action
+    #[serde(default)]
+    pub plugins: HashMap<String, HashMap<String, String>>,
 }
 
 impl KeybindingsConfig {
@@ -556,6 +577,7 @@ impl KeybindingsConfig {
         for (key, value) in defaults.visual {
             self.visual.entry(key).or_insert(value);
         }
+        // plugins has no defaults - user overrides only
 
         self
     }
@@ -567,6 +589,7 @@ impl Default for KeybindingsConfig {
             navigate: default_navigate_bindings(),
             edit: default_edit_bindings(),
             visual: default_visual_bindings(),
+            plugins: HashMap::new(),
         }
     }
 }
@@ -806,5 +829,31 @@ mod tests {
         let event = KeyEvent::new(KeyCode::Char('>'), KeyModifiers::SHIFT);
         let result = cache.lookup_navigate(&event, None);
         assert_eq!(result, KeyLookupResult::Action(Action::NextDay));
+    }
+
+    #[test]
+    fn test_plugin_keybindings_config() {
+        // Test parsing KeybindingsConfig directly (plugins section)
+        let toml_str = r#"
+[plugins.jira]
+fetch = "<C-j>"
+sync = "none"
+
+[plugins.github]
+pr = "<C-g>"
+"#;
+        let config: KeybindingsConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.plugins.get("jira").unwrap().get("fetch").unwrap(),
+            "<C-j>"
+        );
+        assert_eq!(
+            config.plugins.get("jira").unwrap().get("sync").unwrap(),
+            "none"
+        );
+        assert_eq!(
+            config.plugins.get("github").unwrap().get("pr").unwrap(),
+            "<C-g>"
+        );
     }
 }

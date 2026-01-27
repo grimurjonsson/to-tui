@@ -46,7 +46,19 @@ Fast, keyboard-driven todo management that lives in the terminal and integrates 
 
 ### Active
 
-(None — v1.0 shipped, awaiting next milestone planning)
+**Milestone v2.0: Plugin Framework**
+
+- [ ] Dynamic plugin loading via libloading (.so/.dylib/.dll)
+- [ ] Plugin trait with lifecycle hooks (init, shutdown)
+- [ ] Plugin capability: create/manipulate todos
+- [ ] Plugin capability: query database (read-only)
+- [ ] Plugin capability: add custom metadata to todos/projects
+- [ ] Plugin capability: register custom keybindings
+- [ ] Plugin registry with manifest format
+- [ ] Local plugin directory (~/.config/to-tui/plugins/)
+- [ ] GitHub repo plugin source (grimurjonsson/to-tui-plugins default)
+- [ ] Plugin auto-download and version management
+- [ ] Refactor existing Jira generator to new plugin system
 
 ### Out of Scope
 
@@ -55,6 +67,9 @@ Fast, keyboard-driven todo management that lives in the terminal and integrates 
 - Collaboration features — single-user design
 - Clipboard history / paste menu — system clipboard managers exist
 - Internal yank registers (vim a-z) — massive complexity for niche use
+- UI theming via plugins — deferred to v2.1+
+- Claude Code skill bundling in plugins — deferred to v2.1+
+- Any-language plugins via IPC — deferred to v2.1+
 
 ## Constraints
 
@@ -77,4 +92,4 @@ Fast, keyboard-driven todo management that lives in the terminal and integrates 
 | Download raw binaries (not tar.gz) | Matches actual GitHub release format | ✓ Good |
 
 ---
-*Last updated: 2026-01-21 after v1.0 milestone*
+*Last updated: 2026-01-24 after v2.0 milestone start*

@@ -235,6 +235,53 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
+    // Metadata tables for plugin data storage
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS todo_metadata (
+            id TEXT PRIMARY KEY,
+            todo_id TEXT NOT NULL,
+            plugin_name TEXT NOT NULL,
+            data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(todo_id, plugin_name)
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_todo_metadata_todo ON todo_metadata(todo_id)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_todo_metadata_plugin ON todo_metadata(plugin_name)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS project_metadata (
+            id TEXT PRIMARY KEY,
+            project_name TEXT NOT NULL,
+            plugin_name TEXT NOT NULL,
+            data TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(project_name, plugin_name)
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_project_metadata_project ON project_metadata(project_name)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_project_metadata_plugin ON project_metadata(plugin_name)",
+        [],
+    )?;
+
     Ok(())
 }
 

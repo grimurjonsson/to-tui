@@ -102,9 +102,13 @@ fn run_app(
     loop {
         state.clear_expired_status_message();
         state.check_plugin_result();
+        state.check_marketplace_fetch();
         state.check_version_update();
         state.tick_spinner();
         state.check_download_progress();
+
+        // Poll and apply hook results
+        state.apply_pending_hook_results();
 
         terminal.draw(|f| {
             components::render(f, state);
@@ -113,6 +117,11 @@ fn run_app(
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    // Dismiss plugin error popup on any key press
+                    if state.show_plugin_error_popup {
+                        state.dismiss_plugin_error_popup();
+                        continue; // Consume the key event
+                    }
                     handle_key_event(key, state)?;
                 }
                 Event::Mouse(mouse) => {
