@@ -85,6 +85,7 @@ Quick tasks are ad-hoc improvements outside milestone planning:
 | 005-github-link-status-bar | Add clickable GitHub octopus link to status bar | Done | 2026-01-22 |
 | 006-move-item-and-subtree-to-another-project | Move todos between projects with 'm' keybinding | Done | 2026-01-22 |
 | 007-project-filter-mcp-api | Update plugin to v0.4.0 (project filtering) | Done | 2026-01-23 |
+| 001-fix-statusbar-color-readability | Fix status bar color contrast for better text legibility | Done | 2026-01-27 |
 
 ## Accumulated Context
 
@@ -188,7 +189,7 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-01-26
-Stopped at: Completed 15-02-PLAN.md
+Last session: 2026-01-27
+Stopped at: Completed quick/001-fix-statusbar-color-readability
 Resume file: None
 Next action: Execute 15-03-PLAN.md (cleanup and documentation)
