@@ -25,7 +25,7 @@ impl Theme {
             exclamation: Color::Red,
             in_progress: Color::Cyan,
             cancelled: Color::DarkGray,
-            status_bar_bg: Color::DarkGray,
+            status_bar_bg: Color::Rgb(40, 40, 40),
             status_bar_fg: Color::White,
             priority_p0: Color::Rgb(255, 100, 100), // Red for critical
             priority_p1: Color::Rgb(255, 200, 100), // Yellow/orange for high
@@ -41,7 +41,7 @@ impl Theme {
             exclamation: Color::Red,
             in_progress: Color::Cyan,
             cancelled: Color::DarkGray,
-            status_bar_bg: Color::DarkGray,
+            status_bar_bg: Color::Rgb(40, 40, 40),
             status_bar_fg: Color::White,
             priority_p0: Color::Rgb(255, 100, 100),
             priority_p1: Color::Rgb(255, 200, 100),
