@@ -8,17 +8,18 @@ use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
     event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind,
+        DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind,
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use futures_util::StreamExt;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{backend::CrosstermBackend, Terminal};
 use std::io::{self, Write};
-use std::sync::mpsc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 struct TerminalGuard {
     keyboard_enhancement: bool,
@@ -56,17 +57,26 @@ pub fn run_tui(mut state: AppState) -> Result<AppState> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let (db_tx, db_rx) = mpsc::channel();
+    // Initialize plugin notification channel
+    let plugin_rx = crate::plugin::loader::init_plugin_notifier();
+
+    // Set up database watcher with tokio channel
+    let (db_tx, db_rx) = mpsc::unbounded_channel();
     let _watcher = setup_database_watcher(db_tx);
 
-    let result = run_app(&mut terminal, &mut state, db_rx);
+    // Create single-threaded runtime for the UI event loop
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+
+    let result = rt.block_on(run_app(&mut terminal, &mut state, db_rx, plugin_rx));
     terminal.show_cursor()?;
 
     result?;
     Ok(state)
 }
 
-fn setup_database_watcher(tx: mpsc::Sender<()>) -> Option<RecommendedWatcher> {
+fn setup_database_watcher(tx: mpsc::UnboundedSender<()>) -> Option<RecommendedWatcher> {
     let db_path = match get_database_path() {
         Ok(path) => path,
         Err(_) => return None,
@@ -75,9 +85,10 @@ fn setup_database_watcher(tx: mpsc::Sender<()>) -> Option<RecommendedWatcher> {
     let watcher = RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
             if let Ok(event) = res
-                && event.kind.is_modify() {
-                    let _ = tx.send(());
-                }
+                && event.kind.is_modify()
+            {
+                let _ = tx.send(());
+            }
         },
         Config::default(),
     );
@@ -94,49 +105,72 @@ fn setup_database_watcher(tx: mpsc::Sender<()>) -> Option<RecommendedWatcher> {
     }
 }
 
-fn run_app(
+async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
-    db_rx: mpsc::Receiver<()>,
+    mut db_rx: mpsc::UnboundedReceiver<()>,
+    mut plugin_rx: mpsc::UnboundedReceiver<()>,
 ) -> Result<()> {
+    let mut reader = EventStream::new();
+    let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
+
     loop {
+        // State maintenance
         state.clear_expired_status_message();
         state.check_plugin_result();
         state.check_marketplace_fetch();
         state.check_version_update();
-        state.tick_spinner();
         state.check_download_progress();
 
         // Poll and apply hook results
         state.apply_pending_hook_results();
 
+        // Render
         terminal.draw(|f| {
             components::render(f, state);
         })?;
 
-        if event::poll(Duration::from_millis(100))? {
-            match event::read()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    // Dismiss plugin error popup on any key press
-                    if state.show_plugin_error_popup {
-                        state.dismiss_plugin_error_popup();
-                        continue; // Consume the key event
-                    }
-                    handle_key_event(key, state)?;
-                }
-                Event::Mouse(mouse) => {
-                    handle_mouse_event(mouse, state)?;
-                }
-                _ => {}
-            }
-        }
+        // Wait for ANY event source - immediate wakeup when any fires
+        tokio::select! {
+            biased;  // Check in priority order
 
-        let mut should_reload = false;
-        while db_rx.try_recv().is_ok() {
-            should_reload = true;
-        }
-        if should_reload {
-            let _ = state.reload_from_database();
+            // Terminal events (keyboard, mouse)
+            maybe_event = reader.next() => {
+                if let Some(Ok(event)) = maybe_event {
+                    match event {
+                        Event::Key(key) if key.kind == KeyEventKind::Press => {
+                            // Dismiss plugin error popup on any key press
+                            if state.show_plugin_error_popup {
+                                state.dismiss_plugin_error_popup();
+                            } else {
+                                handle_key_event(key, state)?;
+                            }
+                        }
+                        Event::Mouse(mouse) => {
+                            handle_mouse_event(mouse, state)?;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Plugin signaled it has updates
+            _ = plugin_rx.recv() => {
+                tracing::info!("UI loop: Received plugin update notification, firing OnLoad event");
+                state.fire_on_load_event();
+            }
+
+            // Database file changed externally
+            _ = db_rx.recv() => {
+                tracing::debug!("UI loop: Database file changed, reloading");
+                let _ = state.reload_from_database();
+            }
+
+            // Periodic tick for animations (spinner, status messages)
+            _ = tick_interval.tick() => {
+                // Don't log ticks - too noisy
+                state.tick_spinner();
+            }
         }
 
         if state.should_quit {

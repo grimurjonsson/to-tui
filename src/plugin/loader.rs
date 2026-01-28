@@ -8,18 +8,46 @@
 //! - Session-based disabling for panicked plugins
 
 use abi_stable::{
-    library::{LibraryError, LibraryPath, RootModule},
+    library::{lib_header_from_path, LibraryError},
     std_types::{RBox, RString},
 };
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use totui_plugin_interface::{
-    call_plugin_on_config_loaded, FfiEventType, PluginModule_Ref, Plugin_TO, INTERFACE_VERSION,
+    call_plugin_on_config_loaded, FfiEventType, PluginModule_Ref, Plugin_TO, UpdateNotifier,
+    INTERFACE_VERSION,
 };
 
 use crate::plugin::config::{to_ffi_config, PluginConfigLoader};
 use crate::plugin::{PluginInfo, PluginManager};
+
+/// Global sender for plugin update notifications.
+/// Initialized once at startup via `init_plugin_notifier()`.
+static PLUGIN_NOTIFIER: OnceLock<mpsc::UnboundedSender<()>> = OnceLock::new();
+
+/// Initialize the plugin notification channel.
+///
+/// Call this once at startup before loading plugins.
+/// Returns the receiver that the UI loop should listen on.
+pub fn init_plugin_notifier() -> mpsc::UnboundedReceiver<()> {
+    let (tx, rx) = mpsc::unbounded_channel();
+    PLUGIN_NOTIFIER
+        .set(tx)
+        .expect("Plugin notifier already initialized");
+    rx
+}
+
+/// Callback function passed to plugins for signaling updates.
+/// Sends a wake-up signal through the notification channel.
+extern "C" fn plugin_update_callback() {
+    tracing::debug!("plugin_update_callback: Plugin signaled update, waking UI loop");
+    if let Some(sender) = PLUGIN_NOTIFIER.get() {
+        let _ = sender.send(());
+    }
+}
 
 /// Kinds of plugin loading/execution errors.
 #[derive(Debug, Clone)]
@@ -234,9 +262,16 @@ impl PluginLoader {
         // Find the dylib file in the plugin directory
         let dylib_path = Self::find_dylib_in_directory(path, plugin_name)?;
 
-        // Load the library using abi_stable
-        // This leaks the library intentionally - it will never be unloaded
-        let module = PluginModule_Ref::load_from(LibraryPath::FullPath(&dylib_path)).map_err(|lib_err| {
+        // Load the library using abi_stable's non-caching API
+        // This is critical for loading multiple plugins with the same interface type!
+        // PluginModule_Ref::load_from() uses a global static per module type, which
+        // causes all plugins to share the same factory function pointer.
+        // Using lib_header_from_path() loads each dylib independently.
+        let lib_header = lib_header_from_path(&dylib_path).map_err(|lib_err| {
+            Self::map_library_error(plugin_name, &lib_err)
+        })?;
+
+        let module: PluginModule_Ref = lib_header.init_root_module().map_err(|lib_err| {
             Self::map_library_error(plugin_name, &lib_err)
         })?;
 
@@ -271,6 +306,28 @@ impl PluginLoader {
                 });
             }
         }
+
+        // Verify plugin identity matches manifest
+        let trait_reported_name = plugin.name();
+        if trait_reported_name.as_str() != plugin_name {
+            tracing::error!(
+                manifest_name = %plugin_name,
+                trait_name = %trait_reported_name,
+                "Plugin identity mismatch - trait name differs from manifest"
+            );
+        }
+
+        // Set up the update notifier so plugin can signal when it has updates
+        let notifier = UpdateNotifier {
+            func: plugin_update_callback,
+        };
+        plugin.set_notifier(notifier);
+
+        tracing::debug!(
+            plugin = %plugin_name,
+            dylib = %dylib_path.display(),
+            "Plugin loaded successfully"
+        );
 
         Ok(LoadedPlugin {
             plugin,

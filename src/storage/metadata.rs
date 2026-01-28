@@ -260,6 +260,68 @@ pub fn delete_project_metadata(project_name: &str, plugin_name: &str) -> Result<
 }
 
 // ============================================================================
+// External ID Operations
+// ============================================================================
+
+/// Set the external ID for a todo item.
+///
+/// External IDs allow plugins to reference todos by their own stable identifiers
+/// (e.g., "claude-tasklist-1-task-2") instead of totui's internal UUIDs.
+///
+/// # Arguments
+///
+/// * `todo_id` - UUID of the todo item
+/// * `plugin_name` - Name of the plugin setting the external ID
+/// * `external_id` - The plugin's stable identifier for this todo
+pub fn set_external_id(todo_id: &Uuid, plugin_name: &str, external_id: &str) -> Result<()> {
+    let conn = get_connection()?;
+    let now = Utc::now().to_rfc3339();
+    let todo_id_str = todo_id.to_string();
+
+    // Upsert: create metadata row if not exists, or update external_id
+    let id = Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO todo_metadata (id, todo_id, plugin_name, data, external_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, '{}', ?4, ?5, ?5)
+         ON CONFLICT(todo_id, plugin_name) DO UPDATE SET external_id = ?4, updated_at = ?5",
+        params![&id, &todo_id_str, plugin_name, external_id, &now],
+    )?;
+
+    Ok(())
+}
+
+/// Look up a todo's UUID by its external ID.
+///
+/// # Arguments
+///
+/// * `plugin_name` - Name of the plugin that set the external ID
+/// * `external_id` - The plugin's stable identifier
+///
+/// # Returns
+///
+/// * `Ok(Some(uuid))` - The todo's UUID if found
+/// * `Ok(None)` - If no todo with this external ID exists
+pub fn get_todo_id_by_external_id(plugin_name: &str, external_id: &str) -> Result<Option<Uuid>> {
+    let conn = get_connection()?;
+
+    let result: rusqlite::Result<String> = conn.query_row(
+        "SELECT todo_id FROM todo_metadata WHERE plugin_name = ?1 AND external_id = ?2",
+        params![plugin_name, external_id],
+        |row| row.get(0),
+    );
+
+    match result {
+        Ok(todo_id_str) => {
+            let uuid = Uuid::parse_str(&todo_id_str)
+                .with_context(|| format!("Invalid UUID in database: {}", todo_id_str))?;
+            Ok(Some(uuid))
+        }
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+// ============================================================================
 // JSON Utilities
 // ============================================================================
 
@@ -475,5 +537,98 @@ mod tests {
 
         assert_eq!(result_a, r#"{"from": "a"}"#);
         assert_eq!(result_b, r#"{"from": "b"}"#);
+    }
+
+    // ========================================================================
+    // External ID Tests
+    // ========================================================================
+
+    #[test]
+    fn test_set_and_get_external_id() {
+        let _temp = setup_test_env();
+        let todo_id = Uuid::new_v4();
+        let plugin_name = "claude-tasks";
+        let external_id = "claude-abc123-1";
+
+        set_external_id(&todo_id, plugin_name, external_id).unwrap();
+
+        let result = get_todo_id_by_external_id(plugin_name, external_id).unwrap();
+        assert_eq!(result, Some(todo_id));
+    }
+
+    #[test]
+    fn test_get_external_id_not_found() {
+        let _temp = setup_test_env();
+
+        let result = get_todo_id_by_external_id("plugin", "nonexistent").unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_external_id_isolated_by_plugin() {
+        let _temp = setup_test_env();
+        let todo_id_a = Uuid::new_v4();
+        let todo_id_b = Uuid::new_v4();
+        let external_id = "same-external-id";
+
+        // Same external_id can exist for different plugins
+        set_external_id(&todo_id_a, "plugin_a", external_id).unwrap();
+        set_external_id(&todo_id_b, "plugin_b", external_id).unwrap();
+
+        let result_a = get_todo_id_by_external_id("plugin_a", external_id).unwrap();
+        let result_b = get_todo_id_by_external_id("plugin_b", external_id).unwrap();
+
+        assert_eq!(result_a, Some(todo_id_a));
+        assert_eq!(result_b, Some(todo_id_b));
+    }
+
+    #[test]
+    fn test_external_id_update() {
+        let _temp = setup_test_env();
+        let todo_id = Uuid::new_v4();
+        let plugin_name = "plugin";
+
+        // Set initial external_id
+        set_external_id(&todo_id, plugin_name, "old-id").unwrap();
+        assert_eq!(
+            get_todo_id_by_external_id(plugin_name, "old-id").unwrap(),
+            Some(todo_id)
+        );
+
+        // Update to new external_id
+        set_external_id(&todo_id, plugin_name, "new-id").unwrap();
+
+        // Old ID should no longer resolve
+        assert_eq!(
+            get_todo_id_by_external_id(plugin_name, "old-id").unwrap(),
+            None
+        );
+        // New ID should resolve
+        assert_eq!(
+            get_todo_id_by_external_id(plugin_name, "new-id").unwrap(),
+            Some(todo_id)
+        );
+    }
+
+    #[test]
+    fn test_external_id_with_metadata() {
+        let _temp = setup_test_env();
+        let todo_id = Uuid::new_v4();
+        let plugin_name = "plugin";
+        let external_id = "ext-123";
+
+        // Set external_id first
+        set_external_id(&todo_id, plugin_name, external_id).unwrap();
+
+        // Then set metadata - should not clobber external_id
+        set_todo_metadata(&todo_id, plugin_name, r#"{"key": "value"}"#, false).unwrap();
+
+        // External ID should still work
+        let result = get_todo_id_by_external_id(plugin_name, external_id).unwrap();
+        assert_eq!(result, Some(todo_id));
+
+        // Metadata should also work
+        let metadata = get_todo_metadata(&todo_id, plugin_name).unwrap();
+        assert_eq!(metadata, r#"{"key": "value"}"#);
     }
 }

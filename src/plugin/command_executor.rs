@@ -53,6 +53,12 @@ impl CommandExecutor {
         commands: Vec<FfiCommand>,
         todo_list: &mut TodoList,
     ) -> Result<Vec<Uuid>> {
+        tracing::debug!(
+            plugin = %self.plugin_name,
+            command_count = commands.len(),
+            "Executing plugin command batch"
+        );
+
         // Clear temp ID map at start of each batch
         self.temp_id_map.clear();
 
@@ -157,6 +163,14 @@ impl CommandExecutor {
         indent_level: u32,
         todo_list: &mut TodoList,
     ) -> Result<Uuid> {
+        tracing::debug!(
+            plugin = %self.plugin_name,
+            content = %content,
+            temp_id = ?temp_id,
+            parent_id = ?parent_id,
+            "Plugin creating todo"
+        );
+
         // Create the new item
         let mut item = TodoItem::new(content.to_string(), indent_level as usize);
 
@@ -171,6 +185,8 @@ impl CommandExecutor {
         // Store temp ID mapping if provided
         if let Some(tid) = temp_id {
             self.temp_id_map.insert(tid.to_string(), item.id);
+            // Also persist as external_id for future batches
+            self.register_external_id(tid, &item.id)?;
         }
 
         // Resolve parent_id if provided
@@ -205,6 +221,13 @@ impl CommandExecutor {
         description: Option<&str>,
         todo_list: &mut TodoList,
     ) -> Result<()> {
+        tracing::debug!(
+            plugin = %self.plugin_name,
+            id = %id,
+            content = ?content,
+            "Plugin updating todo"
+        );
+
         let uuid = self.resolve_id(id)?;
 
         let item = todo_list
@@ -241,14 +264,42 @@ impl CommandExecutor {
     }
 
     /// Handle a DeleteTodo command (soft delete).
+    ///
+    /// This is lenient - if the ID is invalid or the todo doesn't exist,
+    /// it silently succeeds. This allows plugins to issue "cleanup" deletes
+    /// for items that may or may not exist.
     fn handle_delete(&self, id: &str, todo_list: &mut TodoList) -> Result<()> {
-        let uuid = self.resolve_id(id)?;
+        tracing::debug!(
+            plugin = %self.plugin_name,
+            id = %id,
+            "Plugin deleting todo"
+        );
 
-        let item = todo_list
-            .items
-            .iter_mut()
-            .find(|i| i.id == uuid)
-            .ok_or_else(|| anyhow!("Todo not found: {}", id))?;
+        // Try to resolve the ID - if it fails, silently succeed
+        let uuid = match self.resolve_id(id) {
+            Ok(u) => u,
+            Err(_) => {
+                tracing::debug!(
+                    plugin = %self.plugin_name,
+                    id = %id,
+                    "Delete skipped: invalid ID (not a UUID)"
+                );
+                return Ok(());
+            }
+        };
+
+        // Find the item - if not found, silently succeed
+        let item = match todo_list.items.iter_mut().find(|i| i.id == uuid) {
+            Some(i) => i,
+            None => {
+                tracing::debug!(
+                    plugin = %self.plugin_name,
+                    id = %id,
+                    "Delete skipped: todo not found"
+                );
+                return Ok(());
+            }
+        };
 
         // Soft delete per codebase convention
         item.deleted_at = Some(Utc::now());
@@ -309,15 +360,31 @@ impl CommandExecutor {
 
     /// Resolve an ID string to a UUID.
     ///
-    /// First checks the temp ID map, then tries to parse as UUID.
+    /// Resolution order:
+    /// 1. Check temp ID map (for IDs created in current batch)
+    /// 2. Look up by external_id in metadata (for IDs from previous batches)
+    /// 3. Try to parse as UUID directly
     fn resolve_id(&self, id: &str) -> Result<Uuid> {
-        // Check temp ID map first
+        // Check temp ID map first (current batch)
         if let Some(uuid) = self.temp_id_map.get(id) {
             return Ok(*uuid);
         }
 
+        // Check external_id in metadata (previous batches)
+        if let Ok(Some(uuid)) = metadata::get_todo_id_by_external_id(&self.plugin_name, id) {
+            return Ok(uuid);
+        }
+
         // Try to parse as UUID
         Uuid::parse_str(id).map_err(|_| anyhow!("Invalid UUID: {}", id))
+    }
+
+    /// Register an external ID for a todo, allowing future lookups.
+    ///
+    /// This persists the temp_id -> real UUID mapping so subsequent batches
+    /// can resolve the same external ID.
+    fn register_external_id(&self, external_id: &str, todo_id: &Uuid) -> Result<()> {
+        metadata::set_external_id(todo_id, &self.plugin_name, external_id)
     }
 }
 
@@ -419,38 +486,7 @@ mod tests {
         assert!(list.items[0].deleted_at.is_some());
     }
 
-    #[test]
-    fn test_temp_id_mapping() {
-        let mut list = create_test_list();
-        let mut executor = CommandExecutor::default();
-
-        // Create parent with temp_id, then child referencing it
-        let commands = vec![
-            FfiCommand::CreateTodo {
-                content: "Parent".into(),
-                parent_id: ROption::RNone,
-                temp_id: ROption::RSome("temp-1".into()),
-                state: FfiTodoState::Empty,
-                priority: ROption::RNone,
-                indent_level: 0,
-            },
-            FfiCommand::CreateTodo {
-                content: "Child".into(),
-                parent_id: ROption::RSome("temp-1".into()),
-                temp_id: ROption::RNone,
-                state: FfiTodoState::Empty,
-                priority: ROption::RNone,
-                indent_level: 1,
-            },
-        ];
-
-        let created = executor.execute_batch(commands, &mut list).unwrap();
-
-        assert_eq!(created.len(), 2);
-        // Child should reference parent
-        let child = list.items.iter().find(|i| i.content == "Child").unwrap();
-        assert_eq!(child.parent_id, Some(created[0]));
-    }
+    // Note: test_temp_id_mapping moved to metadata_tests module since it now requires database
 
     #[test]
     fn test_update_not_found_returns_error() {
@@ -544,7 +580,9 @@ mod tests {
     }
 
     #[test]
-    fn test_delete_not_found_returns_error() {
+    fn test_delete_not_found_succeeds_silently() {
+        // Delete of non-existent ID should succeed silently (lenient behavior)
+        // This allows plugins to issue cleanup deletes without checking existence
         let mut list = create_test_list();
         let mut executor = CommandExecutor::default();
 
@@ -553,8 +591,21 @@ mod tests {
         }];
 
         let result = executor.execute_batch(commands, &mut list);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not found"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_delete_invalid_id_succeeds_silently() {
+        // Delete of invalid ID (not a UUID) should succeed silently
+        let mut list = create_test_list();
+        let mut executor = CommandExecutor::default();
+
+        let commands = vec![FfiCommand::DeleteTodo {
+            id: "claude-guidance-header".into(),
+        }];
+
+        let result = executor.execute_batch(commands, &mut list);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -851,6 +902,113 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Keys starting with '_' are reserved"));
+        }
+
+        #[test]
+        fn test_temp_id_mapping() {
+            let _temp = setup_test_env();
+            let mut list = create_test_list();
+            let mut executor = CommandExecutor::new("test-plugin".to_string());
+
+            // Create parent with temp_id, then child referencing it
+            let commands = vec![
+                FfiCommand::CreateTodo {
+                    content: "Parent".into(),
+                    parent_id: ROption::RNone,
+                    temp_id: ROption::RSome("temp-1".into()),
+                    state: FfiTodoState::Empty,
+                    priority: ROption::RNone,
+                    indent_level: 0,
+                },
+                FfiCommand::CreateTodo {
+                    content: "Child".into(),
+                    parent_id: ROption::RSome("temp-1".into()),
+                    temp_id: ROption::RNone,
+                    state: FfiTodoState::Empty,
+                    priority: ROption::RNone,
+                    indent_level: 1,
+                },
+            ];
+
+            let created = executor.execute_batch(commands, &mut list).unwrap();
+
+            assert_eq!(created.len(), 2);
+            // Child should reference parent
+            let child = list.items.iter().find(|i| i.content == "Child").unwrap();
+            assert_eq!(child.parent_id, Some(created[0]));
+        }
+
+        #[test]
+        fn test_external_id_persists_across_batches() {
+            let _temp = setup_test_env();
+            let mut list = create_test_list();
+            let plugin_name = "claude-tasks".to_string();
+            let external_id = "claude-abc123-1";
+
+            // First batch: create todo with temp_id
+            let mut executor1 = CommandExecutor::new(plugin_name.clone());
+            let commands = vec![FfiCommand::CreateTodo {
+                content: "Test task".into(),
+                parent_id: ROption::RNone,
+                temp_id: ROption::RSome(external_id.into()),
+                state: FfiTodoState::Empty,
+                priority: ROption::RNone,
+                indent_level: 0,
+            }];
+
+            let created = executor1.execute_batch(commands, &mut list).unwrap();
+            let real_uuid = created[0];
+
+            // Second batch: new executor (simulating new on_event call)
+            // Update using the same external_id
+            let mut executor2 = CommandExecutor::new(plugin_name);
+            let commands = vec![FfiCommand::UpdateTodo {
+                id: external_id.into(), // Use external_id, not UUID!
+                content: ROption::RSome("Updated task".into()),
+                state: ROption::RNone,
+                priority: ROption::RNone,
+                due_date: ROption::RNone,
+                description: ROption::RNone,
+            }];
+
+            // This should succeed - external_id should resolve to real UUID
+            executor2.execute_batch(commands, &mut list).unwrap();
+
+            // Verify the correct todo was updated
+            let updated_item = list.items.iter().find(|i| i.id == real_uuid).unwrap();
+            assert_eq!(updated_item.content, "Updated task");
+        }
+
+        #[test]
+        fn test_external_id_delete_across_batches() {
+            let _temp = setup_test_env();
+            let mut list = create_test_list();
+            let plugin_name = "claude-tasks".to_string();
+            let external_id = "claude-xyz-42";
+
+            // First batch: create
+            let mut executor1 = CommandExecutor::new(plugin_name.clone());
+            let commands = vec![FfiCommand::CreateTodo {
+                content: "To be deleted".into(),
+                parent_id: ROption::RNone,
+                temp_id: ROption::RSome(external_id.into()),
+                state: FfiTodoState::Empty,
+                priority: ROption::RNone,
+                indent_level: 0,
+            }];
+            executor1.execute_batch(commands, &mut list).unwrap();
+
+            // Second batch: delete using external_id
+            let mut executor2 = CommandExecutor::new(plugin_name);
+            let commands = vec![FfiCommand::DeleteTodo {
+                id: external_id.into(),
+            }];
+
+            executor2.execute_batch(commands, &mut list).unwrap();
+
+            // Verify soft delete
+            let item = list.items.iter().find(|i| i.content == "To be deleted").unwrap();
+            assert!(item.deleted_at.is_some());
         }
     }
 }

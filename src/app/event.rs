@@ -26,7 +26,8 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use std::collections::HashSet;
 use std::fs;
 use totui_plugin_interface::{
-    call_plugin_execute_with_host, FfiEvent, FfiEventSource, FfiFieldChange, HostApi_TO,
+    call_plugin_execute_with_host, FfiConfigType, FfiConfigValue, FfiEvent, FfiEventSource,
+    FfiFieldChange, HostApi_TO,
 };
 
 /// Total number of lines in the help content (must match render_help_overlay)
@@ -624,6 +625,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             {
                 state.cursor_position = state.cursor_position.saturating_sub(displacement);
                 state.unsaved_changes = true;
+                state.sync_list_state();
             }
         }
         Action::MoveItemDown => {
@@ -635,6 +637,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 state.cursor_position = (state.cursor_position + displacement)
                     .min(state.todo_list.items.len().saturating_sub(1));
                 state.unsaved_changes = true;
+                state.sync_list_state();
             }
         }
         Action::ToggleCollapse => {
@@ -1268,6 +1271,19 @@ fn handle_plugins_modal(
             input_buffer,
             cursor_pos,
         } => handle_plugins_modal_input(key, state, plugin_name, input_buffer, cursor_pos),
+        PluginsModalState::SelectInput {
+            plugin_name,
+            field_name,
+            options,
+            selected_index,
+        } => handle_plugins_modal_select_input(
+            key,
+            state,
+            plugin_name,
+            field_name,
+            options,
+            selected_index,
+        ),
         PluginsModalState::Executing { plugin_name } => {
             // While executing, ignore keypresses - state is managed by async result
             state.plugins_modal_state = Some(PluginsModalState::Executing { plugin_name });
@@ -1380,15 +1396,36 @@ fn handle_plugins_tabs(
         KeyCode::Enter => {
             match active_tab {
                 PluginsTab::Installed => {
-                    // Get selected plugin from loader
-                    let plugins: Vec<_> = state.plugin_loader.loaded_plugins().collect();
+                    // Get selected plugin from loader (sorted by name for stable ordering)
+                    let mut plugins: Vec<_> = state.plugin_loader.loaded_plugins().collect();
+                    plugins.sort_by(|a, b| a.name.cmp(&b.name));
+
                     if let Some(plugin) = plugins.get(installed_index) {
                         if !plugin.session_disabled {
-                            state.plugins_modal_state = Some(PluginsModalState::Input {
-                                plugin_name: plugin.name.clone(),
-                                input_buffer: String::new(),
-                                cursor_pos: 0,
-                            });
+                            // Check if plugin has a Select field in its config schema
+                            let schema = plugin.plugin.config_schema();
+                            let first_select = schema
+                                .fields
+                                .iter()
+                                .find(|f| f.field_type == FfiConfigType::Select);
+
+                            if let Some(select_field) = first_select {
+                                // Show SelectInput modal with parsed options
+                                let options = parse_select_options(&select_field.options);
+                                state.plugins_modal_state = Some(PluginsModalState::SelectInput {
+                                    plugin_name: plugin.name.clone(),
+                                    field_name: select_field.name.to_string(),
+                                    options,
+                                    selected_index: 0,
+                                });
+                            } else {
+                                // No Select field, use regular text Input
+                                state.plugins_modal_state = Some(PluginsModalState::Input {
+                                    plugin_name: plugin.name.clone(),
+                                    input_buffer: String::new(),
+                                    cursor_pos: 0,
+                                });
+                            }
                         } else {
                             state.plugins_modal_state = Some(PluginsModalState::Error {
                                 message: format!(
@@ -1568,6 +1605,117 @@ fn handle_plugins_modal_input(
                 plugin_name,
                 input_buffer,
                 cursor_pos,
+            });
+        }
+    }
+    Ok(())
+}
+
+/// Parse Select field options from "display|value" format.
+/// If no pipe separator, uses the same value for both display and value.
+fn parse_select_options(options: &abi_stable::std_types::RVec<abi_stable::std_types::RString>) -> Vec<(String, String)> {
+    options
+        .iter()
+        .map(|opt| {
+            let s = opt.as_str();
+            if let Some(idx) = s.find('|') {
+                (s[..idx].to_string(), s[idx + 1..].to_string())
+            } else {
+                (s.to_string(), s.to_string())
+            }
+        })
+        .collect()
+}
+
+/// Handle select input in the plugins modal (dropdown for Select type config fields)
+fn handle_plugins_modal_select_input(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin_name: String,
+    field_name: String,
+    options: Vec<(String, String)>,
+    selected_index: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            let new_index = selected_index.saturating_sub(1);
+            state.plugins_modal_state = Some(PluginsModalState::SelectInput {
+                plugin_name,
+                field_name,
+                options,
+                selected_index: new_index,
+            });
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            let new_index = (selected_index + 1).min(options.len().saturating_sub(1));
+            state.plugins_modal_state = Some(PluginsModalState::SelectInput {
+                plugin_name,
+                field_name,
+                options,
+                selected_index: new_index,
+            });
+        }
+        KeyCode::Enter => {
+            if let Some((_, value)) = options.get(selected_index) {
+                // Create config with selected value
+                let mut config = std::collections::HashMap::new();
+                config.insert(
+                    abi_stable::std_types::RString::from(field_name.as_str()),
+                    FfiConfigValue::String(abi_stable::std_types::RString::from(value.as_str())),
+                );
+
+                // Call on_config_loaded with the selection
+                if let Some(plugin) = state.plugin_loader.get(&plugin_name) {
+                    // Convert HashMap to RHashMap
+                    let r_config: abi_stable::std_types::RHashMap<
+                        abi_stable::std_types::RString,
+                        FfiConfigValue,
+                    > = config.into_iter().collect();
+
+                    tracing::info!(
+                        plugin = %plugin_name,
+                        field = %field_name,
+                        value = %value,
+                        "SelectInput: calling on_config_loaded"
+                    );
+
+                    // Call on_config_loaded to set the selected value
+                    plugin.plugin.on_config_loaded(r_config);
+                }
+
+                // Fire OnLoad event to trigger plugin to process its sync events
+                // This allows plugins like claude-tasks to immediately show their tasks
+                tracing::info!(plugin = %plugin_name, "SelectInput: firing OnLoad event");
+                state.fire_on_load_event();
+
+                // Close modal and return to Navigate mode
+                state.plugins_modal_state = None;
+                state.mode = Mode::Navigate;
+            }
+        }
+        KeyCode::Esc => {
+            // Return to Tabs view with Installed tab
+            use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+            let marketplace_name = Config::load()
+                .map(|c| c.marketplaces.default)
+                .unwrap_or_else(|_| DEFAULT_MARKETPLACE.to_string());
+            state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                active_tab: PluginsTab::Installed,
+                installed_index: 0,
+                marketplace_index: 0,
+                marketplace_plugins: None,
+                marketplace_loading: false,
+                marketplace_error: None,
+                marketplace_name,
+            });
+        }
+        _ => {
+            // Keep current state for unhandled keys
+            state.plugins_modal_state = Some(PluginsModalState::SelectInput {
+                plugin_name,
+                field_name,
+                options,
+                selected_index,
             });
         }
     }

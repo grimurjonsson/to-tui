@@ -82,6 +82,14 @@ pub fn get_crash_log_path() -> Result<PathBuf> {
     Ok(todo_dir.join("crash.log"))
 }
 
+/// Get the logs directory for totui.
+///
+/// Returns ~/.local/share/to-tui/logs/
+pub fn get_logs_dir() -> Result<PathBuf> {
+    let todo_dir = get_to_tui_dir()?;
+    Ok(todo_dir.join("logs"))
+}
+
 pub fn get_daily_file_path_for_project(project_name: &str, date: NaiveDate) -> Result<PathBuf> {
     let dailies_dir = get_dailies_dir_for_project(project_name)?;
     let filename = format!("{}.md", date.format("%Y-%m-%d"));

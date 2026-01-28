@@ -6,6 +6,7 @@ use crate::plugin::{
 };
 use crate::project::{Project, ProjectRegistry};
 use crate::storage::file::{load_todo_list_for_project, load_todos_for_viewing_in_project};
+use crate::storage::rollover::find_rollover_candidates_for_project;
 use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
@@ -56,6 +57,14 @@ pub enum PluginsModalState {
         plugin_name: String,
         input_buffer: String,
         cursor_pos: usize,
+    },
+    /// Plugin select input (dropdown for Select type config fields)
+    SelectInput {
+        plugin_name: String,
+        field_name: String,
+        /// (display text, value) pairs parsed from "display|value" format
+        options: Vec<(String, String)>,
+        selected_index: usize,
     },
     /// Executing plugin
     Executing {
@@ -564,6 +573,15 @@ impl AppState {
     /// Reload the todo list from the database.
     /// Used when external changes are detected (e.g., from API server).
     pub fn reload_from_database(&mut self) -> Result<()> {
+        // Skip reload if we have unsaved changes - don't overwrite in-memory modifications
+        if self.unsaved_changes {
+            tracing::debug!(
+                project = %self.current_project.name,
+                "Skipping database reload - unsaved changes present"
+            );
+            return Ok(());
+        }
+
         let date = self.todo_list.date;
         let new_list = load_todo_list_for_project(&self.current_project.name, date)?;
         self.todo_list = new_list;
@@ -1072,9 +1090,13 @@ impl AppState {
     }
 
     /// Close the project modal and return to navigate mode
+    /// (unless rollover modal is active)
     pub fn close_project_modal(&mut self) {
         self.project_state = None;
-        self.mode = Mode::Navigate;
+        // Don't override Rollover mode - it may have been triggered by switch_project
+        if self.mode != Mode::Rollover {
+            self.mode = Mode::Navigate;
+        }
     }
 
     /// Switch to a different project
@@ -1084,6 +1106,10 @@ impl AppState {
             crate::storage::file::save_todo_list_for_project(&self.todo_list, &self.current_project.name)?;
             self.unsaved_changes = false;
         }
+
+        // Check for rollover candidates in the new project BEFORE loading the list
+        // (same pattern as startup in main.rs)
+        let rollover_candidates = find_rollover_candidates_for_project(&project.name);
 
         // Load the new project's todo list
         let today = Local::now().date_naive();
@@ -1096,6 +1122,11 @@ impl AppState {
         self.cursor_position = 0;
         self.undo_stack.clear();
         self.sync_list_state();
+
+        // Show rollover modal if candidates were found
+        if let Ok(Some((source_date, items))) = rollover_candidates {
+            self.open_rollover_modal(source_date, items);
+        }
 
         Ok(())
     }
@@ -1252,6 +1283,12 @@ impl AppState {
                 continue;
             }
 
+            tracing::info!(
+                plugin = %result.plugin_name,
+                command_count = result.commands.len(),
+                "Applying hook commands"
+            );
+
             // Apply commands WITHOUT undo snapshot (intentional design decision).
             // Hook modifications are secondary effects, not user-initiated actions.
             // If user undoes the original action, hook effects would become orphaned.
@@ -1265,11 +1302,23 @@ impl AppState {
 
             match executor.execute_batch(result.commands, &mut self.todo_list) {
                 Ok(_) => {
-                    self.unsaved_changes = true;
-                    tracing::debug!(
-                        plugin = %result.plugin_name,
-                        "Applied hook commands"
-                    );
+                    // Save immediately to persist plugin changes
+                    if let Err(e) = crate::storage::file::save_todo_list_for_project(
+                        &self.todo_list,
+                        &self.current_project.name,
+                    ) {
+                        tracing::warn!(
+                            plugin = %result.plugin_name,
+                            error = %e,
+                            "Failed to save after hook commands"
+                        );
+                    } else {
+                        tracing::debug!(
+                            plugin = %result.plugin_name,
+                            "Applied and saved hook commands"
+                        );
+                    }
+                    self.unsaved_changes = false;
                 }
                 Err(e) => {
                     tracing::warn!(

@@ -23,7 +23,7 @@ pub use host_api::{
 };
 pub use plugin::{
     call_plugin_execute_with_host, call_plugin_generate, call_plugin_on_config_loaded,
-    call_plugin_on_event, Plugin, Plugin_TO,
+    call_plugin_on_event, Plugin, Plugin_TO, UpdateNotifier,
 };
 pub use types::{FfiPriority, FfiTodoItem, FfiTodoState};
 pub use version::{is_version_compatible, PluginModule, PluginModule_Ref, INTERFACE_VERSION};

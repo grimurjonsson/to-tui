@@ -19,7 +19,7 @@ use cli::{Cli, Commands, DEFAULT_API_PORT, PluginCommand, ServeCommand};
 use config::Config;
 use plugin::{PluginActionRegistry, PluginLoader, PluginManager};
 use plugin::config::{generate_config_template, PluginConfigLoader};
-use utils::paths::{get_plugin_config_dir, get_plugin_config_path};
+use utils::paths::{get_logs_dir, get_plugin_config_dir, get_plugin_config_path};
 use keybindings::KeybindingCache;
 use std::env;
 use std::fs;
@@ -115,6 +115,45 @@ fn install_crash_handler() {
     }));
 }
 
+/// Initialize file-based logging for the TUI mode.
+///
+/// Logs are written to ~/.local/share/to-tui/logs/totui.log
+/// Use `tail -f ~/.local/share/to-tui/logs/totui.log` to follow logs.
+///
+/// Log level can be controlled with RUST_LOG env var (default: info).
+fn init_file_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    let logs_dir = match get_logs_dir() {
+        Ok(dir) => dir,
+        Err(_) => return None,
+    };
+
+    // Create logs directory if it doesn't exist
+    if let Err(e) = fs::create_dir_all(&logs_dir) {
+        eprintln!("Warning: Could not create logs directory: {}", e);
+        return None;
+    }
+
+    // Set up file appender (rolling daily)
+    let file_appender = tracing_appender::rolling::daily(&logs_dir, "totui.log");
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+
+    // Initialize subscriber with file output
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(non_blocking)
+        .with_ansi(false) // No ANSI colors in log files
+        .with_target(true)
+        .with_thread_ids(false)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+
+    Some(guard)
+}
+
 fn main() -> Result<()> {
     // Install crash handler first thing
     install_crash_handler();
@@ -150,6 +189,12 @@ fn main() -> Result<()> {
             handle_plugin_command(command)?;
         }
         None => {
+            // Initialize file logging for TUI mode
+            // Guard must be kept alive for the duration of the app
+            let _log_guard = init_file_logging();
+
+            tracing::info!("totui starting");
+
             ensure_server_running(DEFAULT_API_PORT)?;
 
             // Determine which project to load
@@ -262,6 +307,8 @@ fn main() -> Result<()> {
             }
 
             let state = ui::run_tui(state)?;
+
+            tracing::info!("totui exiting gracefully");
 
             // Print release URL if user requested it
             if let Some(url) = state.pending_release_url {

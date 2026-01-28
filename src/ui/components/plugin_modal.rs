@@ -51,6 +51,12 @@ pub fn render_plugins_modal(f: &mut Frame, state: &AppState) {
             input_buffer,
             cursor_pos,
         } => render_input_view(f, state, plugin_name, input_buffer, *cursor_pos),
+        PluginsModalState::SelectInput {
+            plugin_name,
+            field_name,
+            options,
+            selected_index,
+        } => render_select_input_view(f, state, plugin_name, field_name, options, *selected_index),
         PluginsModalState::Executing { plugin_name } => render_executing_view(f, state, plugin_name),
         PluginsModalState::Preview { items } => render_preview_view(f, state, items),
         PluginsModalState::Error { message } => render_error_view(f, state, message),
@@ -155,7 +161,9 @@ fn render_tabs_view(
 
 /// Render the installed plugins list
 fn render_installed_list(f: &mut Frame, state: &AppState, area: Rect, selected_index: usize) {
-    let plugins: Vec<_> = state.plugin_loader.loaded_plugins().collect();
+    // Collect and sort by name for stable ordering (HashMap iteration is non-deterministic)
+    let mut plugins: Vec<_> = state.plugin_loader.loaded_plugins().collect();
+    plugins.sort_by(|a, b| a.name.cmp(&b.name));
 
     if plugins.is_empty() {
         // Check if any plugins are installed on disk but not loaded
@@ -515,6 +523,78 @@ fn render_input_view(
 
     let input_paragraph = Paragraph::new(input_line);
     f.render_widget(input_paragraph, inner_area);
+}
+
+/// Render the select input view for Select type config fields
+fn render_select_input_view(
+    f: &mut Frame,
+    state: &AppState,
+    plugin_name: &str,
+    field_name: &str,
+    options: &[(String, String)],
+    selected_index: usize,
+) {
+    let area = centered_rect(60, 50, f.area());
+
+    // Clear background
+    f.render_widget(Clear, area);
+
+    // Build title
+    let title = format!(" {} - Select {} ", plugin_name, field_name);
+
+    // Create main block
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .style(Style::default().bg(state.theme.background));
+
+    f.render_widget(block, area);
+
+    // Inner area for content
+    let inner = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
+
+    // Layout: options list + footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),    // Options list
+            Constraint::Length(1), // Footer
+        ])
+        .split(inner);
+
+    // Render options list
+    let items: Vec<ListItem> = options
+        .iter()
+        .enumerate()
+        .map(|(i, (display, _value))| {
+            let is_selected = i == selected_index;
+
+            let name_style = if is_selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default().fg(state.theme.foreground)
+            };
+
+            ListItem::new(Line::from(Span::styled(format!(" {} ", display), name_style)))
+        })
+        .collect();
+
+    let list = List::new(items).style(Style::default().fg(state.theme.foreground));
+    f.render_widget(list, chunks[0]);
+
+    // Render footer
+    let footer = Paragraph::new(Line::from(Span::styled(
+        "[j/k] navigate | [Enter] select | [Esc] cancel",
+        Style::default().fg(Color::DarkGray),
+    )));
+    f.render_widget(footer, chunks[1]);
 }
 
 /// Render the executing view with spinner

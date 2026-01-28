@@ -242,12 +242,17 @@ pub fn init_database() -> Result<()> {
             todo_id TEXT NOT NULL,
             plugin_name TEXT NOT NULL,
             data TEXT NOT NULL DEFAULT '{}',
+            external_id TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             UNIQUE(todo_id, plugin_name)
         )",
         [],
     )?;
+
+    // Migration: add external_id column for existing databases
+    conn.execute("ALTER TABLE todo_metadata ADD COLUMN external_id TEXT", [])
+        .ok();
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todo_metadata_todo ON todo_metadata(todo_id)",
@@ -256,6 +261,11 @@ pub fn init_database() -> Result<()> {
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todo_metadata_plugin ON todo_metadata(plugin_name)",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_todo_metadata_external ON todo_metadata(plugin_name, external_id) WHERE external_id IS NOT NULL",
         [],
     )?;
 
@@ -330,6 +340,9 @@ pub fn soft_delete_todos_for_project(
         )?;
     }
 
+    // Clean up metadata for soft-deleted todos
+    cleanup_orphaned_metadata()?;
+
     Ok(())
 }
 
@@ -341,6 +354,9 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
         "DELETE FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL",
         params![&date_str, project_name],
     )?;
+
+    // Note: We don't cleanup metadata here because todos are immediately re-inserted
+    // with possibly the same IDs. Metadata cleanup happens in archive_todos_for_date_and_project.
 
     let mut stmt = conn.prepare(
         "INSERT INTO todos (id, date, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project)
@@ -412,7 +428,29 @@ pub fn archive_todos_for_date_and_project(date: NaiveDate, project_name: &str) -
         params![&date_str, project_name],
     )?;
 
+    // Clean up orphaned metadata for deleted todos
+    cleanup_orphaned_metadata()?;
+
     Ok(count)
+}
+
+/// Clean up orphaned metadata entries.
+///
+/// Deletes todo_metadata rows where the referenced todo_id either:
+/// - No longer exists in the todos table (hard deleted)
+/// - Is soft-deleted (has deleted_at set)
+///
+/// This prevents UNIQUE constraint violations when plugins try to
+/// recreate todos with the same external_id.
+pub fn cleanup_orphaned_metadata() -> Result<()> {
+    let conn = get_connection()?;
+
+    conn.execute(
+        "DELETE FROM todo_metadata WHERE todo_id NOT IN (SELECT id FROM todos WHERE deleted_at IS NULL)",
+        [],
+    )?;
+
+    Ok(())
 }
 
 pub fn load_archived_todos_for_date_and_project(
@@ -1255,5 +1293,41 @@ mod tests {
             loaded[0].description,
             Some("This is a description".to_string())
         );
+    }
+
+    #[test]
+    fn test_cleanup_orphaned_metadata() {
+        // Set up test environment with full database schema
+        let temp_dir = TempDir::new().unwrap();
+        let to_tui_dir = temp_dir.path().join(".to-tui");
+        std::fs::create_dir_all(&to_tui_dir).unwrap();
+        unsafe {
+            std::env::set_var("HOME", temp_dir.path());
+        }
+        init_database().unwrap();
+
+        // Create a todo
+        let date = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+        let mut list = create_test_list(date);
+        list.add_item("Test".to_string());
+        let todo_id = list.items[0].id;
+
+        save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
+
+        // Add metadata for this todo
+        crate::storage::metadata::set_external_id(&todo_id, "test-plugin", "ext-123").unwrap();
+
+        // Verify metadata exists
+        let found =
+            crate::storage::metadata::get_todo_id_by_external_id("test-plugin", "ext-123").unwrap();
+        assert_eq!(found, Some(todo_id));
+
+        // Archive the todo (which triggers cleanup_orphaned_metadata)
+        archive_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME).unwrap();
+
+        // Metadata should be cleaned up
+        let found =
+            crate::storage::metadata::get_todo_id_by_external_id("test-plugin", "ext-123").unwrap();
+        assert_eq!(found, None, "Orphaned metadata should be deleted");
     }
 }

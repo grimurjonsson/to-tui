@@ -108,8 +108,8 @@ fn render_confirm_delete(f: &mut Frame, state: &AppState, area: Rect) {
     );
 
     let style = Style::default()
-        .fg(ratatui::style::Color::Black)
-        .bg(ratatui::style::Color::Yellow)
+        .fg(ratatui::style::Color::White)
+        .bg(ratatui::style::Color::Rgb(180, 100, 0))
         .add_modifier(Modifier::BOLD);
 
     let padding = area.width.saturating_sub(prompt.len() as u16);
@@ -123,8 +123,8 @@ fn render_status_message(f: &mut Frame, message: &str, area: Rect) {
     let display_message = format!(" {message} ");
 
     let style = Style::default()
-        .fg(ratatui::style::Color::Black)
-        .bg(ratatui::style::Color::Green)
+        .fg(ratatui::style::Color::White)
+        .bg(ratatui::style::Color::Rgb(0, 100, 0))
         .add_modifier(Modifier::BOLD);
 
     let padding = area.width.saturating_sub(display_message.len() as u16);

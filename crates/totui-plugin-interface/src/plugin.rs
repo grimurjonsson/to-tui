@@ -5,12 +5,23 @@
 
 use abi_stable::sabi_trait;
 use abi_stable::std_types::{RBox, RHashMap, RResult, RString, RVec};
+use abi_stable::StableAbi;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::config::{FfiConfigSchema, FfiConfigValue};
 use crate::events::{FfiEvent, FfiEventType, FfiHookResponse};
 use crate::host_api::{FfiCommand, HostApi_TO};
 use crate::types::FfiTodoItem;
+
+/// FFI-safe wrapper for the update notifier callback.
+///
+/// Plugins call this when they have updates ready for the host to collect.
+#[derive(StableAbi, Clone, Copy)]
+#[repr(transparent)]
+pub struct UpdateNotifier {
+    /// The callback function to invoke when plugin has updates.
+    pub func: extern "C" fn(),
+}
 
 /// The main plugin trait that all plugins must implement.
 ///
@@ -143,8 +154,20 @@ pub trait Plugin: Send + Sync + Debug {
     /// # Returns
     ///
     /// Commands to apply in response, or error message.
-    #[sabi(last_prefix_field)]
     fn on_event(&self, event: FfiEvent) -> RResult<FfiHookResponse, RString>;
+
+    /// Set a notifier callback that the plugin can use to signal updates.
+    ///
+    /// When the plugin has updates ready (e.g., file watcher detected changes),
+    /// it should call the notifier to tell the host to call `on_event`.
+    ///
+    /// Plugins should store this and call `notifier.func()` when they have updates.
+    ///
+    /// # Arguments
+    ///
+    /// * `notifier` - Wrapper containing the callback function
+    #[sabi(last_prefix_field)]
+    fn set_notifier(&self, notifier: UpdateNotifier);
 }
 
 /// Wrapper for calling plugin.generate() safely.

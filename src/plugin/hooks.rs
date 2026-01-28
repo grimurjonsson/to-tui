@@ -83,28 +83,54 @@ impl HookDispatcher {
     pub fn dispatch_to_plugin(&self, event: FfiEvent, plugin: &LoadedPlugin, timeout: Duration) {
         // Skip if hook is disabled for this plugin
         if self.disabled_hooks.contains(&plugin.name) {
+            tracing::debug!(plugin = %plugin.name, "Skipping disabled hook");
             return;
         }
 
         let plugin_name = plugin.name.clone();
         let event_type = event.event_type();
 
+        tracing::debug!(
+            plugin = %plugin_name,
+            event = ?event_type,
+            "Dispatching event to plugin"
+        );
+
         // Call the plugin with timeout
         let result = call_hook_with_timeout(&plugin.plugin, event, timeout);
 
         let hook_result = match result {
-            Ok(response) => HookResult {
-                plugin_name,
-                event_type,
-                commands: response.commands.into_iter().collect(),
-                error: None,
-            },
-            Err(e) => HookResult {
-                plugin_name,
-                event_type,
-                commands: vec![],
-                error: Some(e),
-            },
+            Ok(response) => {
+                let commands: Vec<_> = response.commands.into_iter().collect();
+                if !commands.is_empty() {
+                    tracing::debug!(
+                        plugin = %plugin_name,
+                        event = ?event_type,
+                        command_count = commands.len(),
+                        "Plugin returned commands"
+                    );
+                }
+                HookResult {
+                    plugin_name,
+                    event_type,
+                    commands,
+                    error: None,
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    plugin = %plugin_name,
+                    event = ?event_type,
+                    error = %e,
+                    "Plugin hook failed"
+                );
+                HookResult {
+                    plugin_name,
+                    event_type,
+                    commands: vec![],
+                    error: Some(e),
+                }
+            }
         };
 
         // Send result (ignore error if receiver dropped)
