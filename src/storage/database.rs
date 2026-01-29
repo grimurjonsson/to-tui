@@ -350,8 +350,12 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
     let conn = get_connection()?;
     let date_str = list.date.format("%Y-%m-%d").to_string();
 
+    // Delete ALL todos for this date/project, including soft-deleted ones.
+    // This ensures undo operations work correctly - when restoring a previously
+    // deleted item, its soft-deleted row must be removed to avoid UNIQUE constraint
+    // violations on the id PRIMARY KEY.
     conn.execute(
-        "DELETE FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL",
+        "DELETE FROM todos WHERE date = ?1 AND project = ?2",
         params![&date_str, project_name],
     )?;
 
@@ -1329,5 +1333,65 @@ mod tests {
         let found =
             crate::storage::metadata::get_todo_id_by_external_id("test-plugin", "ext-123").unwrap();
         assert_eq!(found, None, "Orphaned metadata should be deleted");
+    }
+
+    /// Regression test for undo crash after deleting non-last item.
+    /// 
+    /// Bug: Deleting a non-last item soft-deletes it in DB. On undo, the restored
+    /// list tries to INSERT the item back, but the soft-deleted row still exists
+    /// with the same ID, causing "UNIQUE constraint failed: todos.id".
+    #[test]
+    fn test_undo_after_soft_delete_non_last_item() {
+        // Set up test environment with full database schema
+        let temp_dir = TempDir::new().unwrap();
+        let to_tui_dir = temp_dir.path().join(".to-tui");
+        std::fs::create_dir_all(&to_tui_dir).unwrap();
+        unsafe {
+            std::env::set_var("HOME", temp_dir.path());
+        }
+        init_database().unwrap();
+
+        let date = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
+        let mut list = create_test_list(date);
+        
+        // Create 3 items: A, B, C
+        list.add_item("A".to_string());
+        list.add_item("B".to_string());
+        list.add_item("C".to_string());
+        
+        let a_id = list.items[0].id;
+        let b_id = list.items[1].id;
+        let c_id = list.items[2].id;
+
+        // Initial save
+        save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
+
+        // Save state for "undo" (clone the list before deletion)
+        let undo_state = list.clone();
+
+        // Soft delete B (the middle item - non-last)
+        soft_delete_todos_for_project(&[b_id], date, DEFAULT_PROJECT_NAME).unwrap();
+        
+        // Remove B from in-memory list
+        list.items.retain(|item| item.id != b_id);
+        assert_eq!(list.items.len(), 2);
+        
+        // Save the modified list (A, C)
+        save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
+
+        // Simulate undo: restore the previous state (A, B, C)
+        list = undo_state;
+        assert_eq!(list.items.len(), 3);
+        
+        // This should NOT crash with "UNIQUE constraint failed: todos.id"
+        let result = save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME);
+        assert!(result.is_ok(), "Undo save should not fail: {:?}", result.err());
+
+        // Verify all 3 items are back
+        let loaded = load_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME).unwrap();
+        assert_eq!(loaded.len(), 3, "Should have 3 items after undo");
+        assert_eq!(loaded[0].id, a_id);
+        assert_eq!(loaded[1].id, b_id);
+        assert_eq!(loaded[2].id, c_id);
     }
 }
