@@ -3,7 +3,7 @@ use super::state::{
     AppState, MoveToProjectSubState, PluginSubState, PluginsModalState, PluginsTab,
     ProjectSubState,
 };
-use crate::clipboard::copy_to_clipboard;
+use crate::clipboard::{copy_to_clipboard, CopyResult};
 use crate::config::Config;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::{
@@ -701,18 +701,30 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         Action::Yank => {
             if let Some(item) = state.selected_item() {
                 let text = item.content.clone();
+                // Truncate display text if too long
+                let display_text = if text.len() > 40 {
+                    format!("{}...", &text[..37])
+                } else {
+                    text.clone()
+                };
                 match copy_to_clipboard(&text) {
-                    Ok(()) => {
-                        // Truncate display text if too long
-                        let display_text = if text.len() > 40 {
-                            format!("{}...", &text[..37])
-                        } else {
-                            text.clone()
-                        };
+                    Ok(CopyResult::SystemClipboard) => {
                         state.set_status_message(format!("Copied: {}", display_text));
                     }
+                    Ok(CopyResult::InternalBuffer { file_path }) => {
+                        // Headless fallback - saved to internal buffer and file
+                        let msg = match file_path {
+                            Some(path) => format!(
+                                "Copied to buffer (no clipboard): {} | Saved to {}",
+                                display_text,
+                                path.display()
+                            ),
+                            None => format!("Copied to buffer (no clipboard): {}", display_text),
+                        };
+                        state.set_status_message(msg);
+                    }
                     Err(e) => {
-                        state.set_status_message(format!("Clipboard error: {}", e));
+                        state.set_status_message(format!("Copy failed: {}", e));
                     }
                 }
             }
