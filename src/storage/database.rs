@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
+use tracing::{debug, trace};
 use uuid::Uuid;
 
 /// Parse an RFC3339 timestamp string into a DateTime<Utc>
@@ -325,8 +326,17 @@ pub fn soft_delete_todos_for_project(
     project_name: &str,
 ) -> Result<()> {
     if ids.is_empty() {
+        debug!(project = %project_name, date = %date, "soft_delete called with empty ids list");
         return Ok(());
     }
+
+    debug!(
+        project = %project_name,
+        date = %date,
+        count = ids.len(),
+        ids = ?ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+        "soft_delete_todos_for_project: marking items as deleted"
+    );
 
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
@@ -334,6 +344,7 @@ pub fn soft_delete_todos_for_project(
 
     for id in ids {
         let id_str = id.to_string();
+        trace!(id = %id_str, "Setting deleted_at on todo");
         conn.execute(
             "UPDATE todos SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND date = ?3 AND project = ?4",
             params![now, id_str, date_str, project_name],
@@ -343,6 +354,7 @@ pub fn soft_delete_todos_for_project(
     // Clean up metadata for soft-deleted todos
     cleanup_orphaned_metadata()?;
 
+    debug!(count = ids.len(), "soft_delete completed");
     Ok(())
 }
 
@@ -350,10 +362,56 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
     let conn = get_connection()?;
     let date_str = list.date.format("%Y-%m-%d").to_string();
 
-    conn.execute(
+    debug!(
+        project = %project_name,
+        date = %date_str,
+        item_count = list.items.len(),
+        ids = ?list.items.iter().map(|i| i.id.to_string()).collect::<Vec<_>>(),
+        "save_todo_list_for_project: starting save"
+    );
+
+    // Check for existing soft-deleted items that would conflict
+    let item_ids: Vec<String> = list.items.iter().map(|i| i.id.to_string()).collect();
+    for id_str in &item_ids {
+        let soft_deleted_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM todos WHERE id = ?1 AND deleted_at IS NOT NULL)",
+            params![id_str],
+            |row| row.get(0),
+        ).unwrap_or(false);
+        
+        if soft_deleted_exists {
+            debug!(
+                id = %id_str,
+                "Found soft-deleted item with same ID - will be removed to allow insert"
+            );
+        }
+    }
+
+    // Delete current non-soft-deleted items
+    let deleted_count = conn.execute(
         "DELETE FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL",
         params![&date_str, project_name],
     )?;
+    debug!(deleted_count = deleted_count, "Deleted non-soft-deleted items");
+
+    // Also delete soft-deleted items whose IDs match items being saved (for undo support)
+    let mut soft_deleted_removed = 0;
+    for id_str in &item_ids {
+        let removed = conn.execute(
+            "DELETE FROM todos WHERE id = ?1 AND deleted_at IS NOT NULL",
+            params![id_str],
+        )?;
+        if removed > 0 {
+            trace!(id = %id_str, "Removed soft-deleted item to allow re-insert (undo case)");
+            soft_deleted_removed += removed;
+        }
+    }
+    if soft_deleted_removed > 0 {
+        debug!(
+            soft_deleted_removed = soft_deleted_removed,
+            "Removed soft-deleted items that would conflict with save (undo restoration)"
+        );
+    }
 
     // Note: We don't cleanup metadata here because todos are immediately re-inserted
     // with possibly the same IDs. Metadata cleanup happens in archive_todos_for_date_and_project.
@@ -375,6 +433,13 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
         let completed_at_str = item.completed_at.map(|dt| dt.to_rfc3339());
         let deleted_at_str = item.deleted_at.map(|dt| dt.to_rfc3339());
 
+        trace!(
+            position = position,
+            id = %id_str,
+            content = %item.content,
+            "Inserting todo item"
+        );
+
         stmt.execute(params![
             id_str,
             date_str,
@@ -394,6 +459,13 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
             project_name,
         ])?;
     }
+
+    debug!(
+        project = %project_name,
+        date = %date_str,
+        saved_count = list.items.len(),
+        "save_todo_list_for_project: completed successfully"
+    );
 
     Ok(())
 }

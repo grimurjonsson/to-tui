@@ -20,6 +20,7 @@ use ratatui::widgets::ListState;
 use std::sync::mpsc;
 use std::time::Instant;
 use totui_plugin_interface::{FfiEvent, FfiFieldChange};
+use tracing::{debug, trace};
 use uuid::Uuid;
 
 const MAX_UNDO_HISTORY: usize = 50;
@@ -439,19 +440,45 @@ impl AppState {
 
     pub fn save_undo(&mut self) {
         if self.undo_stack.len() >= MAX_UNDO_HISTORY {
+            trace!("Undo stack full ({}), removing oldest entry", MAX_UNDO_HISTORY);
             self.undo_stack.remove(0);
         }
+        
+        let item_ids: Vec<String> = self.todo_list.items.iter().map(|i| i.id.to_string()).collect();
+        debug!(
+            stack_depth = self.undo_stack.len() + 1,
+            item_count = self.todo_list.items.len(),
+            cursor = self.cursor_position,
+            ids = ?item_ids,
+            "save_undo: pushing state to undo stack"
+        );
+        
         self.undo_stack
             .push((self.todo_list.clone(), self.cursor_position));
     }
 
     pub fn undo(&mut self) -> bool {
         if let Some((list, cursor)) = self.undo_stack.pop() {
+            let old_ids: Vec<String> = self.todo_list.items.iter().map(|i| i.id.to_string()).collect();
+            let new_ids: Vec<String> = list.items.iter().map(|i| i.id.to_string()).collect();
+            
+            debug!(
+                stack_depth_after = self.undo_stack.len(),
+                old_item_count = self.todo_list.items.len(),
+                new_item_count = list.items.len(),
+                old_cursor = self.cursor_position,
+                new_cursor = cursor,
+                old_ids = ?old_ids,
+                new_ids = ?new_ids,
+                "undo: restoring previous state"
+            );
+            
             self.todo_list = list;
             self.cursor_position = cursor;
             self.unsaved_changes = true;
             true
         } else {
+            debug!("undo: stack empty, nothing to undo");
             false
         }
     }

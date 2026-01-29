@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
 
 /// Default marketplace repository
 pub const DEFAULT_MARKETPLACE: &str = "grimurjonsson/to-tui-plugins";
@@ -69,13 +70,33 @@ pub fn fetch_marketplace(owner: &str, repo: &str) -> Result<MarketplaceManifest>
         owner, repo
     );
 
+    debug!(owner = %owner, repo = %repo, url = %url, "Fetching marketplace manifest");
+
     let client = reqwest::blocking::Client::builder()
         .user_agent("to-tui")
+        .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    let response = client.get(&url).send()?;
+    debug!("HTTP client created, sending request...");
+
+    let response = match client.get(&url).send() {
+        Ok(r) => {
+            debug!(status = %r.status(), "Received HTTP response");
+            r
+        }
+        Err(e) => {
+            warn!(error = %e, url = %url, "Failed to fetch marketplace manifest");
+            return Err(e.into());
+        }
+    };
 
     if !response.status().is_success() {
+        warn!(
+            status = %response.status(),
+            owner = %owner,
+            repo = %repo,
+            "Marketplace fetch returned non-success status"
+        );
         anyhow::bail!(
             "Failed to fetch marketplace manifest from {}/{}: HTTP {}",
             owner,
@@ -85,7 +106,26 @@ pub fn fetch_marketplace(owner: &str, repo: &str) -> Result<MarketplaceManifest>
     }
 
     let content = response.text()?;
-    MarketplaceManifest::parse(&content)
+    debug!(content_length = content.len(), "Received marketplace manifest content");
+
+    match MarketplaceManifest::parse(&content) {
+        Ok(manifest) => {
+            debug!(
+                marketplace_name = %manifest.marketplace.name,
+                plugin_count = manifest.plugins.len(),
+                plugins = ?manifest.plugins.iter().map(|p| &p.name).collect::<Vec<_>>(),
+                "Successfully parsed marketplace manifest"
+            );
+            Ok(manifest)
+        }
+        Err(e) => {
+            warn!(error = %e, "Failed to parse marketplace.toml");
+            // Log first 500 chars of content for debugging
+            let preview: String = content.chars().take(500).collect();
+            debug!(content_preview = %preview, "Raw content (first 500 chars)");
+            Err(e)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -141,5 +181,36 @@ version = "1.0.0"
         assert!(manifest.find_plugin("jira").is_some());
         assert!(manifest.find_plugin("JIRA").is_some());
         assert!(manifest.find_plugin("Jira").is_some());
+    }
+
+    /// Integration test that fetches the real marketplace manifest
+    /// Run with: cargo test test_fetch_real_marketplace -- --ignored --nocapture
+    #[test]
+    #[ignore] // Requires network access
+    fn test_fetch_real_marketplace() {
+        // Initialize tracing for debug output
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter("debug")
+            .with_test_writer()
+            .try_init();
+
+        let result = fetch_marketplace("grimurjonsson", "to-tui-plugins");
+        
+        match result {
+            Ok(manifest) => {
+                println!("✅ Marketplace fetch successful!");
+                println!("   Name: {}", manifest.marketplace.name);
+                println!("   Plugins: {}", manifest.plugins.len());
+                for plugin in &manifest.plugins {
+                    println!("   - {} v{}: {}", plugin.name, plugin.version, plugin.description);
+                }
+                assert!(!manifest.plugins.is_empty(), "Expected at least one plugin");
+            }
+            Err(e) => {
+                println!("❌ Marketplace fetch failed: {}", e);
+                println!("   Caused by: {:?}", e.source());
+                panic!("Marketplace fetch should succeed");
+            }
+        }
     }
 }
