@@ -6,7 +6,7 @@ use crate::app::mode::Mode;
 use crate::app::state::{MoveToProjectSubState, PluginSubState, ProjectSubState};
 use crate::app::AppState;
 use crate::project::DEFAULT_PROJECT_NAME;
-use crate::utils::upgrade::{format_bytes, UpgradeSubState};
+use crate::utils::upgrade::{format_bytes, PluginUpgradeSubState, UpgradeSubState};
 use chrono::{Local, NaiveDate};
 
 use ratatui::{
@@ -416,6 +416,30 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
+/// Create a centered rect with percentage width and absolute height in lines
+fn centered_rect_absolute_height(percent_x: u16, height: u16, r: Rect) -> Rect {
+    let height = height.min(r.height); // Don't exceed available height
+    let vertical_margin = (r.height.saturating_sub(height)) / 2;
+
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(vertical_margin),
+            Constraint::Length(height),
+            Constraint::Length(r.height.saturating_sub(vertical_margin + height)),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
 fn render_plugin_overlay(f: &mut Frame, state: &AppState, plugin_state: &PluginSubState) {
     match plugin_state {
         PluginSubState::Selecting {
@@ -695,7 +719,8 @@ fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
 }
 
 fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
-    if state.new_version_available.is_none() {
+    // Check if there are any updates available (app or plugins)
+    if state.new_version_available.is_none() && state.plugin_updates_available.is_empty() {
         return;
     }
 
@@ -711,6 +736,9 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
         Some(UpgradeSubState::RestartPrompt { downloaded_path: _ }) => {
             render_upgrade_restart_prompt(f, state);
         }
+        Some(UpgradeSubState::PluginUpgrades(plugin_sub_state)) => {
+            render_plugin_upgrade_overlay(f, state, plugin_sub_state);
+        }
         Some(UpgradeSubState::Prompt) | None => {
             render_upgrade_prompt(f, state);
         }
@@ -718,43 +746,303 @@ fn render_upgrade_overlay(f: &mut Frame, state: &AppState) {
 }
 
 fn render_upgrade_prompt(f: &mut Frame, state: &AppState) {
-    let area = centered_rect(60, 40, f.area());
+    let has_app_update = state.new_version_available.is_some();
+    let has_plugin_updates = !state.plugin_updates_available.is_empty();
+
+    // Calculate height based on content lines:
+    //   1 empty line at start
+    //   App section (if present): 4 lines (header + current + new + empty)
+    //   Plugin section (if present): 1 header + N items (max 5) + maybe 1 "...and N more" + 1 empty
+    //   1 footer line
+    // Plus: 2 for borders (top/bottom)
+    let content_lines = 1; // initial empty line
+    let app_section_lines = if has_app_update { 4 } else { 0 };
+    let plugin_items = state.plugin_updates_available.len().min(5);
+    let plugin_overflow = if state.plugin_updates_available.len() > 5 { 1 } else { 0 };
+    let plugin_section_lines = if has_plugin_updates {
+        1 + plugin_items + plugin_overflow + 1 // header + items + overflow + trailing empty
+    } else {
+        0
+    };
+    let footer_line = 1;
+    // Total: content + borders
+    let total_height = content_lines + app_section_lines + plugin_section_lines + footer_line + 2;
+
+    let area = centered_rect_absolute_height(60, total_height as u16, f.area());
 
     let current_version = env!("CARGO_PKG_VERSION");
-    let new_version = state.new_version_available.as_ref().unwrap();
 
-    let title = " New Version Available ";
+    let title = if has_app_update && has_plugin_updates {
+        " Updates Available "
+    } else if has_app_update {
+        " New Version Available "
+    } else {
+        " Plugin Updates Available "
+    };
 
     // Build content lines
     let mut lines: Vec<Line> = vec![];
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw("  Current: "),
-        Span::styled(
-            format!("v{}", current_version),
-            Style::default().fg(Color::Yellow),
-        ),
-    ]));
-    lines.push(Line::from(vec![
-        Span::raw("  New:     "),
-        Span::styled(
-            format!("v{}", new_version),
+
+    // App update section
+    if has_app_update {
+        let new_version = state.new_version_available.as_ref().unwrap();
+        lines.push(Line::from(vec![
+            Span::styled("  App Update:", Style::default().add_modifier(Modifier::BOLD)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    Current: "),
+            Span::styled(
+                format!("v{}", current_version),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::raw("    New:     "),
+            Span::styled(
+                format!("v{}", new_version),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Plugin updates section
+    if has_plugin_updates {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  Plugin Updates ({}):", state.plugin_updates_available.len()),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        for plugin in state.plugin_updates_available.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::raw("    • "),
+                Span::styled(
+                    plugin.plugin_name.clone(),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::raw(": "),
+                Span::styled(
+                    plugin.current_version.clone(),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw(" → "),
+                Span::styled(
+                    plugin.latest_version.clone(),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+        }
+        if state.plugin_updates_available.len() > 5 {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("    ...and {} more", state.plugin_updates_available.len() - 5),
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    // Build footer spans based on what's available
+    let mut footer_spans = vec![Span::raw("  ")];
+
+    if has_app_update {
+        footer_spans.push(Span::styled(
+            "[Y]",
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
-        ),
+        ));
+        footer_spans.push(Span::raw(" Update app  "));
+    }
+
+    if has_plugin_updates {
+        footer_spans.push(Span::styled(
+            "[P]",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+        footer_spans.push(Span::raw(" Plugins  "));
+    }
+
+    footer_spans.push(Span::styled(
+        "[N]",
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+    ));
+    footer_spans.push(Span::raw(" Later  "));
+
+    if has_app_update {
+        footer_spans.push(Span::styled(
+            "[S]",
+            Style::default()
+                .fg(Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ));
+        footer_spans.push(Span::raw(" Skip"));
+    }
+
+    // Add footer to content
+    lines.push(Line::from(footer_spans));
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+}
+
+fn render_plugin_upgrade_overlay(f: &mut Frame, state: &AppState, plugin_sub_state: &PluginUpgradeSubState) {
+    match plugin_sub_state {
+        PluginUpgradeSubState::PluginList { updates, selected_index } => {
+            render_plugin_update_list(f, state, updates, *selected_index);
+        }
+        PluginUpgradeSubState::Downloading {
+            plugin_name,
+            current_version,
+            latest_version,
+            progress,
+            bytes_downloaded,
+            total_bytes,
+        } => {
+            render_plugin_downloading(
+                f,
+                state,
+                plugin_name,
+                current_version,
+                latest_version,
+                *progress,
+                *bytes_downloaded,
+                *total_bytes,
+            );
+        }
+        PluginUpgradeSubState::Complete {
+            plugin_name,
+            new_version,
+            remaining_updates,
+        } => {
+            render_plugin_update_complete(f, state, plugin_name, new_version, remaining_updates);
+        }
+        PluginUpgradeSubState::Error {
+            plugin_name,
+            message,
+            remaining_updates,
+        } => {
+            render_plugin_update_error(f, state, plugin_name, message, remaining_updates);
+        }
+    }
+}
+
+fn render_plugin_update_list(
+    f: &mut Frame,
+    state: &AppState,
+    updates: &[crate::utils::version_check::PluginUpdateInfo],
+    selected_index: usize,
+) {
+    let height = (updates.len() + 6).min(20) as u16;
+    let area = centered_rect_absolute_height(55, height, f.area());
+
+    let title = format!(" Plugin Updates ({}) ", updates.len());
+
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+
+    for (i, plugin) in updates.iter().enumerate() {
+        let prefix = if i == selected_index { " > " } else { "   " };
+        let style = if i == selected_index {
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(prefix.to_string(), style),
+            Span::styled(plugin.plugin_name.clone(), style),
+            Span::raw("  "),
+            Span::styled(
+                plugin.current_version.clone(),
+                Style::default().fg(Color::Yellow),
+            ),
+            Span::raw(" → "),
+            Span::styled(
+                plugin.latest_version.clone(),
+                Style::default().fg(Color::Green),
+            ),
+        ]));
+    }
+
+    lines.push(Line::from(""));
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+
+    // Footer
+    let footer_area = Rect {
+        x: area.x + 1,
+        y: area.y + area.height - 2,
+        width: area.width - 2,
+        height: 1,
+    };
+
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+        Span::raw(" Update  "),
+        Span::styled("[A]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw("ll  "),
+        Span::styled("[Esc]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::raw(" Back"),
     ]));
+
+    f.render_widget(footer, footer_area);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_plugin_downloading(
+    f: &mut Frame,
+    state: &AppState,
+    plugin_name: &str,
+    current_version: &str,
+    latest_version: &str,
+    progress: f64,
+    bytes_downloaded: u64,
+    total_bytes: Option<u64>,
+) {
+    // Height: 1 empty + 1 version + 1 empty + 1 progress + 1 empty + 1 footer + 2 borders = 8
+    let height = 8_u16;
+    let area = centered_rect_absolute_height(50, height, f.area());
+
+    let title = format!(" Updating {} ", plugin_name);
+
+    let mut lines: Vec<Line> = vec![];
     lines.push(Line::from(""));
     lines.push(Line::from(vec![
+        Span::raw("  Version: "),
+        Span::styled(current_version, Style::default().fg(Color::Yellow)),
+        Span::raw(" → "),
         Span::styled(
-            "  Release page:",
-            Style::default().fg(state.theme.foreground),
-        ),
-    ]));
-    lines.push(Line::from(vec![
-        Span::styled(
-            "  https://github.com/grimurjonsson/to-tui/releases",
-            Style::default().fg(Color::Cyan),
+            latest_version,
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ),
     ]));
     lines.push(Line::from(""));
@@ -771,39 +1059,209 @@ fn render_upgrade_prompt(f: &mut Frame, state: &AppState) {
     f.render_widget(Clear, area);
     f.render_widget(content, area);
 
-    // Render footer with options
+    // Progress bar (row 4 inside the box = area.y + 1 + 3)
+    let gauge_area = Rect {
+        x: area.x + 2,
+        y: area.y + 4,
+        width: area.width - 4,
+        height: 1,
+    };
+
+    let progress_label = format!(
+        "{} / {}",
+        format_bytes(bytes_downloaded),
+        total_bytes.map(format_bytes).unwrap_or_else(|| "???".to_string())
+    );
+
+    let gauge = Gauge::default()
+        .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
+        .percent((progress * 100.0) as u16)
+        .label(progress_label);
+
+    f.render_widget(gauge, gauge_area);
+
+    // Footer (row 5 inside the box = area.y + 1 + 4)
     let footer_area = Rect {
-        x: area.x + 1,
-        y: area.y + area.height - 2,
-        width: area.width - 2,
+        x: area.x + 2,
+        y: area.y + 6,
+        width: area.width - 4,
         height: 1,
     };
 
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled(
-            "[Y]",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("es - Download & install  "),
-        Span::styled(
-            "[N]",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("o - Later  "),
-        Span::styled(
-            "[S]",
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("kip - Don't remind"),
+        Span::styled("[Esc]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::raw(" Cancel"),
     ]));
 
     f.render_widget(footer, footer_area);
+}
+
+fn render_plugin_update_complete(
+    f: &mut Frame,
+    state: &AppState,
+    plugin_name: &str,
+    new_version: &str,
+    remaining_updates: &[crate::utils::version_check::PluginUpdateInfo],
+) {
+    let title = " Plugin Updated! ";
+
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(plugin_name, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" updated to "),
+        Span::styled(
+            format!("v{}", new_version),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    // Restart notice
+    lines.push(Line::from(vec![
+        Span::styled(
+            "  Restart totui to use the new version.",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+    lines.push(Line::from(""));
+
+    if !remaining_updates.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} more plugin(s) have updates.", remaining_updates.len()),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Add footer to content
+    let footer_spans = if !remaining_updates.is_empty() {
+        vec![
+            Span::raw("  "),
+            Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(" Continue  "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Done"),
+        ]
+    } else {
+        vec![
+            Span::raw("  "),
+            Span::styled("[Enter]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw(" Done  "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Done"),
+        ]
+    };
+    lines.push(Line::from(footer_spans));
+
+    // Calculate height: content lines + 2 for borders
+    let height = (lines.len() + 2) as u16;
+    let area = centered_rect_absolute_height(50, height, f.area());
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
+}
+
+fn render_plugin_update_error(
+    f: &mut Frame,
+    state: &AppState,
+    plugin_name: &str,
+    message: &str,
+    remaining_updates: &[crate::utils::version_check::PluginUpdateInfo],
+) {
+    let title = " Plugin Update Error ";
+
+    let mut lines: Vec<Line> = vec![];
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::raw("  Plugin: "),
+        Span::styled(plugin_name, Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+    ]));
+    lines.push(Line::from(""));
+
+    // Wrap long error messages
+    let error_prefix = "  Error: ";
+    let max_error_width = 50; // Leave room for borders and padding
+    let error_lines: Vec<&str> = message
+        .as_bytes()
+        .chunks(max_error_width)
+        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
+        .collect();
+
+    for (i, error_line) in error_lines.iter().enumerate() {
+        if i == 0 {
+            lines.push(Line::from(vec![
+                Span::raw(error_prefix),
+                Span::styled(*error_line, Style::default().fg(Color::Red)),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::raw("         "), // Indent continuation
+                Span::styled(*error_line, Style::default().fg(Color::Red)),
+            ]));
+        }
+    }
+    lines.push(Line::from(""));
+
+    if !remaining_updates.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("  {} other plugin(s) have updates.", remaining_updates.len()),
+                Style::default().fg(Color::Yellow),
+            ),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    // Add footer to content
+    let footer_spans = if !remaining_updates.is_empty() {
+        vec![
+            Span::raw("  "),
+            Span::styled("[R]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw("etry  "),
+            Span::styled("[Enter]", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+            Span::raw(" Continue  "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Done"),
+        ]
+    } else {
+        vec![
+            Span::raw("  "),
+            Span::styled("[R]", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::raw("etry  "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::raw(" Done"),
+        ]
+    };
+    lines.push(Line::from(footer_spans));
+
+    // Calculate height: content lines + 2 for borders
+    let height = (lines.len() + 2) as u16;
+    let area = centered_rect_absolute_height(60, height, f.area());
+
+    let content = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .style(Style::default().bg(state.theme.background)),
+        )
+        .style(Style::default().fg(state.theme.foreground));
+
+    f.render_widget(Clear, area);
+    f.render_widget(content, area);
 }
 
 fn render_upgrade_downloading(f: &mut Frame, state: &AppState, progress: f64, bytes_downloaded: u64, total_bytes: Option<u64>) {

@@ -121,6 +121,7 @@ async fn run_app(
         state.check_marketplace_fetch();
         state.check_version_update();
         state.check_download_progress();
+        state.check_plugin_download_progress();
 
         // Poll and apply hook results
         state.apply_pending_hook_results();
