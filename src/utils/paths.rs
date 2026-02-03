@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate};
 use std::fs;
 use std::path::PathBuf;
 
@@ -84,10 +84,27 @@ pub fn get_crash_log_path() -> Result<PathBuf> {
 
 /// Get the logs directory for totui.
 ///
-/// Returns ~/.local/share/to-tui/logs/
+/// Returns ~/.to-tui/logs/
 pub fn get_logs_dir() -> Result<PathBuf> {
     let todo_dir = get_to_tui_dir()?;
     Ok(todo_dir.join("logs"))
+}
+
+/// Get the logs directory for plugins.
+///
+/// Returns ~/.to-tui/logs/plugins/
+pub fn get_plugin_logs_dir() -> Result<PathBuf> {
+    let logs_dir = get_logs_dir()?;
+    Ok(logs_dir.join("plugins"))
+}
+
+/// Get the log file path for a specific plugin with date.
+///
+/// Returns ~/.to-tui/logs/plugins/<plugin-name>.<yyyy-mm-dd>.log
+pub fn get_plugin_log_path(plugin_name: &str) -> Result<PathBuf> {
+    let plugin_logs_dir = get_plugin_logs_dir()?;
+    let date = Local::now().format("%Y-%m-%d");
+    Ok(plugin_logs_dir.join(format!("{}.{}.log", plugin_name, date)))
 }
 
 pub fn get_daily_file_path_for_project(project_name: &str, date: NaiveDate) -> Result<PathBuf> {

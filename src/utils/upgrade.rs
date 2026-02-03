@@ -1,3 +1,4 @@
+use crate::utils::version_check::PluginUpdateInfo;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
@@ -9,18 +10,51 @@ const GITHUB_REPO: &str = "grimurjonsson/to-tui";
 /// State of the upgrade workflow, used by the TUI to render appropriate UI.
 #[derive(Debug, Clone)]
 pub enum UpgradeSubState {
-    /// Initial state, showing Y/N/S options
+    /// Initial state, showing Y/N/S options for app + plugin updates summary
     Prompt,
-    /// Download in progress, shows progress bar
+    /// Download in progress, shows progress bar (for app upgrade)
     Downloading {
         progress: f64,
         bytes_downloaded: u64,
         total_bytes: Option<u64>,
     },
-    /// Download failed, show retry option
+    /// Download failed, show retry option (for app upgrade)
     Error { message: String },
-    /// Download complete, ask to restart
+    /// Download complete, ask to restart (for app upgrade)
     RestartPrompt { downloaded_path: PathBuf },
+    /// Plugin upgrade flow
+    PluginUpgrades(PluginUpgradeSubState),
+}
+
+/// State for plugin upgrade workflow
+#[derive(Debug, Clone)]
+pub enum PluginUpgradeSubState {
+    /// Showing list of plugins with updates available
+    PluginList {
+        updates: Vec<PluginUpdateInfo>,
+        selected_index: usize,
+    },
+    /// Downloading a specific plugin
+    Downloading {
+        plugin_name: String,
+        current_version: String,
+        latest_version: String,
+        progress: f64,
+        bytes_downloaded: u64,
+        total_bytes: Option<u64>,
+    },
+    /// Download complete, plugin installed
+    Complete {
+        plugin_name: String,
+        new_version: String,
+        remaining_updates: Vec<PluginUpdateInfo>,
+    },
+    /// Error during download/install
+    Error {
+        plugin_name: String,
+        message: String,
+        remaining_updates: Vec<PluginUpdateInfo>,
+    },
 }
 
 /// Progress messages sent through the download channel.

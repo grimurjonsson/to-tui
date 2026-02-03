@@ -18,7 +18,7 @@ use crate::utils::cursor::{set_mouse_cursor_default, set_mouse_cursor_pointer};
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
-use crate::utils::upgrade::{check_write_permission, prepare_binary, replace_and_restart, UpgradeSubState};
+use crate::utils::upgrade::{check_write_permission, prepare_binary, replace_and_restart, PluginUpgradeSubState, UpgradeSubState};
 use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::RBox;
 use anyhow::Result;
@@ -857,24 +857,33 @@ fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
 
     match sub_state {
         Some(UpgradeSubState::Prompt) | None => {
-            // Initial prompt: Y (download), N (dismiss), S (skip)
+            // Initial prompt: Y (download app), P (plugins), N (dismiss), S (skip)
             match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                    // Check write permission before downloading
-                    if let Err(e) = check_write_permission() {
-                        state.upgrade_sub_state = Some(UpgradeSubState::Error {
-                            message: e.to_string(),
-                        });
-                        return Ok(());
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    // Only if there's an app update available
+                    if state.new_version_available.is_some() {
+                        // Check write permission before downloading
+                        if let Err(e) = check_write_permission() {
+                            state.upgrade_sub_state = Some(UpgradeSubState::Error {
+                                message: e.to_string(),
+                            });
+                            return Ok(());
+                        }
+                        state.start_download();
                     }
-                    state.start_download();
+                }
+                KeyCode::Char('p') | KeyCode::Char('P') => {
+                    // Enter plugin upgrade flow
+                    if !state.plugin_updates_available.is_empty() {
+                        state.enter_plugin_upgrades();
+                    }
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                     // Dismiss for this session
                     state.dismiss_upgrade_session();
                 }
                 KeyCode::Char('s') | KeyCode::Char('S') => {
-                    // Skip this version permanently
+                    // Skip this version permanently (app only)
                     if let Some(version) = state.new_version_available.clone() {
                         state.skip_version_permanently(version)?;
                         state.set_status_message("Skipped version updates".to_string());
@@ -884,7 +893,7 @@ fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
             }
         }
         Some(UpgradeSubState::Downloading { .. }) => {
-            // During download, only allow cancel with Esc
+            // During app download, only allow cancel with Esc
             if key.code == KeyCode::Esc {
                 state.download_progress_rx = None;
                 state.upgrade_sub_state = None;
@@ -952,6 +961,120 @@ fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
                     state.upgrade_sub_state = None;
                     state.show_upgrade_prompt = false;
                     state.mode = Mode::Navigate;
+                }
+                _ => {}
+            }
+        }
+        Some(UpgradeSubState::PluginUpgrades(plugin_sub_state)) => {
+            handle_plugin_upgrade_mode(key, state, &plugin_sub_state)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_plugin_upgrade_mode(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin_sub_state: &PluginUpgradeSubState,
+) -> Result<()> {
+    match plugin_sub_state {
+        PluginUpgradeSubState::PluginList { updates, selected_index } => {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if *selected_index > 0 {
+                        let new_index = selected_index - 1;
+                        state.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                            PluginUpgradeSubState::PluginList {
+                                updates: updates.clone(),
+                                selected_index: new_index,
+                            },
+                        ));
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if *selected_index < updates.len().saturating_sub(1) {
+                        let new_index = selected_index + 1;
+                        state.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                            PluginUpgradeSubState::PluginList {
+                                updates: updates.clone(),
+                                selected_index: new_index,
+                            },
+                        ));
+                    }
+                }
+                KeyCode::Enter => {
+                    // Start download for selected plugin
+                    if let Some(plugin) = updates.get(*selected_index) {
+                        state.start_plugin_download(plugin);
+                    }
+                }
+                KeyCode::Char('a') | KeyCode::Char('A') => {
+                    // Update all plugins - start with first one
+                    if let Some(plugin) = updates.first() {
+                        state.start_plugin_download(plugin);
+                    }
+                }
+                KeyCode::Esc => {
+                    // Go back to main upgrade prompt
+                    state.exit_plugin_upgrades();
+                }
+                _ => {}
+            }
+        }
+        PluginUpgradeSubState::Downloading { plugin_name, .. } => {
+            // During plugin download, only allow cancel with Esc
+            if key.code == KeyCode::Esc {
+                state.plugin_download_progress_rx = None;
+                // Go back to plugin list with remaining updates
+                let remaining = state.get_remaining_plugin_updates(plugin_name);
+                if remaining.is_empty() {
+                    state.exit_plugin_upgrades();
+                } else {
+                    state.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                        PluginUpgradeSubState::PluginList {
+                            updates: remaining,
+                            selected_index: 0,
+                        },
+                    ));
+                }
+            }
+        }
+        PluginUpgradeSubState::Complete { remaining_updates, .. } => {
+            match key.code {
+                KeyCode::Enter => {
+                    // Continue to next plugin or exit
+                    state.continue_plugin_upgrades();
+                }
+                KeyCode::Esc => {
+                    // Exit plugin upgrade flow
+                    if remaining_updates.is_empty() {
+                        state.exit_plugin_upgrades();
+                    } else {
+                        state.exit_plugin_upgrades();
+                    }
+                }
+                _ => {}
+            }
+        }
+        PluginUpgradeSubState::Error { plugin_name, remaining_updates, .. } => {
+            match key.code {
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    // Retry - find the plugin and start download again
+                    if let Some(plugin) = state.plugin_updates_available.iter().find(|p| &p.plugin_name == plugin_name) {
+                        state.start_plugin_download(&plugin.clone());
+                    }
+                }
+                KeyCode::Enter => {
+                    // Continue to next plugin
+                    if !remaining_updates.is_empty() {
+                        state.continue_plugin_upgrades();
+                    } else {
+                        state.exit_plugin_upgrades();
+                    }
+                }
+                KeyCode::Esc => {
+                    // Exit plugin upgrade flow
+                    state.exit_plugin_upgrades();
                 }
                 _ => {}
             }

@@ -11,9 +11,9 @@ use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
 use crate::utils::upgrade::{
-    get_asset_download_url, spawn_download, DownloadProgress, UpgradeSubState,
+    get_asset_download_url, spawn_download, DownloadProgress, PluginUpgradeSubState, UpgradeSubState,
 };
-use crate::utils::version_check::{spawn_version_checker, VersionCheckResult};
+use crate::utils::version_check::{spawn_version_checker, PluginUpdateInfo, VersionCheckResult};
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
@@ -196,6 +196,10 @@ pub struct AppState {
     pub upgrade_sub_state: Option<UpgradeSubState>,
     /// Channel receiver for download progress updates (std::sync::mpsc for thread-based download)
     pub download_progress_rx: Option<mpsc::Receiver<DownloadProgress>>,
+    /// List of plugins that have updates available
+    pub plugin_updates_available: Vec<PluginUpdateInfo>,
+    /// Channel receiver for plugin download progress updates
+    pub plugin_download_progress_rx: Option<mpsc::Receiver<DownloadProgress>>,
     /// Current active project
     pub current_project: Project,
     /// Project selection modal state
@@ -284,6 +288,8 @@ impl AppState {
             pending_release_url: None,
             upgrade_sub_state: None,
             download_progress_rx: None,
+            plugin_updates_available: Vec::new(),
+            plugin_download_progress_rx: None,
             current_project,
             project_state: None,
             move_to_project_state: None,
@@ -781,20 +787,35 @@ impl AppState {
     }
 
     /// Check for new version availability (non-blocking)
+    /// Checks both app updates and plugin updates.
     pub fn check_version_update(&mut self) {
-        if let Ok(result) = self.version_check_rx.try_recv()
-            && result.is_newer
-        {
-            let new_version = result.latest_version.clone();
-            self.new_version_available = Some(new_version.clone());
+        if let Ok(result) = self.version_check_rx.try_recv() {
+            // Handle app update
+            if let Some(app_update) = result.app_update {
+                if app_update.is_newer {
+                    let new_version = app_update.latest_version.clone();
+                    self.new_version_available = Some(new_version.clone());
+                }
+            }
+
+            // Handle plugin updates
+            if !result.plugin_updates.is_empty() {
+                self.plugin_updates_available = result.plugin_updates;
+            }
 
             // Auto-show upgrade prompt if:
             // 1. Not already dismissed this session
-            // 2. Not in skipped_version list
-            let should_show = !self.session_dismissed_upgrade
-                && self.skipped_version.as_ref() != Some(&new_version);
+            // 2. Not in skipped_version list (for app)
+            // 3. There are updates available
+            let has_app_update = self.new_version_available.is_some();
+            let has_plugin_updates = !self.plugin_updates_available.is_empty();
 
-            if should_show {
+            let should_show = !self.session_dismissed_upgrade
+                && (has_plugin_updates
+                    || (has_app_update
+                        && self.skipped_version.as_ref() != self.new_version_available.as_ref()));
+
+            if should_show && (has_app_update || has_plugin_updates) {
                 self.show_upgrade_prompt = true;
                 self.mode = Mode::UpgradePrompt;
             }
@@ -803,7 +824,7 @@ impl AppState {
 
     /// Open upgrade modal (e.g., when clicking version in status bar)
     pub fn open_upgrade_modal(&mut self) {
-        if self.new_version_available.is_some() {
+        if self.new_version_available.is_some() || !self.plugin_updates_available.is_empty() {
             self.show_upgrade_prompt = true;
             self.upgrade_sub_state = Some(UpgradeSubState::Prompt);
             self.mode = Mode::UpgradePrompt;
@@ -892,6 +913,288 @@ impl AppState {
         self.mode = Mode::Navigate;
 
         Ok(())
+    }
+
+    /// Enter the plugin upgrade flow
+    pub fn enter_plugin_upgrades(&mut self) {
+        if self.plugin_updates_available.is_empty() {
+            return;
+        }
+
+        self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+            PluginUpgradeSubState::PluginList {
+                updates: self.plugin_updates_available.clone(),
+                selected_index: 0,
+            },
+        ));
+    }
+
+    /// Start downloading a plugin update
+    pub fn start_plugin_download(&mut self, plugin: &PluginUpdateInfo) {
+        use crate::config::Config;
+        use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+
+        // Get marketplace config to construct download URL
+        let marketplace_ref = Config::load()
+            .map(|c| c.marketplaces.default.clone())
+            .unwrap_or_else(|_| DEFAULT_MARKETPLACE.to_string());
+
+        let (owner, repo) = match marketplace_ref.split_once('/') {
+            Some((o, r)) => (o.to_string(), r.to_string()),
+            None => {
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::Error {
+                        plugin_name: plugin.plugin_name.clone(),
+                        message: format!("Invalid marketplace format: {}", marketplace_ref),
+                        remaining_updates: self.get_remaining_plugin_updates(&plugin.plugin_name),
+                    },
+                ));
+                return;
+            }
+        };
+
+        // Construct download URL
+        let target = crate::utils::upgrade::get_target_triple();
+        let url = format!(
+            "https://github.com/{}/{}/releases/download/{}-v{}/{}-{}.tar.gz",
+            owner, repo, plugin.plugin_name, plugin.latest_version, plugin.plugin_name, target
+        );
+
+        // Download to temp directory
+        let target_path = std::env::temp_dir().join(format!(
+            "{}-{}.tar.gz",
+            plugin.plugin_name, plugin.latest_version
+        ));
+        let rx = spawn_download(url, target_path);
+
+        self.plugin_download_progress_rx = Some(rx);
+        self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+            PluginUpgradeSubState::Downloading {
+                plugin_name: plugin.plugin_name.clone(),
+                current_version: plugin.current_version.clone(),
+                latest_version: plugin.latest_version.clone(),
+                progress: 0.0,
+                bytes_downloaded: 0,
+                total_bytes: None,
+            },
+        ));
+    }
+
+    /// Check for plugin download progress updates (non-blocking)
+    pub fn check_plugin_download_progress(&mut self) {
+        let rx = match &mut self.plugin_download_progress_rx {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        // Get current plugin info from state
+        let (plugin_name, current_version, latest_version) =
+            if let Some(UpgradeSubState::PluginUpgrades(PluginUpgradeSubState::Downloading {
+                plugin_name,
+                current_version,
+                latest_version,
+                ..
+            })) = &self.upgrade_sub_state
+            {
+                (
+                    plugin_name.clone(),
+                    current_version.clone(),
+                    latest_version.clone(),
+                )
+            } else {
+                return;
+            };
+
+        match rx.try_recv() {
+            Ok(DownloadProgress::Progress { bytes, total }) => {
+                let progress = bytes as f64 / total.unwrap_or(bytes.max(1)) as f64;
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::Downloading {
+                        plugin_name,
+                        current_version,
+                        latest_version,
+                        progress,
+                        bytes_downloaded: bytes,
+                        total_bytes: total,
+                    },
+                ));
+            }
+            Ok(DownloadProgress::Complete { path }) => {
+                self.plugin_download_progress_rx = None;
+                // Install the downloaded plugin
+                self.install_downloaded_plugin(&plugin_name, &latest_version, &path);
+            }
+            Ok(DownloadProgress::Error { message }) => {
+                self.plugin_download_progress_rx = None;
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::Error {
+                        plugin_name: plugin_name.clone(),
+                        message,
+                        remaining_updates: self.get_remaining_plugin_updates(&plugin_name),
+                    },
+                ));
+            }
+            Err(mpsc::TryRecvError::Empty) => {
+                // No update yet, do nothing
+            }
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.plugin_download_progress_rx = None;
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::Error {
+                        plugin_name: plugin_name.clone(),
+                        message: "Download task crashed".to_string(),
+                        remaining_updates: self.get_remaining_plugin_updates(&plugin_name),
+                    },
+                ));
+            }
+        }
+    }
+
+    /// Install a downloaded plugin from the archive path
+    fn install_downloaded_plugin(
+        &mut self,
+        plugin_name: &str,
+        new_version: &str,
+        archive_path: &std::path::Path,
+    ) {
+        use crate::utils::paths::get_plugins_dir;
+        use flate2::read::GzDecoder;
+        use tar::Archive;
+
+        let result = (|| -> anyhow::Result<()> {
+            // Get plugins directory
+            let plugins_dir = get_plugins_dir()?;
+            let plugin_dir = plugins_dir.join(plugin_name);
+
+            // Create temp extraction directory
+            let temp_extract = std::env::temp_dir().join(format!("{}-extract", plugin_name));
+            if temp_extract.exists() {
+                std::fs::remove_dir_all(&temp_extract)?;
+            }
+            std::fs::create_dir_all(&temp_extract)?;
+
+            // Extract archive
+            let tar_gz = std::fs::File::open(archive_path)?;
+            let tar = GzDecoder::new(tar_gz);
+            let mut archive = Archive::new(tar);
+            archive.unpack(&temp_extract)?;
+
+            // Check if archive extracted to a subdirectory or flat
+            // Look for plugin.toml to determine structure
+            let extracted_dir = if temp_extract.join("plugin.toml").exists() {
+                // Flat archive - files are directly in temp_extract
+                temp_extract.clone()
+            } else {
+                // Look for a subdirectory containing plugin.toml
+                let mut found_dir = None;
+                for entry in std::fs::read_dir(&temp_extract)? {
+                    let entry = entry?;
+                    if entry.path().is_dir() && entry.path().join("plugin.toml").exists() {
+                        found_dir = Some(entry.path());
+                        break;
+                    }
+                }
+                found_dir.ok_or_else(|| {
+                    anyhow::anyhow!("No plugin.toml found in archive")
+                })?
+            };
+
+            // Remove old plugin directory if it exists
+            if plugin_dir.exists() {
+                std::fs::remove_dir_all(&plugin_dir)?;
+            }
+
+            // Ensure parent directory exists
+            if let Some(parent) = plugin_dir.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            // Move extracted plugin to plugins directory
+            // For flat archives, extracted_dir == temp_extract, so rename moves everything
+            std::fs::rename(&extracted_dir, &plugin_dir)?;
+
+            // Clean up - only remove temp_extract if it still exists (wasn't the extracted_dir)
+            if temp_extract.exists() {
+                let _ = std::fs::remove_dir_all(&temp_extract);
+            }
+            let _ = std::fs::remove_file(archive_path);
+
+            Ok(())
+        })();
+
+        match result {
+            Ok(()) => {
+                // Remove from updates list
+                self.plugin_updates_available
+                    .retain(|p| p.plugin_name != plugin_name);
+
+                let remaining = self.get_remaining_plugin_updates(plugin_name);
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::Complete {
+                        plugin_name: plugin_name.to_string(),
+                        new_version: new_version.to_string(),
+                        remaining_updates: remaining,
+                    },
+                ));
+            }
+            Err(e) => {
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::Error {
+                        plugin_name: plugin_name.to_string(),
+                        message: format!("Installation failed: {}", e),
+                        remaining_updates: self.get_remaining_plugin_updates(plugin_name),
+                    },
+                ));
+            }
+        }
+    }
+
+    /// Get remaining plugin updates excluding the specified plugin
+    pub fn get_remaining_plugin_updates(&self, exclude_plugin: &str) -> Vec<PluginUpdateInfo> {
+        self.plugin_updates_available
+            .iter()
+            .filter(|p| p.plugin_name != exclude_plugin)
+            .cloned()
+            .collect()
+    }
+
+    /// Continue to next plugin update after completing one
+    pub fn continue_plugin_upgrades(&mut self) {
+        if let Some(UpgradeSubState::PluginUpgrades(
+            PluginUpgradeSubState::Complete {
+                remaining_updates, ..
+            }
+            | PluginUpgradeSubState::Error {
+                remaining_updates, ..
+            },
+        )) = &self.upgrade_sub_state
+        {
+            if remaining_updates.is_empty() {
+                // No more updates, return to main upgrade prompt or navigate
+                if self.new_version_available.is_some() {
+                    self.upgrade_sub_state = Some(UpgradeSubState::Prompt);
+                } else {
+                    self.dismiss_upgrade_session();
+                }
+            } else {
+                // Show remaining plugins list
+                self.upgrade_sub_state = Some(UpgradeSubState::PluginUpgrades(
+                    PluginUpgradeSubState::PluginList {
+                        updates: remaining_updates.clone(),
+                        selected_index: 0,
+                    },
+                ));
+            }
+        }
+    }
+
+    /// Exit plugin upgrade flow and return to main upgrade prompt
+    pub fn exit_plugin_upgrades(&mut self) {
+        if self.new_version_available.is_some() || !self.plugin_updates_available.is_empty() {
+            self.upgrade_sub_state = Some(UpgradeSubState::Prompt);
+        } else {
+            self.dismiss_upgrade_session();
+        }
     }
 
     pub fn get_spinner_char(&self) -> char {

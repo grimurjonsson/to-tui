@@ -117,8 +117,8 @@ fn install_crash_handler() {
 
 /// Initialize file-based logging for the TUI mode.
 ///
-/// Logs are written to ~/.local/share/to-tui/logs/totui.log
-/// Use `tail -f ~/.local/share/to-tui/logs/totui.log` to follow logs.
+/// Logs are written to ~/.to-tui/logs/totui.log
+/// Use `tail -f ~/.to-tui/logs/totui.log` to follow logs with colors.
 ///
 /// Log level can be controlled with RUST_LOG env var (default: info).
 fn init_file_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
@@ -144,7 +144,7 @@ fn init_file_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(non_blocking)
-        .with_ansi(false) // No ANSI colors in log files
+        .with_ansi(true) // Enable ANSI colors in log files for better readability
         .with_target(true)
         .with_thread_ids(false)
         .with_file(true)
