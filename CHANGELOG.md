@@ -5,6 +5,17 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-02-03
+Added plugin detection with update notifications in the TUI. Fixed clipboard operations for headless environments. Improved undo reliability with database saves. Added comprehensive debug logging for troubleshooting.
+
+### Added
+- detecting plugins and plugin updates in tui (#18)
+- comprehensive debug logging for TUI storage and MCP
+
+### Fixed
+- add clipboard fallback for headless environments (#12)
+- use UPSERT for save to handle undo gracefully
+
 ## [0.5.3] - 2026-01-28
 Upgraded to interface v0.3.0 and improved status bar color contrast for better readability.
 
