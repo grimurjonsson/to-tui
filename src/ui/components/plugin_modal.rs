@@ -604,7 +604,7 @@ fn render_executing_view(f: &mut Frame, state: &AppState, plugin_name: &str) {
     f.render_widget(Clear, area);
 
     let spinner = state.get_spinner_char();
-    let text = format!("{} Running {}...\n\nPlease wait.", spinner, plugin_name);
+    let text = format!("{} Running {}...\n\nPlease wait. (Esc to cancel)", spinner, plugin_name);
 
     let block = Block::default()
         .borders(Borders::ALL)

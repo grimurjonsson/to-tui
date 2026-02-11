@@ -81,6 +81,14 @@ pub enum PluginsModalState {
     },
 }
 
+/// Tracks which UI flow initiated a plugin generate call,
+/// so check_plugin_result() can route the result to the correct state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginResultSource {
+    PluginsModal,
+    PluginSubState,
+}
+
 #[derive(Debug, Clone)]
 pub enum PluginSubState {
     Selecting {
@@ -171,6 +179,7 @@ pub struct AppState {
     pub marketplace_fetch_rx: Option<mpsc::Receiver<Result<Vec<PluginEntry>, String>>>,
     pub status_message: Option<(String, Instant)>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
+    pub plugin_result_source: Option<PluginResultSource>,
     pub spinner_frame: usize,
     pub pending_rollover: Option<PendingRollover>,
     pub list_state: ListState,
@@ -274,6 +283,7 @@ impl AppState {
             marketplace_fetch_rx: None,
             status_message: None,
             plugin_result_rx: None,
+            plugin_result_source: None,
             spinner_frame: 0,
             pending_rollover: None,
             list_state: ListState::default(),
@@ -759,24 +769,56 @@ impl AppState {
             match rx.try_recv() {
                 Ok(Ok(items)) => {
                     self.plugin_result_rx = None;
-                    if items.is_empty() {
-                        self.plugin_state = Some(PluginSubState::Error {
-                            message: "Plugin generated no items".to_string(),
-                        });
-                    } else {
-                        self.plugin_state = Some(PluginSubState::Preview { items });
+                    let source = self.plugin_result_source.take();
+                    match source {
+                        Some(PluginResultSource::PluginsModal) => {
+                            if items.is_empty() {
+                                self.plugins_modal_state = Some(PluginsModalState::Error {
+                                    message: "Plugin generated no items".to_string(),
+                                });
+                            } else {
+                                self.plugins_modal_state =
+                                    Some(PluginsModalState::Preview { items });
+                            }
+                        }
+                        Some(PluginResultSource::PluginSubState) | None => {
+                            if items.is_empty() {
+                                self.plugin_state = Some(PluginSubState::Error {
+                                    message: "Plugin generated no items".to_string(),
+                                });
+                            } else {
+                                self.plugin_state = Some(PluginSubState::Preview { items });
+                            }
+                        }
                     }
                 }
                 Ok(Err(e)) => {
                     self.plugin_result_rx = None;
-                    self.plugin_state = Some(PluginSubState::Error { message: e });
+                    let source = self.plugin_result_source.take();
+                    match source {
+                        Some(PluginResultSource::PluginsModal) => {
+                            self.plugins_modal_state =
+                                Some(PluginsModalState::Error { message: e });
+                        }
+                        Some(PluginResultSource::PluginSubState) | None => {
+                            self.plugin_state = Some(PluginSubState::Error { message: e });
+                        }
+                    }
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.plugin_result_rx = None;
-                    self.plugin_state = Some(PluginSubState::Error {
-                        message: "Plugin execution thread crashed".to_string(),
-                    });
+                    let source = self.plugin_result_source.take();
+                    let message = "Plugin execution thread crashed".to_string();
+                    match source {
+                        Some(PluginResultSource::PluginsModal) => {
+                            self.plugins_modal_state =
+                                Some(PluginsModalState::Error { message });
+                        }
+                        Some(PluginResultSource::PluginSubState) | None => {
+                            self.plugin_state = Some(PluginSubState::Error { message });
+                        }
+                    }
                 }
             }
         }
