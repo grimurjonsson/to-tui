@@ -13,7 +13,7 @@ use abi_stable::{
 };
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use totui_plugin_interface::{
@@ -108,7 +108,8 @@ pub struct LoadedPlugin {
     /// abi_stable intentionally leaks the library (never unloads) to guarantee
     /// the library outlives all plugin objects, avoiding TLS destructor issues.
     /// See: https://github.com/rust-lang/rust/issues/59629
-    pub plugin: Plugin_TO<'static, RBox<()>>,
+    /// Wrapped in Arc to allow sharing with background threads (e.g., spawn_generate).
+    pub plugin: Arc<Plugin_TO<'static, RBox<()>>>,
     /// Plugin name (from manifest).
     pub name: String,
     /// Plugin version (from manifest).
@@ -330,7 +331,7 @@ impl PluginLoader {
         );
 
         Ok(LoadedPlugin {
-            plugin,
+            plugin: Arc::new(plugin),
             name: plugin_name.clone(),
             version: plugin_info.manifest.version.clone(),
             description: plugin_info.manifest.description.clone(),
@@ -485,7 +486,8 @@ impl PluginLoader {
 
         // Get a reference to the plugin for use in the closure
         // We need to borrow the plugin again after the check
-        let plugin_ref = &self.plugins.get(&plugin_name.to_lowercase()).unwrap().plugin;
+        // Deref through Arc to get &Plugin_TO reference
+        let plugin_ref = &*self.plugins.get(&plugin_name.to_lowercase()).unwrap().plugin;
 
         // Call the function with panic catching
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(plugin_ref)));
@@ -563,6 +565,75 @@ impl PluginLoader {
             error_kind: PluginErrorKind::Other(e.clone()),
             message: e,
         })
+    }
+
+    /// Spawn plugin generate on a background thread, returning a receiver for the result.
+    ///
+    /// Pre-validates plugin availability synchronously (returns Err immediately if not loadable).
+    /// The actual generate() FFI call runs on a std::thread (not tokio - FFI calls may block).
+    pub fn spawn_generate(
+        &self,
+        plugin_name: &str,
+        input: &str,
+    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<crate::todo::TodoItem>, String>>, PluginLoadError> {
+        // Validate plugin exists and is not disabled
+        let plugin = self.get(plugin_name).ok_or_else(|| PluginLoadError {
+            plugin_name: plugin_name.to_string(),
+            error_kind: PluginErrorKind::Other("Plugin not loaded".to_string()),
+            message: format!("Plugin {} is not loaded", plugin_name),
+        })?;
+
+        if plugin.session_disabled {
+            return Err(PluginLoadError {
+                plugin_name: plugin_name.to_string(),
+                error_kind: PluginErrorKind::SessionDisabled,
+                message: format!("Plugin {} is disabled for this session after a previous error", plugin_name),
+            });
+        }
+
+        // Clone the Arc-wrapped plugin for the thread
+        let plugin_ref = Arc::clone(&plugin.plugin);
+        let input_owned = input.to_string();
+        let name_owned = plugin_name.to_string();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        std::thread::spawn(move || {
+            // Run generate with panic catching (mirrors call_safely pattern)
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let ffi_result = plugin_ref.generate(RString::from(input_owned.as_str()));
+                match ffi_result.into_result() {
+                    Ok(items) => {
+                        items
+                            .into_iter()
+                            .map(|ffi_item| {
+                                crate::todo::TodoItem::try_from(ffi_item).map_err(|e| e.to_string())
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                    Err(err) => Err(err.to_string()),
+                }
+            }));
+
+            let send_result = match result {
+                Ok(inner) => inner,
+                Err(panic_info) => {
+                    let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "Unknown panic".to_string()
+                    };
+                    Self::log_plugin_panic(&name_owned, &msg);
+                    Err(format!("Plugin {} panicked: {}", name_owned, msg))
+                }
+            };
+
+            let _ = tx.send(send_result);
+        });
+
+        Ok(rx)
     }
 }
 

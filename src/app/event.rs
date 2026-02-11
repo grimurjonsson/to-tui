@@ -1,7 +1,7 @@
 use super::mode::Mode;
 use super::state::{
-    AppState, MoveToProjectSubState, PluginSubState, PluginsModalState, PluginsTab,
-    ProjectSubState,
+    AppState, MoveToProjectSubState, PluginResultSource, PluginSubState, PluginsModalState,
+    PluginsTab, ProjectSubState,
 };
 use crate::clipboard::{copy_to_clipboard, CopyResult};
 use crate::config::Config;
@@ -1658,29 +1658,20 @@ fn handle_plugins_modal_input(
             });
         }
         KeyCode::Enter if !input_buffer.trim().is_empty() => {
-            // Execute plugin
+            // Execute plugin on background thread so spinner can animate
             state.plugins_modal_state = Some(PluginsModalState::Executing {
                 plugin_name: plugin_name.clone(),
             });
 
-            // Call plugin generate synchronously
-            let result = state
-                .plugin_loader
-                .call_generate(&plugin_name, &input_buffer)
-                .map_err(|e| e.message);
-
-            match result {
-                Ok(items) => {
-                    if items.is_empty() {
-                        state.plugins_modal_state = Some(PluginsModalState::Error {
-                            message: "Plugin generated no items".to_string(),
-                        });
-                    } else {
-                        state.plugins_modal_state = Some(PluginsModalState::Preview { items });
-                    }
+            match state.plugin_loader.spawn_generate(&plugin_name, &input_buffer) {
+                Ok(rx) => {
+                    state.plugin_result_rx = Some(rx);
+                    state.plugin_result_source = Some(PluginResultSource::PluginsModal);
                 }
-                Err(message) => {
-                    state.plugins_modal_state = Some(PluginsModalState::Error { message });
+                Err(e) => {
+                    state.plugins_modal_state = Some(PluginsModalState::Error {
+                        message: e.message,
+                    });
                 }
             }
         }
@@ -2091,23 +2082,20 @@ fn handle_plugin_input(
             return Ok(());
         }
         KeyCode::Enter if !input_buffer.trim().is_empty() => {
+            // Execute plugin on background thread so spinner can animate
             state.plugin_state = Some(PluginSubState::Executing {
                 plugin_name: plugin_name.clone(),
             });
 
-            // Call plugin generate synchronously via plugin loader
-            // (External plugins are already loaded, no need to spawn thread)
-            let result = state
-                .plugin_loader
-                .call_generate(&plugin_name, &input_buffer)
-                .map_err(|e| e.message);
-
-            match result {
-                Ok(items) => {
-                    state.plugin_state = Some(PluginSubState::Preview { items });
+            match state.plugin_loader.spawn_generate(&plugin_name, &input_buffer) {
+                Ok(rx) => {
+                    state.plugin_result_rx = Some(rx);
+                    state.plugin_result_source = Some(PluginResultSource::PluginSubState);
                 }
-                Err(message) => {
-                    state.plugin_state = Some(PluginSubState::Error { message });
+                Err(e) => {
+                    state.plugin_state = Some(PluginSubState::Error {
+                        message: e.message,
+                    });
                 }
             }
             return Ok(());
