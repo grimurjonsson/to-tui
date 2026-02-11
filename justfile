@@ -515,6 +515,8 @@ _release bump msg="":
     esac
 
     NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+    RELEASE_BRANCH="release/v$NEW_VERSION"
+
     sed -i '' "s/^version = \".*\"/version = \"$NEW_VERSION\"/" Cargo.toml
     echo "✓ Cargo.toml version: $VERSION → $NEW_VERSION"
 
@@ -593,9 +595,13 @@ _release bump msg="":
     # Update Cargo.lock with new version
     cargo check --quiet
 
-    read -p "Create commit and tag? [Y/n] " -n 1 -r
+    read -p "Create release branch, commit, and tag? [Y/n] " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        # Create release branch from current HEAD
+        git checkout -b "$RELEASE_BRANCH"
+        echo "✓ Created branch $RELEASE_BRANCH"
+
         git add Cargo.toml Cargo.lock
         if [ -f "$MARKETPLACE_FILE" ]; then
             git add "$MARKETPLACE_FILE"
@@ -614,11 +620,49 @@ _release bump msg="":
         git tag "v$NEW_VERSION"
         echo "✓ Created commit and tag v$NEW_VERSION"
 
-        read -p "Push to remote? [Y/n] " -n 1 -r
+        read -p "Push branch and tag, then create PR? [Y/n] " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            git push origin main
+            # Push release branch and tag
+            git push -u origin "$RELEASE_BRANCH"
             git push origin "v$NEW_VERSION"
-            echo "✓ Pushed commit and tag to origin"
+            echo "✓ Pushed branch and tag to origin"
+            echo ""
+            echo "The tag push will trigger the release workflow."
+            echo ""
+
+            # Create PR using gh CLI if available
+            if command -v gh &> /dev/null; then
+                read -p "Create PR to merge release branch to main? [Y/n] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                    PR_URL=$(gh pr create \
+                        --title "Release v$NEW_VERSION" \
+                        --body "Release v$NEW_VERSION
+
+This PR merges the release commit and updates:
+- Cargo.toml version bump
+- CHANGELOG.md updates
+- Any other version files
+
+The release workflow has already been triggered by the tag push." \
+                        --base main \
+                        --head "$RELEASE_BRANCH")
+                    echo "✓ Created PR: $PR_URL"
+                    echo ""
+
+                    read -p "Merge the PR now? [Y/n] " -n 1 -r
+                    echo
+                    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                        gh pr merge "$RELEASE_BRANCH" --merge --delete-branch
+                        echo "✓ PR merged and release branch deleted"
+                        git checkout main
+                        git pull origin main
+                        echo "✓ Switched to main and pulled latest"
+                    fi
+                fi
+            else
+                echo "gh CLI not found. Please create a PR manually to merge $RELEASE_BRANCH to main."
+            fi
         fi
     fi
