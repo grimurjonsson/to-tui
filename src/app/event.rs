@@ -1362,7 +1362,15 @@ fn handle_plugin_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
             cursor_pos,
         } => handle_plugin_input(key, state, plugin_name, input_buffer, cursor_pos),
         PluginSubState::Executing { plugin_name } => {
-            state.plugin_state = Some(PluginSubState::Executing { plugin_name });
+            if key.code == KeyCode::Esc {
+                // Cancel: drop receiver (thread finishes on its own, result is discarded)
+                state.plugin_result_rx = None;
+                state.plugin_result_source = None;
+                state.plugin_state = None; // Exit plugin mode
+            } else {
+                // Ignore other keys during execution
+                state.plugin_state = Some(PluginSubState::Executing { plugin_name });
+            }
             Ok(())
         }
         PluginSubState::Error { message } => handle_plugin_error(key, state, message),
@@ -1420,8 +1428,28 @@ fn handle_plugins_modal(
             selected_index,
         ),
         PluginsModalState::Executing { plugin_name } => {
-            // While executing, ignore keypresses - state is managed by async result
-            state.plugins_modal_state = Some(PluginsModalState::Executing { plugin_name });
+            if key.code == KeyCode::Esc {
+                // Cancel: drop receiver (thread finishes on its own, result is discarded)
+                state.plugin_result_rx = None;
+                state.plugin_result_source = None;
+                // Return to tabs view
+                use crate::plugin::marketplace::DEFAULT_MARKETPLACE;
+                let marketplace_name = Config::load()
+                    .map(|c| c.marketplaces.default)
+                    .unwrap_or_else(|_| DEFAULT_MARKETPLACE.to_string());
+                state.plugins_modal_state = Some(PluginsModalState::Tabs {
+                    active_tab: PluginsTab::Installed,
+                    installed_index: 0,
+                    marketplace_index: 0,
+                    marketplace_plugins: None,
+                    marketplace_loading: false,
+                    marketplace_error: None,
+                    marketplace_name,
+                });
+            } else {
+                // Ignore other keys during execution
+                state.plugins_modal_state = Some(PluginsModalState::Executing { plugin_name });
+            }
             Ok(())
         }
         PluginsModalState::Preview { items } => handle_plugins_modal_preview(key, state, items),

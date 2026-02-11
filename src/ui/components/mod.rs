@@ -577,7 +577,8 @@ fn render_plugin_input(
 fn render_plugin_executing(f: &mut Frame, state: &AppState, plugin_name: &str) {
     let area = centered_rect(40, 15, f.area());
 
-    let text = format!("Running {plugin_name}...\n\nPlease wait.");
+    let spinner = state.get_spinner_char();
+    let text = format!("{spinner} Running {plugin_name}...\n\nPlease wait. (Esc to cancel)");
 
     let block = Block::default()
         .borders(Borders::ALL)

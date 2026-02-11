@@ -769,24 +769,56 @@ impl AppState {
             match rx.try_recv() {
                 Ok(Ok(items)) => {
                     self.plugin_result_rx = None;
-                    if items.is_empty() {
-                        self.plugin_state = Some(PluginSubState::Error {
-                            message: "Plugin generated no items".to_string(),
-                        });
-                    } else {
-                        self.plugin_state = Some(PluginSubState::Preview { items });
+                    let source = self.plugin_result_source.take();
+                    match source {
+                        Some(PluginResultSource::PluginsModal) => {
+                            if items.is_empty() {
+                                self.plugins_modal_state = Some(PluginsModalState::Error {
+                                    message: "Plugin generated no items".to_string(),
+                                });
+                            } else {
+                                self.plugins_modal_state =
+                                    Some(PluginsModalState::Preview { items });
+                            }
+                        }
+                        Some(PluginResultSource::PluginSubState) | None => {
+                            if items.is_empty() {
+                                self.plugin_state = Some(PluginSubState::Error {
+                                    message: "Plugin generated no items".to_string(),
+                                });
+                            } else {
+                                self.plugin_state = Some(PluginSubState::Preview { items });
+                            }
+                        }
                     }
                 }
                 Ok(Err(e)) => {
                     self.plugin_result_rx = None;
-                    self.plugin_state = Some(PluginSubState::Error { message: e });
+                    let source = self.plugin_result_source.take();
+                    match source {
+                        Some(PluginResultSource::PluginsModal) => {
+                            self.plugins_modal_state =
+                                Some(PluginsModalState::Error { message: e });
+                        }
+                        Some(PluginResultSource::PluginSubState) | None => {
+                            self.plugin_state = Some(PluginSubState::Error { message: e });
+                        }
+                    }
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {
                     self.plugin_result_rx = None;
-                    self.plugin_state = Some(PluginSubState::Error {
-                        message: "Plugin execution thread crashed".to_string(),
-                    });
+                    let source = self.plugin_result_source.take();
+                    let message = "Plugin execution thread crashed".to_string();
+                    match source {
+                        Some(PluginResultSource::PluginsModal) => {
+                            self.plugins_modal_state =
+                                Some(PluginsModalState::Error { message });
+                        }
+                        Some(PluginResultSource::PluginSubState) | None => {
+                            self.plugin_state = Some(PluginSubState::Error { message });
+                        }
+                    }
                 }
             }
         }
