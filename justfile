@@ -159,9 +159,11 @@ install:
             if [ "$NEED_SUDO" = true ]; then
                 sudo cp "$BINARY_SRC" "$BINARY_DST"
                 sudo chmod +x "$BINARY_DST"
+                sudo codesign -s - --force "$BINARY_DST" 2>/dev/null || true
             else
                 cp "$BINARY_SRC" "$BINARY_DST"
                 chmod +x "$BINARY_DST"
+                codesign -s - --force "$BINARY_DST" 2>/dev/null || true
             fi
             echo "✓ Installed $BINARY_NAME to $BINARY_DST"
         fi
@@ -636,16 +638,17 @@ _release bump msg="":
                 read -p "Create PR to merge release branch to main? [Y/n] " -n 1 -r
                 echo
                 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+                    PR_BODY="Release v$NEW_VERSION
+
+    This PR merges the release commit and updates:
+    - Cargo.toml version bump
+    - CHANGELOG.md updates
+    - Any other version files
+
+    The release workflow has already been triggered by the tag push."
                     PR_URL=$(gh pr create \
                         --title "Release v$NEW_VERSION" \
-                        --body "Release v$NEW_VERSION
-
-This PR merges the release commit and updates:
-- Cargo.toml version bump
-- CHANGELOG.md updates
-- Any other version files
-
-The release workflow has already been triggered by the tag push." \
+                        --body "$PR_BODY" \
                         --base main \
                         --head "$RELEASE_BRANCH")
                     echo "✓ Created PR: $PR_URL"
