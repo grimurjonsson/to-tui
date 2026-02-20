@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "totui-mcp",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Terminal todo list manager with MCP server integration",
   "owner": {
     "name": "to-tui"
@@ -10,7 +10,7 @@
     {
       "name": "totui-mcp",
       "description": "MCP server for to-tui - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
-      "version": "0.5.6",
+      "version": "0.5.7",
       "author": {
         "name": "to-tui"
       },
