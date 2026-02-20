@@ -385,6 +385,192 @@ impl AppState {
         }
     }
 
+    /// After expanding an item, scroll just enough so the expanded content
+    /// (description + children) fits in the viewport. Does nothing if it
+    /// already fits. Scrolls the item to the top only when the expanded
+    /// content is taller than the viewport.
+    pub fn scroll_to_fit_expanded(&mut self) {
+        self.sync_list_state();
+
+        let selected = match self.list_state.selected() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let viewport_height = self.terminal_height.saturating_sub(3).max(1) as usize;
+        let heights = self.build_visible_item_heights();
+
+        if selected >= heights.len() {
+            return;
+        }
+
+        let expanded_end = self.expanded_content_end_index(selected).min(heights.len());
+        let expanded_height: usize = heights[selected..expanded_end].iter().sum();
+
+        // If expanded content alone exceeds viewport, scroll item to top
+        if expanded_height > viewport_height {
+            *self.list_state.offset_mut() = selected;
+            return;
+        }
+
+        let current_offset = self.list_state.offset();
+        if current_offset >= expanded_end {
+            return;
+        }
+
+        let total: usize = heights[current_offset..expanded_end].iter().sum();
+        if total <= viewport_height {
+            return; // Everything fits already
+        }
+
+        // Increase offset to free space at top, but don't scroll past the item
+        let mut new_offset = current_offset;
+        let mut remaining = total;
+        while remaining > viewport_height && new_offset < selected {
+            remaining -= heights[new_offset];
+            new_offset += 1;
+        }
+
+        *self.list_state.offset_mut() = new_offset;
+    }
+
+    /// Build a list of line heights for all visible list items.
+    /// Each entry corresponds to one ListItem in the rendered list:
+    /// either a todo item or a description box.
+    fn build_visible_item_heights(&self) -> Vec<usize> {
+        let hidden = self.todo_list.build_hidden_indices();
+        let available_width = self.terminal_width.saturating_sub(2) as usize;
+        let mut heights = Vec::new();
+
+        for (idx, item) in self.todo_list.items.iter().enumerate() {
+            if hidden.contains(&idx) {
+                continue;
+            }
+            heights.push(Self::estimate_item_line_height(item, available_width));
+            if !item.collapsed && item.description.is_some() {
+                heights.push(Self::estimate_description_line_height(item, available_width));
+            }
+        }
+
+        heights
+    }
+
+    /// Find the list-item-index past the last entry belonging to the
+    /// expanded content of the item at the given list index.
+    fn expanded_content_end_index(&self, selected_list_index: usize) -> usize {
+        let hidden = self.todo_list.build_hidden_indices();
+
+        // Map list-item index back to todo_list index
+        let mut list_idx: usize = 0;
+        let mut found_todo_idx = None;
+        for (idx, item) in self.todo_list.items.iter().enumerate() {
+            if hidden.contains(&idx) {
+                continue;
+            }
+            if list_idx == selected_list_index {
+                found_todo_idx = Some(idx);
+                break;
+            }
+            list_idx += 1;
+            if !item.collapsed && item.description.is_some() {
+                list_idx += 1;
+            }
+        }
+
+        let todo_idx = match found_todo_idx {
+            Some(i) => i,
+            None => return selected_list_index + 1,
+        };
+
+        let item = &self.todo_list.items[todo_idx];
+        let parent_indent = item.indent_level;
+
+        // Count: item itself
+        let mut end = selected_list_index + 1;
+
+        // + description if expanded
+        if !item.collapsed && item.description.is_some() {
+            end += 1;
+        }
+
+        // + revealed children and their descriptions
+        for idx in (todo_idx + 1)..self.todo_list.items.len() {
+            let child = &self.todo_list.items[idx];
+            if child.indent_level <= parent_indent {
+                break;
+            }
+            if hidden.contains(&idx) {
+                continue;
+            }
+            end += 1;
+            if !child.collapsed && child.description.is_some() {
+                end += 1;
+            }
+        }
+
+        end
+    }
+
+    /// Estimate the line height of a todo item (how many wrapped lines).
+    fn estimate_item_line_height(item: &TodoItem, available_width: usize) -> usize {
+        let prefix_width = item.indent_level * 2 + 2 + 4; // indent + fold_icon + checkbox
+        let content_max = available_width.saturating_sub(prefix_width);
+        let content = format!(
+            "{}{}",
+            item.content,
+            item.due_date
+                .map(|d| format!(" [{}]", d.format("%Y-%m-%d")))
+                .unwrap_or_default()
+        );
+
+        Self::count_wrapped_lines(&content, content_max)
+    }
+
+    /// Estimate the line height of a description box (borders + wrapped content).
+    fn estimate_description_line_height(item: &TodoItem, available_width: usize) -> usize {
+        if let Some(ref desc) = item.description {
+            let box_indent_width = item.indent_level * 2 + 4;
+            let inner_width = available_width.saturating_sub(box_indent_width + 4);
+
+            Self::count_wrapped_lines(desc, inner_width) + 2 // + top/bottom borders
+        } else {
+            0
+        }
+    }
+
+    /// Count wrapped lines using word-boundary wrapping to match render behavior.
+    /// This mirrors `wrap_text` in the UI module.
+    fn count_wrapped_lines(text: &str, max_width: usize) -> usize {
+        if max_width == 0 {
+            return 1;
+        }
+        let mut total_lines = 0;
+        for paragraph in text.split('\n') {
+            if paragraph.is_empty() {
+                total_lines += 1;
+                continue;
+            }
+            let mut current_width = 0;
+            let mut line_has_content = false;
+            for word in paragraph.split_whitespace() {
+                let word_len = word.len();
+                if !line_has_content {
+                    current_width = word_len;
+                    line_has_content = true;
+                } else if current_width + 1 + word_len <= max_width {
+                    current_width += 1 + word_len;
+                } else {
+                    total_lines += 1;
+                    current_width = word_len;
+                }
+            }
+            if line_has_content {
+                total_lines += 1;
+            }
+        }
+        total_lines.max(1)
+    }
+
     /// Sync list_state selection for when creating a new item.
     /// This accounts for the temporary edit row that appears during new item creation.
     pub fn sync_list_state_for_new_item(&mut self) {
@@ -1352,8 +1538,15 @@ impl AppState {
         if has_children || has_description {
             self.save_undo();
             if let Some(item) = self.todo_list.items.get_mut(self.cursor_position) {
+                let was_collapsed = item.collapsed;
                 item.collapsed = !item.collapsed;
                 self.unsaved_changes = true;
+
+                // When expanding, scroll just enough to show the expanded content
+                if was_collapsed {
+                    self.scroll_to_fit_expanded();
+                }
+
                 return true;
             }
         }
@@ -1380,6 +1573,10 @@ impl AppState {
             if let Some(item) = self.todo_list.items.get_mut(self.cursor_position) {
                 item.collapsed = false;
                 self.unsaved_changes = true;
+
+                // Scroll just enough to show the expanded content
+                self.scroll_to_fit_expanded();
+
                 return true;
             }
         }

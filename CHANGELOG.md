@@ -5,6 +5,20 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2026-02-20
+Plugin detection and updates now visible in the TUI, todo descriptions expand properly, clipboard works in headless environments, and undo no longer causes save conflicts.
+
+### Added
+- preparing 0.5.4 (#19)
+- detecting plugins and plugin updates in tui (#18)
+- comprehensive debug logging for TUI storage and MCP
+
+### Fixed
+- expanding todos with huge descriptions now actually expand and show the expanded description
+- fixing justfile indents (#21)
+- add clipboard fallback for headless environments (#12)
+- use UPSERT for save to handle undo gracefully
+
 ## [0.5.4] - 2026-02-03
 Added plugin detection with update notifications in the TUI. Fixed clipboard operations for headless environments. Improved undo reliability with database saves. Added comprehensive debug logging for troubleshooting.
 

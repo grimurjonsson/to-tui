@@ -189,8 +189,15 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
                     if has_children || has_description {
                         state.save_undo();
                         if let Some(item) = state.todo_list.items.get_mut(item_idx) {
+                            let was_collapsed = item.collapsed;
                             item.collapsed = !item.collapsed;
                             state.unsaved_changes = true;
+
+                            // When expanding via click, scroll to show expanded content
+                            if was_collapsed {
+                                state.cursor_position = item_idx;
+                                state.scroll_to_fit_expanded();
+                            }
                         }
                     }
                     state.cursor_position = item_idx;
