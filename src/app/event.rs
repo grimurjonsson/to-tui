@@ -22,7 +22,7 @@ use crate::utils::upgrade::{check_write_permission, prepare_binary, replace_and_
 use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::RBox;
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::collections::HashSet;
 use std::fs;
 use totui_plugin_interface::{
@@ -35,6 +35,47 @@ const HELP_TOTAL_LINES: u16 = 57;
 const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    // Handle Ctrl+C / Cmd+C for copying mouse text selection
+    if matches!(key.code, KeyCode::Char('c'))
+        && (key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::SUPER))
+        && state.has_mouse_selection()
+    {
+        if let Some(text) = state.get_mouse_selected_text() {
+            let display_text = if text.len() > 40 {
+                format!("{}...", &text[..37])
+            } else {
+                text.clone()
+            };
+            match copy_to_clipboard(&text) {
+                Ok(CopyResult::SystemClipboard) => {
+                    state.set_status_message(format!("Copied: {}", display_text));
+                }
+                Ok(CopyResult::InternalBuffer { file_path }) => {
+                    let msg = match file_path {
+                        Some(path) => format!(
+                            "Copied to buffer: {} | {}",
+                            display_text,
+                            path.display()
+                        ),
+                        None => format!("Copied to buffer: {}", display_text),
+                    };
+                    state.set_status_message(msg);
+                }
+                Err(e) => {
+                    state.set_status_message(format!("Copy failed: {}", e));
+                }
+            }
+        }
+        state.clear_mouse_selection();
+        return Ok(());
+    }
+
+    // Any key press clears mouse text selection
+    if state.has_mouse_selection() {
+        state.clear_mouse_selection();
+    }
+
     // Handle help overlay scrolling when help is visible
     if state.show_help {
         // Calculate max scroll based on terminal height
@@ -110,19 +151,15 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
         return Ok(());
     }
 
-    if state.mode != Mode::Navigate {
-        return Ok(());
-    }
-
-    // Handle scroll events (allowed even in readonly mode for viewing archived dates)
+    // Handle scroll events (navigate mode only)
     match mouse.kind {
-        MouseEventKind::ScrollUp => {
+        MouseEventKind::ScrollUp if state.mode == Mode::Navigate => {
             for _ in 0..3 {
                 state.move_cursor_up();
             }
             return Ok(());
         }
-        MouseEventKind::ScrollDown => {
+        MouseEventKind::ScrollDown if state.mode == Mode::Navigate => {
             for _ in 0..3 {
                 state.move_cursor_down();
             }
@@ -131,92 +168,117 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
         _ => {}
     }
 
-    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-        let clicked_row = mouse.row as usize;
-        let clicked_col = mouse.column as usize;
-
-        // Check if click is on status bar (bottom row)
-        if clicked_row == state.terminal_height.saturating_sub(1) as usize {
-            // Check if GitHub link is clicked
-            let github_link = "[github repo] ";
-            let version_text = if let Some(ref new_version) = state.new_version_available {
-                let current_version = env!("CARGO_PKG_VERSION");
-                format!("v{} → v{}", current_version, new_version)
-            } else {
-                format!("v{}", env!("CARGO_PKG_VERSION"))
-            };
-
-            // GitHub link is just before version text at the right end
-            let version_start = state.terminal_width.saturating_sub(version_text.len() as u16) as usize;
-            let github_start = version_start.saturating_sub(github_link.len());
-            let github_end = version_start - 1; // -1 to exclude the trailing space
-
-            if clicked_col >= github_start && clicked_col < github_end {
-                // Clicked on GitHub link - open browser
-                let _ = open::that(GITHUB_URL);
+    // Mouse text selection: Down/Drag/Up handling (works in all modes)
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            // Clear existing selection and record position for click/drag detection
+            state.clear_mouse_selection();
+            state.mouse_down_pos = Some((mouse.row, mouse.column));
+            return Ok(());
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            // Mouse is being dragged - start/update text selection
+            if let Some(start) = state.mouse_down_pos {
+                state.mouse_select_start = Some(start);
+                state.mouse_select_end = Some((mouse.row, mouse.column));
+            }
+            return Ok(());
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            if state.has_mouse_selection() {
+                // Drag selection complete - don't execute click
+                state.mouse_down_pos = None;
                 return Ok(());
             }
-
-            // Check if version upgrade notification is visible and clicked
-            if state.new_version_available.is_some() && clicked_col >= version_start {
-                // Clicked on version text - open upgrade modal
-                state.open_upgrade_modal();
-                return Ok(());
+            // No drag occurred - treat as a click at the original down position
+            if let Some((row, col)) = state.mouse_down_pos.take() {
+                return handle_left_click(state, row as usize, col as usize);
             }
+            return Ok(());
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Execute a left-click action at the given screen coordinates.
+/// Extracted from handle_mouse_event to support click-on-release (for drag detection).
+fn handle_left_click(state: &mut AppState, clicked_row: usize, clicked_col: usize) -> Result<()> {
+    // Check if click is on status bar (bottom row) - works in any mode
+    if clicked_row == state.terminal_height.saturating_sub(1) as usize {
+        let github_link = "[github repo] ";
+        let version_text = if let Some(ref new_version) = state.new_version_available {
+            let current_version = env!("CARGO_PKG_VERSION");
+            format!("v{} → v{}", current_version, new_version)
+        } else {
+            format!("v{}", env!("CARGO_PKG_VERSION"))
+        };
+
+        let version_start = state.terminal_width.saturating_sub(version_text.len() as u16) as usize;
+        let github_start = version_start.saturating_sub(github_link.len());
+        let github_end = version_start - 1;
+
+        if clicked_col >= github_start && clicked_col < github_end {
+            let _ = open::that(GITHUB_URL);
+            return Ok(());
+        }
+
+        if state.new_version_available.is_some() && clicked_col >= version_start {
+            state.open_upgrade_modal();
+            return Ok(());
         }
     }
 
-    // Block other mouse interactions in readonly mode
+    // Item clicks only work in Navigate mode
+    if state.mode != Mode::Navigate {
+        return Ok(());
+    }
+
+    // Block editing interactions in readonly mode
     if state.is_readonly() {
         return Ok(());
     }
 
-    if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-        let clicked_row = mouse.row as usize;
-        let clicked_col = mouse.column as usize;
+    if let Some((item_idx, click_zone)) = map_click_to_item(state, clicked_row, clicked_col) {
+        match click_zone {
+            ClickZone::FoldIcon => {
+                let has_children = state.todo_list.has_children(item_idx);
+                let has_description = state
+                    .todo_list
+                    .items
+                    .get(item_idx)
+                    .map(|i| i.description.is_some())
+                    .unwrap_or(false);
 
-        if let Some((item_idx, click_zone)) = map_click_to_item(state, clicked_row, clicked_col) {
-            match click_zone {
-                ClickZone::FoldIcon => {
-                    let has_children = state.todo_list.has_children(item_idx);
-                    let has_description = state
-                        .todo_list
-                        .items
-                        .get(item_idx)
-                        .map(|i| i.description.is_some())
-                        .unwrap_or(false);
-
-                    if has_children || has_description {
-                        state.save_undo();
-                        if let Some(item) = state.todo_list.items.get_mut(item_idx) {
-                            let was_collapsed = item.collapsed;
-                            item.collapsed = !item.collapsed;
-                            state.unsaved_changes = true;
-
-                            // When expanding via click, scroll to show expanded content
-                            if was_collapsed {
-                                state.cursor_position = item_idx;
-                                state.scroll_to_fit_expanded();
-                            }
-                        }
-                    }
-                    state.cursor_position = item_idx;
-                }
-                ClickZone::Checkbox => {
+                if has_children || has_description {
                     state.save_undo();
                     if let Some(item) = state.todo_list.items.get_mut(item_idx) {
-                        item.toggle_state();
+                        let was_collapsed = item.collapsed;
+                        item.collapsed = !item.collapsed;
                         state.unsaved_changes = true;
+
+                        if was_collapsed {
+                            state.cursor_position = item_idx;
+                            state.scroll_to_fit_expanded();
+                        }
                     }
-                    state.cursor_position = item_idx;
                 }
-                ClickZone::Content => {
-                    state.cursor_position = item_idx;
-                }
+                state.cursor_position = item_idx;
             }
-            // Sync list_state to update visual highlight
-            state.sync_list_state();
+            ClickZone::Checkbox => {
+                state.save_undo();
+                if let Some(item) = state.todo_list.items.get_mut(item_idx) {
+                    item.toggle_state();
+                    state.unsaved_changes = true;
+                }
+                state.cursor_position = item_idx;
+            }
+            ClickZone::Content => {
+                state.cursor_position = item_idx;
+            }
         }
+        state.sync_list_state();
     }
 
     if state.unsaved_changes {

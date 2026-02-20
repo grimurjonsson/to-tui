@@ -217,6 +217,14 @@ pub struct AppState {
     pub move_to_project_state: Option<MoveToProjectSubState>,
     /// Whether the mouse cursor is currently showing as pointer (for hover effects)
     pub cursor_is_pointer: bool,
+    /// Position where last MouseDown(Left) occurred, for click vs drag detection
+    pub mouse_down_pos: Option<(u16, u16)>,
+    /// Start of mouse text selection (row, col)
+    pub mouse_select_start: Option<(u16, u16)>,
+    /// End of mouse text selection (row, col)
+    pub mouse_select_end: Option<(u16, u16)>,
+    /// Screen buffer cells captured after each render: [row][col] = cell symbol
+    pub screen_cells: Vec<Vec<String>>,
     /// Plugin loader with dynamically loaded plugins
     pub plugin_loader: PluginLoader,
     /// Plugin loading errors to display on first render
@@ -304,6 +312,10 @@ impl AppState {
             project_state: None,
             move_to_project_state: None,
             cursor_is_pointer: false,
+            mouse_down_pos: None,
+            mouse_select_start: None,
+            mouse_select_end: None,
+            screen_cells: Vec::new(),
             show_plugin_error_popup: !plugin_errors.is_empty(),
             pending_plugin_errors: plugin_errors,
             plugin_loader,
@@ -756,6 +768,78 @@ impl AppState {
 
     pub fn clear_selection(&mut self) {
         self.selection_anchor = None;
+    }
+
+    /// Clear mouse text selection state
+    pub fn clear_mouse_selection(&mut self) {
+        self.mouse_select_start = None;
+        self.mouse_select_end = None;
+        self.mouse_down_pos = None;
+    }
+
+    /// Whether a mouse text selection is active (both start and end set)
+    pub fn has_mouse_selection(&self) -> bool {
+        self.mouse_select_start.is_some() && self.mouse_select_end.is_some()
+    }
+
+    /// Get normalized selection range: ((start_row, start_col), (end_row, end_col))
+    /// with start always before end
+    pub fn normalized_selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        let s = self.mouse_select_start?;
+        let e = self.mouse_select_end?;
+        let start = (s.0 as usize, s.1 as usize);
+        let end = (e.0 as usize, e.1 as usize);
+
+        if start.0 < end.0 || (start.0 == end.0 && start.1 <= end.1) {
+            Some((start, end))
+        } else {
+            Some((end, start))
+        }
+    }
+
+    /// Extract the selected text from the captured screen buffer
+    pub fn get_mouse_selected_text(&self) -> Option<String> {
+        let ((sr, sc), (er, ec)) = self.normalized_selection()?;
+
+        if self.screen_cells.is_empty() {
+            return None;
+        }
+
+        let mut lines = Vec::new();
+        for row in sr..=er {
+            if row >= self.screen_cells.len() {
+                break;
+            }
+            let cells = &self.screen_cells[row];
+            let col_start = if row == sr { sc } else { 0 };
+            let col_end = if row == er {
+                (ec + 1).min(cells.len())
+            } else {
+                cells.len()
+            };
+
+            let mut line = String::new();
+            for col in col_start..col_end {
+                if col < cells.len() {
+                    let sym = &cells[col];
+                    if !sym.is_empty() {
+                        line.push_str(sym);
+                    }
+                }
+            }
+            lines.push(line.trim_end().to_string());
+        }
+
+        // Remove trailing empty lines
+        while lines.last().is_some_and(|l| l.is_empty()) {
+            lines.pop();
+        }
+
+        if lines.is_empty() {
+            None
+        } else {
+            Some(clean_selection_text(&lines.join("\n")))
+        }
     }
 
     pub fn start_or_extend_selection(&mut self) {
@@ -1919,6 +2003,165 @@ impl AppState {
     }
 }
 
+/// Clean up raw screen-captured text by stripping TUI decorations.
+///
+/// Removes outer Block borders (`│`), description box borders (`╭╮╰╯─│`),
+/// todo item prefixes (fold icons, checkboxes), and rejoins wrapped continuation lines.
+fn clean_selection_text(raw: &str) -> String {
+    let lines: Vec<&str> = raw.lines().collect();
+    let mut result: Vec<String> = Vec::new();
+
+    for line in &lines {
+        let stripped = strip_outer_borders(line);
+
+        // Skip decorative border lines (top/bottom of description boxes, block borders)
+        if is_decorative_border(stripped) {
+            continue;
+        }
+
+        // Try to extract todo content first (has checkbox - most specific match)
+        if let Some(content) = extract_todo_content(stripped) {
+            result.push(content);
+            continue;
+        }
+
+        // Try to extract description content from between │ pipes │
+        if let Some(content) = extract_pipe_content(stripped) {
+            result.push(content);
+            continue;
+        }
+
+        // Check if this is a wrapped continuation line (only whitespace prefix, then text)
+        let trimmed = stripped.trim_start();
+        if !trimmed.is_empty() && stripped.len() != trimmed.len() && !result.is_empty() {
+            // Heuristic: if the line starts with lots of spaces (indent continuation)
+            // and the previous line is a todo item, join them
+            let leading_spaces = stripped.len() - trimmed.len();
+            if leading_spaces >= 4
+                && let Some(last) = result.last_mut()
+                && !last.is_empty()
+            {
+                last.push(' ');
+                last.push_str(trimmed.trim_end());
+                continue;
+            }
+        }
+
+        // Fallback: include the line as-is (trimmed of all border/whitespace)
+        let trimmed = stripped.trim();
+        if !trimmed.is_empty() {
+            result.push(trimmed.to_string());
+        }
+    }
+
+    // Remove trailing empty lines
+    while result.last().is_some_and(|l| l.is_empty()) {
+        result.pop();
+    }
+
+    result.join("\n")
+}
+
+/// Characters used by block borders and scrollbar that should be stripped from edges
+fn is_border_or_scrollbar(c: char) -> bool {
+    matches!(
+        c,
+        '│' | '┃' | '║' | '█' | '▐' | '▌' | '↑' | '↓' | '┌' | '┐' | '└' | '┘'
+    )
+}
+
+/// Strip outer Block widget borders and scrollbar characters from both edges of a line
+fn strip_outer_borders(s: &str) -> &str {
+    let s = s.trim_start_matches(|c: char| is_border_or_scrollbar(c));
+    s.trim_end_matches(|c: char| is_border_or_scrollbar(c))
+}
+
+/// Check if a line is a purely decorative border (should be skipped entirely)
+fn is_decorative_border(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let first = trimmed.chars().next().unwrap();
+    // Description box top/bottom borders, Block widget corners, and horizontal rules
+    matches!(first, '╭' | '╰' | '┌' | '└' | '─')
+}
+
+/// Extract text content from a description box line.
+/// Finds the first `│ ` and last ` │` (or trailing `│`) to extract content between them.
+/// Handles lines like: `    │ some text         │   █` with various trailing chars.
+fn extract_pipe_content(s: &str) -> Option<String> {
+    let trimmed = s.trim_start();
+    // Must start with the desc box left border
+    let inner = trimmed.strip_prefix("│ ")?;
+    // Find the last `│` which is the desc box right border
+    if let Some(last_pipe) = inner.rfind('│') {
+        let content = inner[..last_pipe].trim();
+        if !content.is_empty() {
+            return Some(content.to_string());
+        }
+    }
+    // No closing │ found - just trim trailing border/scrollbar chars and whitespace
+    let content = inner.trim_end_matches(|c: char| is_border_or_scrollbar(c) || c.is_whitespace());
+    if content.is_empty() {
+        return None;
+    }
+    Some(content.trim().to_string())
+}
+
+/// Extract todo item preserving indent and checkbox, stripping fold icon and badge.
+/// Looks for a `[x]` or `[ ]` checkbox pattern near the start of the line.
+/// Returns the todo with proper indentation: `  [x] content`
+fn extract_todo_content(s: &str) -> Option<String> {
+    // Find a valid checkbox: [x], [ ], [?], [!], [/] within the first ~30 chars
+    let search_range = s.len().min(30);
+    let search = &s[..search_range];
+    let mut search_from = 0;
+
+    loop {
+        let open = search[search_from..].find('[').map(|p| p + search_from)?;
+        if open > 25 {
+            return None;
+        }
+        let after_open = &s[open + 1..];
+        if let Some(close_rel) = after_open.find(']') {
+            // Valid checkbox has exactly 1 char state: [ ], [x], [?], [!], [/]
+            if close_rel == 1 {
+                let state_char = after_open.chars().next().unwrap();
+                if matches!(state_char, ' ' | 'x' | '?' | '!' | '/' | '*') {
+                    let after_close = open + 1 + close_rel + 1;
+                    let checkbox = &s[open..after_close]; // e.g. "[x]"
+                    let content = &s[after_close..];
+                    let content = content.strip_prefix(' ').unwrap_or(content).trim_end();
+
+                    // Calculate indent from characters before the checkbox
+                    let prefix = &s[..open];
+                    let indent_len =
+                        if let Some(pos) = prefix.find('▶').or_else(|| prefix.find('▼')) {
+                            // Fold icon found - indent is the spaces before it
+                            pos
+                        } else {
+                            // No fold icon (no children) - fold icon was 2 spaces
+                            let leading =
+                                prefix.len() - prefix.trim_start_matches(' ').len();
+                            leading.saturating_sub(2)
+                        };
+
+                    let indent = " ".repeat(indent_len);
+                    if content.is_empty() {
+                        return Some(format!("{indent}{checkbox}"));
+                    }
+                    return Some(format!("{indent}{checkbox} {content}"));
+                }
+            }
+            // Not a valid checkbox, skip past this `[` and keep looking
+            search_from = open + 1;
+        } else {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2289,5 +2532,142 @@ mod tests {
         // Popup should be hidden but errors still accessible
         assert!(!state.show_plugin_error_popup);
         assert_eq!(state.pending_plugin_errors.len(), 1);
+    }
+
+    #[test]
+    fn test_clean_selection_strips_outer_borders() {
+        // indent_level=0, fold icon ▼ directly after block border
+        let input = "│▼ [x] Buy groceries                         │";
+        let result = clean_selection_text(input);
+        assert_eq!(result, "[x] Buy groceries");
+    }
+
+    #[test]
+    fn test_clean_selection_skips_decorative_borders() {
+        let input = "│╭────────────────────╮│\n││ Description text   ││\n│╰────────────────────╯│";
+        let result = clean_selection_text(input);
+        assert_eq!(result, "Description text");
+    }
+
+    #[test]
+    fn test_clean_selection_joins_wrapped_lines() {
+        // indent_level=0 with fold icon
+        let input =
+            "│▶ [ ] This is a very long todo item       │\n│        that wraps to the next line       │";
+        let result = clean_selection_text(input);
+        assert_eq!(
+            result,
+            "[ ] This is a very long todo item that wraps to the next line"
+        );
+    }
+
+    #[test]
+    fn test_clean_selection_description_keeps_lines() {
+        // indent_level=0 with fold icon ▼
+        let input = "│▼ [ ] Task with desc                      │\n│    ╭──────────────────╮│\n│    │ Some notes here  ││\n│    │ More notes       ││\n│    ╰──────────────────╯│";
+        let result = clean_selection_text(input);
+        assert_eq!(
+            result,
+            "[ ] Task with desc\nSome notes here\nMore notes"
+        );
+    }
+
+    #[test]
+    fn test_clean_selection_multiple_todos() {
+        // Both at indent_level=0
+        let input = "│▶ [x] First task     │\n│▶ [ ] Second task    │";
+        let result = clean_selection_text(input);
+        assert_eq!(result, "[x] First task\n[ ] Second task");
+    }
+
+    #[test]
+    fn test_clean_selection_preserves_indent() {
+        // indent_level=0, 1, 2 with fold icons
+        let input = "│▶ [x] Parent task    │\n│  ▶ [ ] Child task   │\n│    ▶ [?] Grandchild │";
+        let result = clean_selection_text(input);
+        assert_eq!(
+            result,
+            "[x] Parent task\n  [ ] Child task\n    [?] Grandchild"
+        );
+    }
+
+    #[test]
+    fn test_clean_selection_indent_no_fold_icon() {
+        // No fold icon (no children) - fold icon rendered as 2 spaces
+        // indent_level=0: "  [x]", indent_level=1: "    [x]"
+        let input = "│  [ ] Top level      │\n│    [ ] Indented once │";
+        let result = clean_selection_text(input);
+        assert_eq!(result, "[ ] Top level\n  [ ] Indented once");
+    }
+
+    #[test]
+    fn test_clean_selection_skips_priority_badge() {
+        // Badge [P0] comes between fold icon and checkbox at indent_level=0
+        let input = "│▶ [P0] [x] Important task  │";
+        let result = clean_selection_text(input);
+        assert_eq!(result, "[x] Important task");
+    }
+
+    #[test]
+    fn test_clean_selection_with_scrollbar() {
+        // Simulates right edge having scrollbar █ instead of block border │
+        let input = "│    │ https://example.com/path              │█\n│    │ Some description text                 │█\n│    │ More text here                        │█";
+        let result = clean_selection_text(input);
+        assert_eq!(
+            result,
+            "https://example.com/path\nSome description text\nMore text here"
+        );
+    }
+
+    #[test]
+    fn test_clean_selection_desc_only_with_borders() {
+        // Selecting just description content with scrollbar and decorative borders
+        let input = "╭──────────────────────────────╮█\n│ Line one of description      │█\n│ Line two of description      │█\n╰──────────────────────────────╯█";
+        let result = clean_selection_text(input);
+        assert_eq!(
+            result,
+            "Line one of description\nLine two of description"
+        );
+    }
+
+    #[test]
+    fn test_extract_todo_content_basic() {
+        // indent_level=1: 2 spaces indent + fold icon ▶
+        assert_eq!(
+            extract_todo_content("  ▶ [x] Buy milk"),
+            Some("  [x] Buy milk".to_string())
+        );
+        // indent_level=0: fold icon ▼ at start
+        assert_eq!(
+            extract_todo_content("▼ [ ] Task name"),
+            Some("[ ] Task name".to_string())
+        );
+        // indent_level=1 with no fold icon (2 indent + 2 fold spaces)
+        assert_eq!(
+            extract_todo_content("    [?] Question item"),
+            Some("  [?] Question item".to_string())
+        );
+    }
+
+    #[test]
+    fn test_is_decorative_border() {
+        assert!(is_decorative_border("  ╭──────────╮"));
+        assert!(is_decorative_border("  ╰──────────╯"));
+        assert!(is_decorative_border("┌─ Title ─────┐"));
+        assert!(is_decorative_border("└─────────────┘"));
+        assert!(is_decorative_border("─────────────"));
+        assert!(!is_decorative_border("  ▶ [x] Todo"));
+        assert!(!is_decorative_border("  │ text │"));
+        assert!(!is_decorative_border(""));
+    }
+
+    #[test]
+    fn test_strip_outer_borders_scrollbar() {
+        assert_eq!(strip_outer_borders("│content│"), "content");
+        assert_eq!(strip_outer_borders("│content█"), "content");
+        assert_eq!(strip_outer_borders("█content│"), "content");
+        // Strips multiple border chars from edges
+        assert_eq!(strip_outer_borders("││content││"), "content");
+        assert_eq!(strip_outer_borders("│content│█"), "content");
     }
 }

@@ -16,7 +16,12 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::Position,
+    style::Modifier,
+    Terminal,
+};
 use std::io::{self, Write};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -129,6 +134,47 @@ async fn run_app(
         // Render
         terminal.draw(|f| {
             components::render(f, state);
+
+            // Capture screen buffer content for mouse text selection
+            {
+                let buf = f.buffer_mut();
+                let area = buf.area;
+                state.screen_cells.clear();
+                for y in 0..area.height {
+                    let mut row_cells = Vec::with_capacity(area.width as usize);
+                    for x in 0..area.width {
+                        if let Some(cell) = buf.cell(Position::new(x, y)) {
+                            let sym = cell.symbol();
+                            if sym.is_empty() {
+                                row_cells.push(" ".to_string());
+                            } else {
+                                row_cells.push(sym.to_string());
+                            }
+                        } else {
+                            row_cells.push(" ".to_string());
+                        }
+                    }
+                    state.screen_cells.push(row_cells);
+                }
+            }
+
+            // Apply selection highlight (reversed colors) for mouse text selection
+            let selection = state.normalized_selection();
+            if let Some(((sr, sc), (er, ec))) = selection {
+                let buf = f.buffer_mut();
+                let max_row = buf.area.height as usize;
+                let max_col = buf.area.width as usize;
+                for y in sr..=er.min(max_row.saturating_sub(1)) {
+                    let cs = if y == sr { sc } else { 0 };
+                    let ce = if y == er { (ec + 1).min(max_col) } else { max_col };
+                    for x in cs..ce {
+                        if let Some(cell) = buf.cell_mut(Position::new(x as u16, y as u16)) {
+                            let s = cell.style().add_modifier(Modifier::REVERSED);
+                            cell.set_style(s);
+                        }
+                    }
+                }
+            }
         })?;
 
         // Wait for ANY event source - immediate wakeup when any fires
@@ -149,6 +195,9 @@ async fn run_app(
                         }
                         Event::Mouse(mouse) => {
                             handle_mouse_event(mouse, state)?;
+                        }
+                        Event::Resize(_, _) => {
+                            state.clear_mouse_selection();
                         }
                         _ => {}
                     }
