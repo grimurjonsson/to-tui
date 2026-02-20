@@ -57,6 +57,10 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
     let mut items: Vec<ListItem> = Vec::new();
     let hidden_indices = state.todo_list.build_hidden_indices();
     let available_width = area.width.saturating_sub(2) as usize;
+    let viewport_height = area.height.saturating_sub(2) as usize; // minus borders
+    let scroll_offset = state.list_state.offset();
+    let mut list_item_index: usize = 0;
+    let mut height_from_offset: usize = 0;
 
     for (idx, item) in state.todo_list.items.iter().enumerate() {
         if hidden_indices.contains(&idx) {
@@ -133,13 +137,23 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
 
         if should_show_new_item_above {
             let new_item_lines = build_wrapped_edit_lines(state, available_width);
+            let h = new_item_lines.len();
             items.push(ListItem::new(new_item_lines));
+            if list_item_index >= scroll_offset {
+                height_from_offset += h;
+            }
+            list_item_index += 1;
         }
 
         if is_editing_this_item {
             let edit_lines =
                 build_wrapped_edit_lines_for_existing(state, available_width, item.indent_level);
+            let h = edit_lines.len();
             items.push(ListItem::new(edit_lines));
+            if list_item_index >= scroll_offset {
+                height_from_offset += h;
+            }
+            list_item_index += 1;
         } else {
             let should_truncate = item.collapsed && has_description;
 
@@ -172,6 +186,10 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
 
                 let lines = vec![Line::from(spans)];
                 items.push(ListItem::new(lines));
+                if list_item_index >= scroll_offset {
+                    height_from_offset += 1;
+                }
+                list_item_index += 1;
             } else {
                 let wrapped_lines = wrap_text(&content_with_extras, content_max_width);
                 let continuation_indent = " ".repeat(prefix_width + badge_width + checkbox_width);
@@ -212,7 +230,12 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                     }
                 }
 
+                let h = lines.len();
                 items.push(ListItem::new(lines));
+                if list_item_index >= scroll_offset {
+                    height_from_offset += h;
+                }
+                list_item_index += 1;
             }
         }
 
@@ -251,30 +274,91 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                 let border_style = Style::default().fg(border_color);
                 let text_style = Style::default().fg(text_color);
 
+                // Calculate how many lines we can afford for this description.
+                // ratatui's List drops items that don't fully fit, so we truncate
+                // the description to the remaining viewport budget.
+                let remaining = if list_item_index >= scroll_offset {
+                    viewport_height.saturating_sub(height_from_offset)
+                } else {
+                    viewport_height
+                };
+                let full_height = desc_wrapped.len() + 2; // content + top/bottom border
+                let max_lines = if full_height > remaining && remaining >= 2 {
+                    // Truncate: top border + as many content lines as fit
+                    remaining
+                } else {
+                    full_height
+                };
+
                 let mut desc_lines: Vec<Line> = Vec::new();
 
-                desc_lines.push(Line::from(vec![
-                    Span::styled(box_indent.clone(), Style::default()),
-                    Span::styled(top_border, border_style),
-                ]));
-
-                for line_text in desc_wrapped.iter() {
-                    let padding = inner_width.saturating_sub(line_text.width());
-                    let padded_text = format!("{}{}", line_text, " ".repeat(padding));
+                if max_lines >= 2 {
                     desc_lines.push(Line::from(vec![
                         Span::styled(box_indent.clone(), Style::default()),
-                        Span::styled(format!("{vertical} "), border_style),
-                        Span::styled(padded_text, text_style),
-                        Span::styled(format!(" {vertical}"), border_style),
+                        Span::styled(top_border, border_style),
+                    ]));
+
+                    let content_lines_budget = max_lines.saturating_sub(2); // reserve bottom border
+                    let is_truncated = content_lines_budget < desc_wrapped.len();
+
+                    for (i, line_text) in desc_wrapped.iter().enumerate() {
+                        if i >= content_lines_budget {
+                            break;
+                        }
+                        let padding = inner_width.saturating_sub(line_text.width());
+                        let padded_text = format!("{}{}", line_text, " ".repeat(padding));
+                        desc_lines.push(Line::from(vec![
+                            Span::styled(box_indent.clone(), Style::default()),
+                            Span::styled(format!("{vertical} "), border_style),
+                            Span::styled(padded_text, text_style),
+                            Span::styled(format!(" {vertical}"), border_style),
+                        ]));
+                    }
+
+                    if is_truncated {
+                        // Show truncation indicator as bottom border
+                        let more_count = desc_wrapped.len() - content_lines_budget;
+                        let more_text = format!("─── {more_count} more line{} ", if more_count == 1 { "" } else { "s" });
+                        let remaining_border = border_width.saturating_sub(more_text.width());
+                        let trunc_border = format!(
+                            "{bottom_left}{}{}{bottom_right}",
+                            more_text,
+                            horizontal.repeat(remaining_border),
+                        );
+                        desc_lines.push(Line::from(vec![
+                            Span::styled(box_indent.clone(), Style::default()),
+                            Span::styled(trunc_border, border_style),
+                        ]));
+                    } else {
+                        desc_lines.push(Line::from(vec![
+                            Span::styled(box_indent.clone(), Style::default()),
+                            Span::styled(bottom_border, border_style),
+                        ]));
+                    }
+                } else if max_lines == 1 {
+                    // Only room for a single line - show collapsed indicator
+                    let count = desc_wrapped.len();
+                    let label = format!(" {count} more line{} ", if count == 1 { "" } else { "s" });
+                    let fill = border_width.saturating_sub(label.width());
+                    let collapsed_border = format!(
+                        "{bottom_left}{}{}{bottom_right}",
+                        label,
+                        horizontal.repeat(fill),
+                    );
+                    desc_lines.push(Line::from(vec![
+                        Span::styled(box_indent.clone(), Style::default()),
+                        Span::styled(collapsed_border, border_style),
                     ]));
                 }
 
-                desc_lines.push(Line::from(vec![
-                    Span::styled(box_indent.clone(), Style::default()),
-                    Span::styled(bottom_border, border_style),
-                ]));
-
-                items.push(ListItem::new(desc_lines));
+                if !desc_lines.is_empty() {
+                    let h = desc_lines.len();
+                    items.push(ListItem::new(desc_lines));
+                    if list_item_index >= scroll_offset {
+                        height_from_offset += h;
+                    }
+                    list_item_index += 1;
+                }
             }
 
         let should_show_new_item_below = state.is_creating_new_item
@@ -284,7 +368,12 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
 
         if should_show_new_item_below {
             let new_item_lines = build_wrapped_edit_lines(state, available_width);
+            let h = new_item_lines.len();
             items.push(ListItem::new(new_item_lines));
+            if list_item_index >= scroll_offset {
+                height_from_offset += h;
+            }
+            list_item_index += 1;
         }
     }
 
