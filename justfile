@@ -5,6 +5,12 @@ default:
 build:
     cargo build --release
 
+dev:
+    cargo run --bin totui
+
+install-with-curl:
+    curl -fsSL https://raw.githubusercontent.com/grimurjonsson/to-tui/main/scripts/install.sh | bash
+
 # Build and install to ~/.local/bin
 install:
     #!/usr/bin/env bash
