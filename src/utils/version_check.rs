@@ -8,7 +8,7 @@ use std::time::Duration;
 
 const GITHUB_REPO: &str = "grimurjonsson/to-tui";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
-const CHECK_INTERVAL_SECS: u64 = 600; // Check every 10 minutes
+const CHECK_INTERVAL_SECS: u64 = 3600; // Check every hour
 
 /// Information about a plugin that has an update available
 #[derive(Debug, Clone)]
@@ -66,10 +66,22 @@ pub fn spawn_version_checker() -> mpsc::Receiver<VersionCheckResult> {
         thread::sleep(Duration::from_secs(5));
 
         loop {
-            let result = check_all_updates();
-            if result.has_updates() {
-                // Only send if there are updates available
-                let _ = tx.send(result);
+            match std::panic::catch_unwind(check_all_updates) {
+                Ok(result) => {
+                    if result.has_updates() {
+                        let _ = tx.send(result);
+                    }
+                }
+                Err(e) => {
+                    let msg = if let Some(s) = e.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = e.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    tracing::error!("Version check panicked: {}", msg);
+                }
             }
 
             // Wait before next check
@@ -82,11 +94,22 @@ pub fn spawn_version_checker() -> mpsc::Receiver<VersionCheckResult> {
 
 /// Check for all updates: app version and plugin versions
 fn check_all_updates() -> VersionCheckResult {
+    tracing::debug!("Starting version check (current: v{})", CURRENT_VERSION);
+
     // Check app version
     let app_update = check_latest_app_version();
+    match &app_update {
+        Some(info) => tracing::debug!(
+            latest = %info.latest_version,
+            is_newer = info.is_newer,
+            "App version check complete"
+        ),
+        None => tracing::debug!("App version check failed (no result)"),
+    }
 
     // Check plugin updates
     let plugin_updates = check_plugin_updates();
+    tracing::debug!(plugin_updates = plugin_updates.len(), "Plugin update check complete");
 
     VersionCheckResult {
         app_update,
