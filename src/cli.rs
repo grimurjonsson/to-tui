@@ -20,6 +20,10 @@ pub enum Commands {
     Show {
         #[arg(short, long)]
         date: Option<String>,
+
+        /// Filter by project name
+        #[arg(short, long)]
+        project: Option<String>,
     },
     /// Import old markdown files into the archive
     ImportArchive,
