@@ -97,8 +97,10 @@ pub fn paste_from_clipboard() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_internal_buffer_fallback() {
         // Clear any existing buffer
         if let Ok(mut buffer) = YANK_BUFFER.lock() {
@@ -115,6 +117,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_paste_from_internal_buffer() {
         // Set up internal buffer
         if let Ok(mut buffer) = YANK_BUFFER.lock() {

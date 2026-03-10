@@ -57,3 +57,4 @@ abi_stable = "0.11"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
+serial_test = "3"

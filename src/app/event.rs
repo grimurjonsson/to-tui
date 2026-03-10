@@ -13,7 +13,7 @@ use crate::plugin::{
 use crate::project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
 use crate::storage::file::save_todo_list_for_project;
 use crate::storage::{execute_rollover_for_project, find_rollover_candidates_for_project, soft_delete_todos_for_project};
-use crate::utils::paths::{get_dailies_dir_for_project, get_project_dir};
+use crate::utils::paths::{get_dailies_dir_for_project, get_logs_dir, get_project_dir};
 use crate::utils::cursor::{set_mouse_cursor_default, set_mouse_cursor_pointer};
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
@@ -795,6 +795,35 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                     Err(e) => {
                         state.set_status_message(format!("Copy failed: {}", e));
                     }
+                }
+            }
+        }
+        Action::CopyLogPath => {
+            match get_logs_dir() {
+                Ok(logs_dir) => {
+                    let path_str = logs_dir.join("totui.log").display().to_string();
+                    match copy_to_clipboard(&path_str) {
+                        Ok(CopyResult::SystemClipboard) => {
+                            state.set_status_message(format!("Log path copied: {}", path_str));
+                        }
+                        Ok(CopyResult::InternalBuffer { file_path }) => {
+                            let msg = match file_path {
+                                Some(fp) => format!(
+                                    "Log path copied to buffer: {} | Saved to {}",
+                                    path_str,
+                                    fp.display()
+                                ),
+                                None => format!("Log path copied to buffer: {}", path_str),
+                            };
+                            state.set_status_message(msg);
+                        }
+                        Err(e) => {
+                            state.set_status_message(format!("Could not copy log path: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    state.set_status_message(format!("Could not copy log path: {}", e));
                 }
             }
         }

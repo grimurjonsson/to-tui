@@ -249,6 +249,10 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
         Span::styled("Open plugins menu", desc_style),
     ]));
     lines.push(Line::from(vec![
+        Span::styled("    L               ", key_style),
+        Span::styled("Copy log file path to clipboard", desc_style),
+    ]));
+    lines.push(Line::from(vec![
         Span::styled("    ?               ", key_style),
         Span::styled("Toggle this help", desc_style),
     ]));

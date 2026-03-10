@@ -663,6 +663,7 @@ mod tests {
     mod metadata_tests {
         use super::*;
         use crate::storage::database::init_database;
+        use serial_test::serial;
         use std::env;
         use tempfile::TempDir;
 
@@ -679,6 +680,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_set_todo_metadata_command() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -701,6 +703,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_set_todo_metadata_merge() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -734,6 +737,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_set_project_metadata_command() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -754,6 +758,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_delete_todo_metadata_command() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -778,6 +783,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_delete_project_metadata_command() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -801,6 +807,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_metadata_namespace_isolation() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -833,6 +840,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_metadata_with_temp_id() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -864,6 +872,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_invalid_json_rejected() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -883,6 +892,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_reserved_key_rejected() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -905,6 +915,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_temp_id_mapping() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -939,6 +950,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_external_id_persists_across_batches() {
             let _temp = setup_test_env();
             let mut list = create_test_list();
@@ -980,6 +992,7 @@ mod tests {
         }
 
         #[test]
+        #[serial]
         fn test_external_id_delete_across_batches() {
             let _temp = setup_test_env();
             let mut list = create_test_list();

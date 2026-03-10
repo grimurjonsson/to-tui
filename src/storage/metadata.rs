@@ -348,6 +348,7 @@ fn merge_json(existing: &str, new_data: &str) -> Result<String> {
 mod tests {
     use super::*;
     use crate::storage::database::init_database;
+    use serial_test::serial;
     use std::env;
     use tempfile::TempDir;
 
@@ -366,6 +367,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_set_and_get_todo_metadata() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -379,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_todo_metadata_returns_empty_for_nonexistent() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -390,6 +393,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_set_todo_metadata_merge_true_merges_keys() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -410,6 +414,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_set_todo_metadata_merge_false_replaces_entirely() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -430,6 +435,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_reserved_key_prefix_rejected() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -446,6 +452,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_invalid_json_rejected() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -459,6 +466,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_delete_todo_metadata_returns_true_for_existing() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -475,6 +483,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_delete_todo_metadata_returns_false_for_nonexistent() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -485,6 +494,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_set_and_get_project_metadata() {
         let _temp = setup_test_env();
         let project_name = "my_project";
@@ -498,6 +508,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_project_metadata_returns_empty_for_nonexistent() {
         let _temp = setup_test_env();
         let project_name = "nonexistent_project";
@@ -509,6 +520,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_delete_project_metadata() {
         let _temp = setup_test_env();
         let project_name = "my_project";
@@ -525,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_different_plugins_have_separate_metadata() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -544,6 +557,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[serial]
     fn test_set_and_get_external_id() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -557,6 +571,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_external_id_not_found() {
         let _temp = setup_test_env();
 
@@ -565,6 +580,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_external_id_isolated_by_plugin() {
         let _temp = setup_test_env();
         let todo_id_a = Uuid::new_v4();
@@ -583,6 +599,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_external_id_update() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
@@ -611,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_external_id_with_metadata() {
         let _temp = setup_test_env();
         let todo_id = Uuid::new_v4();
