@@ -168,8 +168,8 @@ fn main() -> Result<()> {
         Some(Commands::Add { task }) => {
             handle_add(task)?;
         }
-        Some(Commands::Show { date }) => {
-            handle_show(date)?;
+        Some(Commands::Show { date, project }) => {
+            handle_show(date, project)?;
         }
         Some(Commands::ImportArchive) => {
             handle_import_archive()?;
@@ -521,7 +521,16 @@ fn handle_add(task: String) -> Result<()> {
     Ok(())
 }
 
-fn handle_show(date: Option<String>) -> Result<()> {
+fn handle_show(date: Option<String>, project: Option<String>) -> Result<()> {
+    let project_name = project.as_deref().unwrap_or(DEFAULT_PROJECT_NAME);
+
+    // Validate project exists
+    let mut registry = project::ProjectRegistry::load()?;
+    registry.ensure_default_project()?;
+    if registry.get_by_name(project_name).is_none() {
+        anyhow::bail!("Project '{}' not found", project_name);
+    }
+
     let (items, display_date, is_archived): (Vec<todo::TodoItem>, chrono::NaiveDate, bool) =
         if let Some(date_str) = date {
             let parsed_date = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
@@ -529,14 +538,14 @@ fn handle_show(date: Option<String>) -> Result<()> {
 
             let today = Local::now().date_naive();
             if parsed_date == today {
-                let list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
+                let list = load_today_list_for_project(project_name)?;
                 (list.items, today, false)
             } else {
-                let items = storage::load_archived_todos_for_date_and_project(parsed_date, DEFAULT_PROJECT_NAME)?;
+                let items = storage::load_archived_todos_for_date_and_project(parsed_date, project_name)?;
                 (items, parsed_date, true)
             }
         } else {
-            let list = load_today_list_for_project(DEFAULT_PROJECT_NAME)?;
+            let list = load_today_list_for_project(project_name)?;
             let date = list.date;
             (list.items, date, false)
         };
@@ -553,12 +562,17 @@ fn handle_show(date: Option<String>) -> Result<()> {
         return Ok(());
     }
 
+    let project_label = if project_name != DEFAULT_PROJECT_NAME {
+        format!(" [{}]", project_name)
+    } else {
+        String::new()
+    };
     let label = if is_archived {
         "📦 Archived"
     } else {
         "📋 Todo List"
     };
-    println!("\n{} - {}\n", label, display_date.format("%B %d, %Y"));
+    println!("\n{}{} - {}\n", label, project_label, display_date.format("%B %d, %Y"));
 
     for (idx, item) in items.iter().enumerate() {
         let indent = "  ".repeat(item.indent_level);

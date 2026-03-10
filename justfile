@@ -222,7 +222,7 @@ inspect-mcp:
 
 # Run the TUI app
 tui:
-    cargo run --release
+    cargo run --release --bin totui
 
 # Setup MCP for local Claude Code development
 setup-mcp-claude-dev:

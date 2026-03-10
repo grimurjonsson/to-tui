@@ -448,7 +448,8 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
     };
 
     let title = format!(
-        " Todo List - {}{}{} ",
+        " to-tui [{}] - {}{}{} ",
+        state.current_project.name,
         state.viewing_date.format("%B %d, %Y"),
         title_suffix,
         scroll_info
