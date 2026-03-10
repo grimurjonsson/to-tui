@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2026-03-10
+Rollover modal has clearer messaging, the `show` command now accepts a `--project` flag, and the active project name is displayed in the TUI title bar.
+
+### Added
+- Add --project flag to show command
+
 ## [0.5.8] - 2026-03-06
 ## [0.5.7] - 2026-02-20
 ## [0.5.6] - 2026-02-20
