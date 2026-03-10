@@ -69,6 +69,7 @@ pub enum Action {
 
     // Clipboard
     Yank,
+    CopyLogPath,
 
     // Priority
     CyclePriority,
@@ -123,6 +124,7 @@ impl fmt::Display for Action {
             Action::OpenProjectModal => "open_project_modal",
             Action::MoveToProject => "move_to_project",
             Action::Yank => "yank",
+            Action::CopyLogPath => "copy_log_path",
             Action::CyclePriority => "cycle_priority",
             Action::SortByPriority => "sort_by_priority",
             Action::EditCancel => "edit_cancel",
@@ -178,6 +180,7 @@ impl FromStr for Action {
             "open_project_modal" => Ok(Action::OpenProjectModal),
             "move_to_project" => Ok(Action::MoveToProject),
             "yank" => Ok(Action::Yank),
+            "copy_log_path" => Ok(Action::CopyLogPath),
             "cycle_priority" => Ok(Action::CyclePriority),
             "sort_by_priority" => Ok(Action::SortByPriority),
             "edit_cancel" => Ok(Action::EditCancel),
@@ -642,6 +645,7 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("<C-p>".to_string(), "open_project_modal".to_string());
     m.insert("m".to_string(), "move_to_project".to_string());
     m.insert("y".to_string(), "yank".to_string());
+    m.insert("L".to_string(), "copy_log_path".to_string());
     m.insert("s".to_string(), "sort_by_priority".to_string());
 
     m

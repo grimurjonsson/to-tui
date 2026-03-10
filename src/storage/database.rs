@@ -745,6 +745,7 @@ pub fn sync_projects_from_todos() -> Result<usize> {
 mod tests {
     use super::*;
     use crate::todo::{TodoItem, TodoList, TodoState};
+    use serial_test::serial;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -1377,6 +1378,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_cleanup_orphaned_metadata() {
         // Set up test environment with full database schema
         let temp_dir = TempDir::new().unwrap();
@@ -1421,6 +1423,7 @@ mod tests {
     /// Fix: Use UPSERT instead of DELETE+INSERT. On undo, the soft-deleted row
     /// is UPDATED (clearing deleted_at) rather than causing a conflict.
     #[test]
+    #[serial]
     fn test_undo_after_soft_delete_uses_update_not_insert() {
         // Set up test environment with full database schema
         let temp_dir = TempDir::new().unwrap();
@@ -1494,6 +1497,7 @@ mod tests {
 
     /// Test that soft-deleted items not being restored stay soft-deleted (audit trail)
     #[test]
+    #[serial]
     fn test_soft_deleted_items_preserved_when_not_restored() {
         let temp_dir = TempDir::new().unwrap();
         let to_tui_dir = temp_dir.path().join(".to-tui");

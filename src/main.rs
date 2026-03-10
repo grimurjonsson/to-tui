@@ -133,8 +133,23 @@ fn init_file_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
         return None;
     }
 
-    // Set up file appender (rolling daily)
-    let file_appender = tracing_appender::rolling::daily(&logs_dir, "totui.log");
+    // Roll previous log file if it's from a different day
+    let log_file_path = logs_dir.join("totui.log");
+    if log_file_path.exists() {
+        if let Ok(metadata) = fs::metadata(&log_file_path) {
+            if let Ok(modified) = metadata.modified() {
+                let modified_date = chrono::DateTime::<Local>::from(modified).format("%Y-%m-%d").to_string();
+                let today = Local::now().format("%Y-%m-%d").to_string();
+                if modified_date != today {
+                    let rolled_name = logs_dir.join(format!("totui.log.{}", modified_date));
+                    let _ = fs::rename(&log_file_path, rolled_name);
+                }
+            }
+        }
+    }
+
+    // Write to a stable totui.log file (never-rolling appender)
+    let file_appender = tracing_appender::rolling::never(&logs_dir, "totui.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // Initialize subscriber with file output
