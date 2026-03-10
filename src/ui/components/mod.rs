@@ -668,28 +668,51 @@ fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
     let area = centered_rect(60, 50, f.area());
 
     let date_desc = format_date_description(pending.source_date);
-    let title = format!(
-        " Rollover {} incomplete item(s) from {} ",
-        pending.items.len(),
-        date_desc
-    );
+    let today_desc = Local::now().date_naive().format("%B %d, %Y").to_string();
+    let item_count = pending.items.len();
+    let title = format!(" Rollover ({} items) ", item_count);
 
-    // Build list items from pending rollover
-    let list_items: Vec<ListItem> = pending
-        .items
-        .iter()
-        .map(|item| {
-            let indent = "  ".repeat(item.indent_level);
-            let state_char = item.state.to_char();
-            let line = format!("{}[{}] {}", indent, state_char, item.content);
-            ListItem::new(Line::from(Span::styled(
-                line,
-                Style::default().fg(state.theme.foreground),
-            )))
-        })
-        .collect();
+    // Build content: description header + item list
+    let mut lines: Vec<ListItem> = Vec::new();
 
-    let list = List::new(list_items)
+    // Description of what rollover does
+    let desc_style = Style::default().fg(state.theme.foreground);
+    lines.push(ListItem::new(Line::from(Span::styled(
+        format!(
+            "Move {} incomplete item{} from {} to today ({}).",
+            item_count,
+            if item_count == 1 { "" } else { "s" },
+            date_desc,
+            today_desc,
+        ),
+        desc_style,
+    ))));
+    lines.push(ListItem::new(Line::from(Span::styled(
+        format!("Old items from {} will be archived.", date_desc),
+        Style::default().fg(Color::DarkGray),
+    ))));
+    lines.push(ListItem::new(Line::from("")));
+
+    // Section header
+    lines.push(ListItem::new(Line::from(Span::styled(
+        "Items to rollover:",
+        Style::default()
+            .fg(state.theme.foreground)
+            .add_modifier(Modifier::BOLD),
+    ))));
+
+    // Item list
+    for item in &pending.items {
+        let indent = "  ".repeat(item.indent_level);
+        let state_char = item.state.to_char();
+        let line = format!("  {}[{}] {}", indent, state_char, item.content);
+        lines.push(ListItem::new(Line::from(Span::styled(
+            line,
+            Style::default().fg(state.theme.foreground),
+        ))));
+    }
+
+    let list = List::new(lines)
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -710,9 +733,19 @@ fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
     };
 
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled("[Y]", Style::default().fg(ratatui::style::Color::Green).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[Y]",
+            Style::default()
+                .fg(ratatui::style::Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("es - Rollover now    "),
-        Span::styled("[L]", Style::default().fg(ratatui::style::Color::Yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            "[L]",
+            Style::default()
+                .fg(ratatui::style::Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::raw("ater - Dismiss (press R anytime to reopen)"),
     ]));
 
