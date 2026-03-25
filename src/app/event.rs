@@ -31,7 +31,7 @@ use totui_plugin_interface::{
 };
 
 /// Total number of lines in the help content (must match render_help_overlay)
-const HELP_TOTAL_LINES: u16 = 57;
+const HELP_TOTAL_LINES: u16 = 58;
 const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
@@ -114,6 +114,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
         Mode::UpgradePrompt => handle_upgrade_prompt_mode(key, state)?,
         Mode::ProjectSelect => handle_project_select_mode(key, state)?,
         Mode::MoveToProject => handle_move_to_project_mode(key, state)?,
+        Mode::EditDescription => handle_edit_description_mode(key, state)?,
     }
     Ok(())
 }
@@ -572,6 +573,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             | Action::CyclePriority
             | Action::SortByPriority
             | Action::MoveToProject
+            | Action::EditDescription
     );
 
     if state.is_readonly() && dominated_by_readonly {
@@ -635,6 +637,23 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::EnterEditMode => {
             enter_edit_mode(state);
+        }
+        Action::EditDescription => {
+            if state.selected_item().is_some() {
+                let description = state.selected_item().and_then(|item| item.description.clone());
+                let desc_buffer: Vec<String> = match &description {
+                    Some(desc) => desc.split('\n').map(String::from).collect(),
+                    None => vec![String::new()],
+                };
+                let last_line = desc_buffer.last().map_or(0, |l| l.len());
+                let desc_cursor_row = desc_buffer.len() - 1;
+                state.desc_original = description;
+                state.desc_buffer = desc_buffer;
+                state.desc_cursor_row = desc_cursor_row;
+                state.desc_cursor_col = last_line;
+                state.desc_scroll_offset = 0;
+                state.mode = Mode::EditDescription;
+            }
         }
         Action::Indent => {
             if let Some((start, end)) = state.get_selection_range() {
@@ -2740,6 +2759,138 @@ fn handle_move_to_project_mode(key: KeyEvent, state: &mut AppState) -> Result<()
                 }
             }
         }
+    }
+    Ok(())
+}
+
+fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    match key.code {
+        KeyCode::Esc => {
+            // Save description
+            state.save_undo();
+            let joined = state.desc_buffer.join("\n");
+            let description = if joined.trim().is_empty() {
+                None
+            } else {
+                Some(joined)
+            };
+            if let Some(item) = state.selected_item_mut() {
+                item.description = description;
+                item.modified_at = chrono::Utc::now();
+                item.collapsed = false;
+            }
+            state.unsaved_changes = true;
+            save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+            state.unsaved_changes = false;
+            state.last_save_time = Some(std::time::Instant::now());
+            state.mode = Mode::Navigate;
+        }
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Cancel — restore original
+            let original = state.desc_original.take();
+            if let Some(item) = state.selected_item_mut() {
+                item.description = original;
+            }
+            state.mode = Mode::Navigate;
+        }
+        KeyCode::Enter => {
+            // Split line at cursor
+            let current_line = state.desc_buffer[state.desc_cursor_row].clone();
+            let (before, after) = current_line.split_at(state.desc_cursor_col);
+            state.desc_buffer[state.desc_cursor_row] = before.to_string();
+            state.desc_buffer.insert(state.desc_cursor_row + 1, after.to_string());
+            state.desc_cursor_row += 1;
+            state.desc_cursor_col = 0;
+        }
+        KeyCode::Backspace => {
+            if state.desc_cursor_col > 0 {
+                let prev = prev_char_boundary(
+                    &state.desc_buffer[state.desc_cursor_row],
+                    state.desc_cursor_col,
+                );
+                state.desc_buffer[state.desc_cursor_row]
+                    .drain(prev..state.desc_cursor_col);
+                state.desc_cursor_col = prev;
+            } else if state.desc_cursor_row > 0 {
+                // Merge with previous line
+                let current_line = state.desc_buffer.remove(state.desc_cursor_row);
+                state.desc_cursor_row -= 1;
+                state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
+                state.desc_buffer[state.desc_cursor_row].push_str(&current_line);
+            }
+        }
+        KeyCode::Delete => {
+            let line_len = state.desc_buffer[state.desc_cursor_row].len();
+            if state.desc_cursor_col < line_len {
+                let next = next_char_boundary(
+                    &state.desc_buffer[state.desc_cursor_row],
+                    state.desc_cursor_col,
+                );
+                state.desc_buffer[state.desc_cursor_row]
+                    .drain(state.desc_cursor_col..next);
+            } else if state.desc_cursor_row + 1 < state.desc_buffer.len() {
+                // Merge next line into current
+                let next_line = state.desc_buffer.remove(state.desc_cursor_row + 1);
+                state.desc_buffer[state.desc_cursor_row].push_str(&next_line);
+            }
+        }
+        KeyCode::Left => {
+            if state.desc_cursor_col > 0 {
+                state.desc_cursor_col = prev_char_boundary(
+                    &state.desc_buffer[state.desc_cursor_row],
+                    state.desc_cursor_col,
+                );
+            }
+        }
+        KeyCode::Right => {
+            let line_len = state.desc_buffer[state.desc_cursor_row].len();
+            if state.desc_cursor_col < line_len {
+                state.desc_cursor_col = next_char_boundary(
+                    &state.desc_buffer[state.desc_cursor_row],
+                    state.desc_cursor_col,
+                );
+            }
+        }
+        KeyCode::Up => {
+            if state.desc_cursor_row > 0 {
+                state.desc_cursor_row -= 1;
+                let line_len = state.desc_buffer[state.desc_cursor_row].len();
+                state.desc_cursor_col = state.desc_cursor_col.min(line_len);
+                // Snap to valid char boundary
+                while state.desc_cursor_col > 0
+                    && !state.desc_buffer[state.desc_cursor_row]
+                        .is_char_boundary(state.desc_cursor_col)
+                {
+                    state.desc_cursor_col -= 1;
+                }
+            }
+        }
+        KeyCode::Down => {
+            if state.desc_cursor_row + 1 < state.desc_buffer.len() {
+                state.desc_cursor_row += 1;
+                let line_len = state.desc_buffer[state.desc_cursor_row].len();
+                state.desc_cursor_col = state.desc_cursor_col.min(line_len);
+                // Snap to valid char boundary
+                while state.desc_cursor_col > 0
+                    && !state.desc_buffer[state.desc_cursor_row]
+                        .is_char_boundary(state.desc_cursor_col)
+                {
+                    state.desc_cursor_col -= 1;
+                }
+            }
+        }
+        KeyCode::Home => {
+            state.desc_cursor_col = 0;
+        }
+        KeyCode::End => {
+            state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
+        }
+        KeyCode::Char(c) => {
+            state.desc_buffer[state.desc_cursor_row]
+                .insert(state.desc_cursor_col, c);
+            state.desc_cursor_col += c.len_utf8();
+        }
+        _ => {}
     }
     Ok(())
 }

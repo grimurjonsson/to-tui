@@ -26,6 +26,7 @@ pub enum Action {
 
     // Editing
     EnterEditMode,
+    EditDescription,
 
     // Indentation (single item)
     Indent,
@@ -103,6 +104,7 @@ impl fmt::Display for Action {
             Action::NewItemSameLevel => "new_item_same_level",
             Action::InsertItemAbove => "insert_item_above",
             Action::EnterEditMode => "enter_edit_mode",
+            Action::EditDescription => "edit_description",
             Action::Indent => "indent",
             Action::Outdent => "outdent",
             Action::IndentWithChildren => "indent_with_children",
@@ -159,6 +161,7 @@ impl FromStr for Action {
             "new_item_same_level" => Ok(Action::NewItemSameLevel),
             "insert_item_above" => Ok(Action::InsertItemAbove),
             "enter_edit_mode" => Ok(Action::EnterEditMode),
+            "edit_description" => Ok(Action::EditDescription),
             "indent" => Ok(Action::Indent),
             "outdent" => Ok(Action::Outdent),
             "indent_with_children" => Ok(Action::IndentWithChildren),
@@ -615,6 +618,7 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("<S-Enter>".to_string(), "insert_item_above".to_string());
     m.insert("<C-j>".to_string(), "insert_item_above".to_string());
     m.insert("i".to_string(), "enter_edit_mode".to_string());
+    m.insert("e".to_string(), "edit_description".to_string());
     m.insert("<Tab>".to_string(), "indent".to_string());
     m.insert("<BackTab>".to_string(), "outdent".to_string());
     m.insert(

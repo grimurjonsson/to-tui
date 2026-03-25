@@ -1,3 +1,4 @@
+pub mod description_modal;
 pub mod plugin_modal;
 pub mod status_bar;
 pub mod todo_list;
@@ -69,6 +70,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
     if state.mode == Mode::MoveToProject {
         render_move_to_project_modal(f, state);
     }
+
+    if state.mode == Mode::EditDescription {
+        description_modal::render_description_modal(f, state);
+    }
 }
 
 #[allow(clippy::vec_init_then_push)]
@@ -139,6 +144,10 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
     lines.push(Line::from(vec![
         Span::styled("    i               ", key_style),
         Span::styled("Edit current item", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("    e               ", key_style),
+        Span::styled("Edit description", desc_style),
     ]));
     lines.push(Line::from(vec![
         Span::styled("    dd              ", key_style),
@@ -400,7 +409,7 @@ fn render_help_overlay(f: &mut Frame, state: &AppState) {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
