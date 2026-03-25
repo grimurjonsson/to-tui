@@ -237,6 +237,16 @@ pub struct AppState {
     pub hook_dispatcher: HookDispatcher,
     /// True when applying hook-returned commands (prevents cascade).
     in_hook_apply: bool,
+    /// Description editor: one entry per line
+    pub desc_buffer: Vec<String>,
+    /// Description editor: current line index
+    pub desc_cursor_row: usize,
+    /// Description editor: byte offset within current line (valid char boundary)
+    pub desc_cursor_col: usize,
+    /// Description editor: original description for cancel recovery
+    pub desc_original: Option<String>,
+    /// Description editor: vertical scroll offset
+    pub desc_scroll_offset: usize,
 }
 
 impl AppState {
@@ -320,6 +330,11 @@ impl AppState {
             pending_plugin_errors: plugin_errors,
             plugin_loader,
             plugin_action_registry,
+            desc_buffer: vec![String::new()],
+            desc_cursor_row: 0,
+            desc_cursor_col: 0,
+            desc_original: None,
+            desc_scroll_offset: 0,
             hook_dispatcher: HookDispatcher::new(),
             in_hook_apply: false,
         };

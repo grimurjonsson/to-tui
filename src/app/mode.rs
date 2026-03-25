@@ -12,6 +12,7 @@ pub enum Mode {
     UpgradePrompt,
     ProjectSelect,
     MoveToProject,
+    EditDescription,
 }
 
 impl fmt::Display for Mode {
@@ -26,6 +27,7 @@ impl fmt::Display for Mode {
             Mode::UpgradePrompt => write!(f, "UPGRADE"),
             Mode::ProjectSelect => write!(f, "PROJECT"),
             Mode::MoveToProject => write!(f, "MOVE"),
+            Mode::EditDescription => write!(f, "DESCRIBE"),
         }
     }
 }
