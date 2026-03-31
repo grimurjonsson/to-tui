@@ -207,8 +207,11 @@ fn check_latest_app_version() -> Option<AppUpdateInfo> {
 }
 
 /// Compares two semver version strings, returns true if `latest` is newer than `current`
+/// Handles pre-release suffixes like "0.5.11-dev-abc123" by stripping them before comparison.
 fn is_version_newer(latest: &str, current: &str) -> bool {
     let parse_version = |v: &str| -> Option<(u32, u32, u32)> {
+        // Strip pre-release suffix (e.g., "0.5.11-dev-abc" -> "0.5.11")
+        let v = v.split('-').next().unwrap_or(v);
         let parts: Vec<&str> = v.split('.').collect();
         if parts.len() >= 3 {
             Some((
@@ -245,5 +248,11 @@ mod tests {
         assert!(!is_version_newer("0.9.0", "0.9.0"));
         assert!(!is_version_newer("0.8.0", "0.9.0"));
         assert!(!is_version_newer("0.9.0", "1.0.0"));
+
+        // Pre-release suffixes should be stripped
+        assert!(is_version_newer("0.5.13", "0.5.11-dev-abc123"));
+        assert!(is_version_newer("0.5.12", "0.5.11-dev-abc123"));
+        assert!(!is_version_newer("0.5.11", "0.5.11-dev-abc123"));
+        assert!(is_version_newer("0.5.13-rc1", "0.5.11-dev-abc123"));
     }
 }
