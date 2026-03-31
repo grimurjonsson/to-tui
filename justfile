@@ -450,8 +450,17 @@ generate-changelog-test:
     set -euo pipefail
 
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-    LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
     TODAY=$(date +%Y-%m-%d)
+
+    # Find the last tag that has real (non-release) commits before it
+    LAST_TAG=""
+    for TAG in $(git tag --sort=-v:refname); do
+        COMMITS=$(git log "$TAG"..HEAD --pretty=format:"%s" --no-merges | grep -v "^Release v" || true)
+        if [ -n "$COMMITS" ]; then
+            LAST_TAG="$TAG"
+            break
+        fi
+    done
 
     echo "=== Changelog Test ==="
     echo "Current version: $VERSION"
@@ -545,8 +554,19 @@ _release bump msg="":
     # Update CHANGELOG.md with git changes since last tag
     CHANGELOG_FILE="CHANGELOG.md"
     if [ -f "$CHANGELOG_FILE" ]; then
-        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
         TODAY=$(date +%Y-%m-%d)
+
+        # Find the last tag that has real (non-release) commits before it.
+        # This handles back-to-back releases where the previous tag only has
+        # "Release v..." commits between it and HEAD.
+        LAST_TAG=""
+        for TAG in $(git tag --sort=-v:refname); do
+            COMMITS=$(git log "$TAG"..HEAD --pretty=format:"%s" --no-merges | grep -v "^Release v" || true)
+            if [ -n "$COMMITS" ]; then
+                LAST_TAG="$TAG"
+                break
+            fi
+        done
 
         # Get commit messages since last tag (or all if no tag)
         if [ -n "$LAST_TAG" ]; then
