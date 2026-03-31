@@ -5,6 +5,11 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.15] - 2026-03-31
+
+
+Fixed a bug in the install script.
+
 ## [0.5.14] - 2026-03-31
 ### Fixed
 - Version check now handles pre-release suffixes (e.g., dev builds now correctly detect newer releases)
