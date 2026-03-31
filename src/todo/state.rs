@@ -53,7 +53,7 @@ impl TodoState {
     }
 
     pub fn is_complete(&self) -> bool {
-        matches!(self, Self::Checked)
+        matches!(self, Self::Checked | Self::Cancelled)
     }
 
     /// Parse a state from a string representation.
@@ -121,7 +121,7 @@ mod tests {
         assert!(!TodoState::Question.is_complete());
         assert!(!TodoState::Exclamation.is_complete());
         assert!(!TodoState::InProgress.is_complete());
-        assert!(!TodoState::Cancelled.is_complete());
+        assert!(TodoState::Cancelled.is_complete());
     }
 
     #[test]

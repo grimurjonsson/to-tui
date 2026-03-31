@@ -8,6 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
+use unicode_width::UnicodeWidthChar;
 
 /// Truncate a string to at most `max_chars` characters, safe for multi-byte UTF-8.
 fn truncate_chars(s: &str, max_chars: usize) -> String {
@@ -17,6 +18,38 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     } else {
         truncated
     }
+}
+
+/// A visual line produced by wrapping a buffer line at the modal width.
+struct VisualLine {
+    buf_row: usize,
+    byte_start: usize,
+    byte_end: usize,
+}
+
+/// Wrap a single line into byte-range segments that each fit within `max_width` display columns.
+fn wrap_line(line: &str, max_width: usize) -> Vec<(usize, usize)> {
+    if max_width == 0 || line.is_empty() {
+        return vec![(0, line.len())];
+    }
+
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    let mut current_width = 0;
+
+    for (idx, ch) in line.char_indices() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width + ch_width > max_width && start != idx {
+            ranges.push((start, idx));
+            start = idx;
+            current_width = ch_width;
+        } else {
+            current_width += ch_width;
+        }
+    }
+
+    ranges.push((start, line.len()));
+    ranges
 }
 
 pub fn render_description_modal(f: &mut Frame, state: &mut AppState) {
@@ -59,17 +92,41 @@ pub fn render_description_modal(f: &mut Frame, state: &mut AppState) {
     let inner_area = block.inner(modal_area);
     f.render_widget(block, modal_area);
 
-    // Calculate visible lines based on inner area height
+    let max_width = inner_area.width as usize;
     let visible_lines = inner_area.height as usize;
 
-    // Adjust scroll offset to keep cursor visible
-    if state.desc_cursor_row < state.desc_scroll_offset {
-        state.desc_scroll_offset = state.desc_cursor_row;
-    } else if state.desc_cursor_row >= state.desc_scroll_offset + visible_lines {
-        state.desc_scroll_offset = state.desc_cursor_row - visible_lines + 1;
+    // Build visual lines by wrapping each buffer line at the modal width
+    let mut visual_lines: Vec<VisualLine> = Vec::new();
+    let mut cursor_visual_row = 0;
+
+    for (buf_row, line_text) in state.desc_buffer.iter().enumerate() {
+        let ranges = wrap_line(line_text, max_width);
+        for &(byte_start, byte_end) in &ranges {
+            if buf_row == state.desc_cursor_row {
+                let cursor_col = state.desc_cursor_col.min(line_text.len());
+                let is_last = byte_end == line_text.len();
+                if cursor_col >= byte_start
+                    && (cursor_col < byte_end || (is_last && cursor_col == byte_end))
+                {
+                    cursor_visual_row = visual_lines.len();
+                }
+            }
+            visual_lines.push(VisualLine {
+                buf_row,
+                byte_start,
+                byte_end,
+            });
+        }
     }
 
-    // Build lines to render with block cursor (matching todo_list.rs pattern)
+    // Adjust scroll offset to keep cursor visible (in visual-line coordinates)
+    if cursor_visual_row < state.desc_scroll_offset {
+        state.desc_scroll_offset = cursor_visual_row;
+    } else if cursor_visual_row >= state.desc_scroll_offset + visible_lines {
+        state.desc_scroll_offset = cursor_visual_row - visible_lines + 1;
+    }
+
+    // Build styled lines to render with block cursor
     let cursor_style = Style::default()
         .bg(Color::Yellow)
         .fg(Color::Black)
@@ -80,27 +137,27 @@ pub fn render_description_modal(f: &mut Frame, state: &mut AppState) {
     let text_style = Style::default().fg(state.theme.foreground);
     let active_line_style = Style::default().fg(state.theme.foreground);
 
-    let lines: Vec<Line> = state
-        .desc_buffer
+    let lines: Vec<Line> = visual_lines
         .iter()
         .enumerate()
         .skip(state.desc_scroll_offset)
         .take(visible_lines)
-        .map(|(row_idx, line_text)| {
-            if row_idx == state.desc_cursor_row {
-                // Render cursor line with block cursor
-                let before_cursor = &line_text[..state.desc_cursor_col.min(line_text.len())];
-                let after_cursor = &line_text[state.desc_cursor_col.min(line_text.len())..];
+        .map(|(vis_row, vline)| {
+            let sub_text = &state.desc_buffer[vline.buf_row][vline.byte_start..vline.byte_end];
 
-                let mut spans: Vec<Span<'static>> = vec![
-                    Span::styled(before_cursor.to_string(), active_line_style),
-                ];
+            if vis_row == cursor_visual_row {
+                let cursor_col =
+                    state.desc_cursor_col.min(state.desc_buffer[vline.buf_row].len());
+                let rel_cursor = cursor_col.saturating_sub(vline.byte_start);
+                let before_cursor = &sub_text[..rel_cursor.min(sub_text.len())];
+                let after_cursor = &sub_text[rel_cursor.min(sub_text.len())..];
+
+                let mut spans: Vec<Span<'static>> =
+                    vec![Span::styled(before_cursor.to_string(), active_line_style)];
 
                 if after_cursor.is_empty() {
-                    // Cursor at end of line: show block character
                     spans.push(Span::styled("\u{2588}", block_cursor_style));
                 } else {
-                    // Cursor on a character: highlight it
                     spans.push(Span::styled(
                         first_char_as_str(after_cursor).to_string(),
                         cursor_style,
@@ -113,7 +170,7 @@ pub fn render_description_modal(f: &mut Frame, state: &mut AppState) {
 
                 Line::from(spans)
             } else {
-                Line::from(Span::styled(line_text.clone(), text_style))
+                Line::from(Span::styled(sub_text.to_string(), text_style))
             }
         })
         .collect();
