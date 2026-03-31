@@ -6,26 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [0.5.14] - 2026-03-31
+### Fixed
+- Version check now handles pre-release suffixes (e.g., dev builds now correctly detect newer releases)
+
 ## [0.5.13] - 2026-03-31
+### Fixed
+- Cancelled `[-]` todos no longer roll over to the next day
+- Description modal now wraps long lines and scrolls correctly with unicode text
+
 ## [0.5.12] - 2026-03-31
+Version bump only, no code changes.
+
 ## [0.5.11] - 2026-03-25
 ### Added
-- add description editor modal with 'e' keybinding
+- Description editor modal with 'e' keybinding
 
 ## [0.5.10] - 2026-03-10
-Add `L` keybinding to copy the log file path to clipboard.
-
 ### Added
-- quick-7): add CopyLogPath action variant and L keybinding
+- `L` keybinding to copy the log file path to clipboard
 
 ## [0.5.9] - 2026-03-10
-Rollover modal has clearer messaging, the `show` command now accepts a `--project` flag, and the active project name is displayed in the TUI title bar.
-
 ### Added
-- Add --project flag to show command
+- `--project` flag for the `show` command
+- Active project name displayed in TUI title bar
+
+### Fixed
+- Rollover modal has clearer messaging
 
 ## [0.5.8] - 2026-03-06
+### Fixed
+- Version check interval reduced from 10 minutes to 1 hour
+- Version checker now catches panics instead of crashing the background thread
+- Added debug logging for version check diagnostics
+
 ## [0.5.7] - 2026-02-20
+Version bump only, no code changes.
 ## [0.5.6] - 2026-02-20
 
 
@@ -78,6 +93,10 @@ Bumped plugin interface to 0.3.0 and improved status bar color contrast for bett
 - quick-001): improve status bar color contrast
 
 ## [0.5.1] - 2026-01-27
+### Fixed
+- Plugin marketplace UI improvements (marketplace name display, removed stale installing state)
+- Plugin manifest and loader reliability improvements
+
 ## [0.5.0] - 2026-01-27
 The v2.0 release introduces a plugin framework that allows external sources (like Jira) to generate todos, along with project support for organizing todos into separate workspaces.
 

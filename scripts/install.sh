@@ -69,7 +69,7 @@ echo ""
 # Get the latest release tag
 echo -e "${DIM}Fetching latest release...${RESET}"
 API_RESPONSE=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest")
-LATEST_TAG=$(echo "$API_RESPONSE" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' || true)
+LATEST_TAG=$(echo "$API_RESPONSE" | grep -oE '"tag_name":\s*"[^"]+"' | head -1 | sed -E 's/.*"([^"]+)"/\1/' || true)
 
 if [ -z "$LATEST_TAG" ]; then
     echo -e "${RED}${BOLD}✗${RESET} Could not fetch latest release"
