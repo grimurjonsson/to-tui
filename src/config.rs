@@ -52,6 +52,19 @@ impl Default for MarketplacesConfig {
     }
 }
 
+/// User preference for what happens at midnight crossover.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoRolloverPref {
+    /// Show the rollover modal and ask the user (default).
+    #[default]
+    Ask,
+    /// Automatically rollover incomplete items at midnight.
+    AutoYes,
+    /// Never auto-rollover and never prompt; user can still trigger manually with R.
+    AutoNo,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_theme")]
@@ -74,6 +87,9 @@ pub struct Config {
 
     #[serde(default)]
     pub marketplaces: MarketplacesConfig,
+
+    #[serde(default)]
+    pub auto_rollover: AutoRolloverPref,
 }
 
 fn default_theme() -> String {
@@ -94,6 +110,7 @@ impl Default for Config {
             last_used_project: None,
             plugins: PluginsConfig::default(),
             marketplaces: MarketplacesConfig::default(),
+            auto_rollover: AutoRolloverPref::default(),
         }
     }
 }
@@ -212,5 +229,42 @@ mod tests {
 
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.marketplaces.default, "grimurjonsson/to-tui-plugins");
+    }
+
+    #[test]
+    fn test_auto_rollover_default_is_ask() {
+        let config = Config::default();
+        assert_eq!(config.auto_rollover, AutoRolloverPref::Ask);
+    }
+
+    #[test]
+    fn test_auto_rollover_serialises_snake_case() {
+        let mut config = Config::default();
+        config.auto_rollover = AutoRolloverPref::AutoYes;
+        let toml_str = toml::to_string(&config).unwrap();
+        assert!(
+            toml_str.contains("auto_rollover = \"auto_yes\""),
+            "expected snake_case serialisation, got: {toml_str}"
+        );
+    }
+
+    #[test]
+    fn test_auto_rollover_deserialises_all_variants() {
+        for (input, expected) in [
+            ("ask", AutoRolloverPref::Ask),
+            ("auto_yes", AutoRolloverPref::AutoYes),
+            ("auto_no", AutoRolloverPref::AutoNo),
+        ] {
+            let toml_str = format!("auto_rollover = \"{input}\"\n");
+            let config: Config = toml::from_str(&toml_str).unwrap();
+            assert_eq!(config.auto_rollover, expected, "input was {input}");
+        }
+    }
+
+    #[test]
+    fn test_auto_rollover_missing_field_defaults_to_ask() {
+        let toml_str = "theme = \"dark\"\n";
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.auto_rollover, AutoRolloverPref::Ask);
     }
 }

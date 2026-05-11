@@ -305,6 +305,7 @@ fn main() -> Result<()> {
                 plugin_loader,
                 plugin_errors,
                 plugin_action_registry,
+                config.auto_rollover,
             );
 
             // Check for rollover candidates and show modal on startup if found

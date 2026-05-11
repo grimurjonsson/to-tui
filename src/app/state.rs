@@ -116,6 +116,8 @@ pub enum PluginSubState {
 pub struct PendingRollover {
     pub source_date: NaiveDate,
     pub items: Vec<TodoItem>,
+    /// Whether the "Don't ask again" checkbox is currently ticked in the modal.
+    pub remember_choice: bool,
 }
 
 /// Project modal sub-state
@@ -182,6 +184,8 @@ pub struct AppState {
     pub plugin_result_source: Option<PluginResultSource>,
     pub spinner_frame: usize,
     pub pending_rollover: Option<PendingRollover>,
+    /// User preference for midnight rollover behaviour (Ask / AutoYes / AutoNo).
+    pub auto_rollover_pref: crate::config::AutoRolloverPref,
     pub list_state: ListState,
     /// Terminal width, updated on each render for click calculations
     pub terminal_width: u16,
@@ -262,6 +266,7 @@ impl AppState {
         plugin_loader: PluginLoader,
         plugin_errors: Vec<PluginLoadError>,
         plugin_action_registry: PluginActionRegistry,
+        auto_rollover_pref: crate::config::AutoRolloverPref,
     ) -> Self {
         let today = Local::now().date_naive();
         let viewing_date = todo_list.date;
@@ -304,6 +309,7 @@ impl AppState {
             plugin_result_source: None,
             spinner_frame: 0,
             pending_rollover: None,
+            auto_rollover_pref,
             list_state: ListState::default(),
             terminal_width: 80,  // Default, updated on first render
             terminal_height: 24, // Default, updated on first render
@@ -1724,7 +1730,11 @@ impl AppState {
 
     /// Open the rollover modal with the given pending items
     pub fn open_rollover_modal(&mut self, source_date: NaiveDate, items: Vec<TodoItem>) {
-        self.pending_rollover = Some(PendingRollover { source_date, items });
+        self.pending_rollover = Some(PendingRollover {
+            source_date,
+            items,
+            remember_choice: false,
+        });
         self.mode = Mode::Rollover;
     }
 
@@ -1737,6 +1747,97 @@ impl AppState {
     /// Check if there's pending rollover data available
     pub fn has_pending_rollover(&self) -> bool {
         self.pending_rollover.is_some()
+    }
+
+    /// Called every UI tick. If the wall-clock day has rolled past the
+    /// currently loaded list and the user is idle, either open the rollover
+    /// modal or auto-execute, depending on `auto_rollover_pref`.
+    pub fn check_midnight_rollover(&mut self) {
+        // Cheap fast-path guards — this fires every 100ms.
+        if self.mode != Mode::Navigate {
+            return;
+        }
+        if self.pending_rollover.is_some() {
+            return;
+        }
+        if self.auto_rollover_pref == crate::config::AutoRolloverPref::AutoNo {
+            return;
+        }
+
+        let today = Local::now().date_naive();
+        if today <= self.todo_list.date {
+            return;
+        }
+
+        // Day has crossed. Find candidates for rollover.
+        let candidates = match crate::storage::rollover::find_rollover_candidates_for_project(
+            &self.current_project.name,
+        ) {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                // No incomplete items to roll over — just advance the view
+                // to today's (possibly empty) list so the user sees the new day.
+                if let Err(e) = self.silently_advance_to_today() {
+                    tracing::error!("Failed to advance view to today: {e}");
+                }
+                return;
+            }
+            Err(e) => {
+                tracing::error!("Midnight rollover candidate lookup failed: {e}");
+                return;
+            }
+        };
+
+        let (source_date, items) = candidates;
+        match self.auto_rollover_pref {
+            crate::config::AutoRolloverPref::AutoYes => {
+                self.execute_rollover_silently(source_date, items);
+            }
+            crate::config::AutoRolloverPref::Ask => {
+                self.open_rollover_modal(source_date, items);
+            }
+            crate::config::AutoRolloverPref::AutoNo => {
+                // Already returned above; included for exhaustiveness.
+            }
+        }
+    }
+
+    /// Execute rollover without showing the modal. Used by AutoYes path.
+    fn execute_rollover_silently(&mut self, source_date: NaiveDate, items: Vec<TodoItem>) {
+        let item_count = items.len();
+        match crate::storage::rollover::execute_rollover_for_project(
+            &self.current_project.name,
+            source_date,
+            items,
+        ) {
+            Ok(new_list) => {
+                self.todo_list = new_list;
+                self.cursor_position = 0;
+                self.set_status_message(format!(
+                    "Auto-rolled over {} item{} from {}",
+                    item_count,
+                    if item_count == 1 { "" } else { "s" },
+                    source_date.format("%B %d, %Y"),
+                ));
+            }
+            Err(e) => {
+                tracing::error!("Auto-rollover failed: {e}");
+                self.set_status_message(format!("Auto-rollover failed: {e}"));
+            }
+        }
+    }
+
+    /// Load today's list (creating it if absent) without showing a modal.
+    /// Used when no incomplete items exist to roll over.
+    fn silently_advance_to_today(&mut self) -> anyhow::Result<()> {
+        let today = Local::now().date_naive();
+        let new_list = crate::storage::file::load_todo_list_for_project(
+            &self.current_project.name,
+            today,
+        )?;
+        self.todo_list = new_list;
+        self.cursor_position = 0;
+        Ok(())
     }
 
     /// Open the project selection modal
@@ -2181,6 +2282,157 @@ fn extract_todo_content(s: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    fn make_test_state() -> AppState {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
+        )
+    }
+
+    fn make_test_state_for_date(date: chrono::NaiveDate) -> AppState {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+
+        AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
+        )
+    }
+
+    fn yesterday_state() -> AppState {
+        let yesterday = Local::now().date_naive() - chrono::Duration::days(1);
+        make_test_state_for_date(yesterday)
+    }
+
+    #[test]
+    fn test_check_midnight_noop_when_not_navigate_mode() {
+        let mut state = yesterday_state();
+        state.mode = Mode::Edit;
+        state.check_midnight_rollover();
+        assert!(
+            state.pending_rollover.is_none(),
+            "should not open modal in Edit mode"
+        );
+        assert_eq!(state.mode, Mode::Edit, "mode unchanged");
+    }
+
+    #[test]
+    fn test_check_midnight_noop_when_pending_rollover_already_set() {
+        use crate::todo::TodoItem;
+
+        let mut state = yesterday_state();
+        let source = chrono::NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+        state.pending_rollover = Some(PendingRollover {
+            source_date: source,
+            items: vec![TodoItem::new("X".to_string(), 0)],
+            remember_choice: false,
+        });
+        state.check_midnight_rollover();
+        // pending_rollover unchanged
+        assert_eq!(
+            state.pending_rollover.as_ref().unwrap().source_date,
+            source
+        );
+    }
+
+    #[test]
+    fn test_check_midnight_noop_when_pref_is_auto_no() {
+        let mut state = yesterday_state();
+        state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoNo;
+        let original_date = state.todo_list.date;
+        state.check_midnight_rollover();
+        assert!(state.pending_rollover.is_none());
+        assert_eq!(
+            state.todo_list.date, original_date,
+            "view should not advance"
+        );
+    }
+
+    #[test]
+    fn test_check_midnight_noop_when_already_today() {
+        let today = Local::now().date_naive();
+        let mut state = make_test_state_for_date(today);
+        state.check_midnight_rollover();
+        assert!(state.pending_rollover.is_none());
+    }
+
+    #[test]
+    fn test_check_midnight_auto_yes_does_not_open_modal() {
+        // No yesterday file exists on disk for the test project, so
+        // find_rollover_candidates_for_project returns Ok(None), which calls
+        // silently_advance_to_today. That call may fail if the dailies dir
+        // is missing — we tolerate the error and just verify no modal opens.
+        let mut state = yesterday_state();
+        state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoYes;
+        state.check_midnight_rollover();
+        assert!(
+            state.pending_rollover.is_none(),
+            "AutoYes must not open modal"
+        );
+    }
+
+    #[test]
+    fn test_app_state_stores_auto_rollover_pref() {
+        let mut state = make_test_state();
+        state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoYes;
+        assert_eq!(
+            state.auto_rollover_pref,
+            crate::config::AutoRolloverPref::AutoYes
+        );
+    }
+
+    #[test]
+    fn test_open_rollover_modal_starts_with_remember_off() {
+        use crate::todo::TodoItem;
+
+        let mut state = make_test_state();
+        let source = chrono::NaiveDate::from_ymd_opt(2026, 5, 5).unwrap();
+        let items = vec![TodoItem::new("Task".to_string(), 0)];
+        state.open_rollover_modal(source, items);
+        let pending = state.pending_rollover.as_ref().expect("pending");
+        assert!(!pending.remember_choice);
+        assert_eq!(state.mode, Mode::Rollover);
+    }
+
     #[test]
     fn test_session_dismiss_upgrade() {
         use crate::keybindings::KeybindingCache;
@@ -2207,6 +2459,7 @@ mod tests {
             PluginLoader::new(),
             vec![],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Simulate new version detected
@@ -2260,6 +2513,7 @@ mod tests {
             PluginLoader::new(),
             vec![],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Set cursor to parent (index 0)
@@ -2308,6 +2562,7 @@ mod tests {
             PluginLoader::new(),
             vec![],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Set cursor to parent
@@ -2360,6 +2615,7 @@ mod tests {
             PluginLoader::new(),
             vec![],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Set cursor to parent
@@ -2399,6 +2655,7 @@ mod tests {
             PluginLoader::new(),
             vec![],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Initially no errors and popup not shown
@@ -2447,6 +2704,7 @@ mod tests {
             PluginLoader::new(),
             vec![],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Should be able to get mutable reference to plugin loader
@@ -2490,6 +2748,7 @@ mod tests {
             PluginLoader::new(),
             vec![config_error],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Config errors passed during construction should appear in pending_plugin_errors
@@ -2536,6 +2795,7 @@ mod tests {
             PluginLoader::new(),
             vec![error],
             PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
         );
 
         // Popup should be shown initially
