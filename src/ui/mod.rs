@@ -220,6 +220,7 @@ async fn run_app(
             _ = tick_interval.tick() => {
                 // Don't log ticks - too noisy
                 state.tick_spinner();
+                state.check_midnight_rollover();
             }
         }
 

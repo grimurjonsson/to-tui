@@ -950,7 +950,19 @@ fn handle_confirm_delete_mode(key: KeyEvent, state: &mut AppState) -> Result<()>
 
 fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
     match key.code {
+        KeyCode::Tab | KeyCode::Char(' ') => {
+            // Toggle Don't ask again checkbox
+            if let Some(ref mut pending) = state.pending_rollover {
+                pending.remember_choice = !pending.remember_choice;
+            }
+        }
         KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            let remember = state
+                .pending_rollover
+                .as_ref()
+                .map(|p| p.remember_choice)
+                .unwrap_or(false);
+
             // Execute rollover
             if let Some(pending) = state.pending_rollover.take() {
                 let new_list = execute_rollover_for_project(&state.current_project.name, pending.source_date, pending.items)?;
@@ -959,14 +971,48 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
                 state.set_status_message("Rolled over incomplete items".to_string());
             }
             state.mode = Mode::Navigate;
+
+            if remember {
+                persist_auto_rollover_pref(state, crate::config::AutoRolloverPref::AutoYes);
+            }
         }
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Esc => {
+            let remember = state
+                .pending_rollover
+                .as_ref()
+                .map(|p| p.remember_choice)
+                .unwrap_or(false);
+
             // Close modal but keep pending_rollover for later
             state.close_rollover_modal();
+
+            if remember {
+                persist_auto_rollover_pref(state, crate::config::AutoRolloverPref::AutoNo);
+            }
         }
         _ => {}
     }
     Ok(())
+}
+
+/// Update the in-memory preference and persist it to ~/.config/to-tui/config.toml.
+/// On save failure, log and surface a status message but do not propagate the error
+/// — the user has already made their choice and should not be blocked.
+fn persist_auto_rollover_pref(state: &mut AppState, pref: crate::config::AutoRolloverPref) {
+    state.auto_rollover_pref = pref;
+    match Config::load() {
+        Ok(mut cfg) => {
+            cfg.auto_rollover = pref;
+            if let Err(e) = cfg.save() {
+                tracing::error!("Failed to save auto_rollover preference: {e}");
+                state.set_status_message("Couldn't save rollover preference".to_string());
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to load config for rollover save: {e}");
+            state.set_status_message("Couldn't save rollover preference".to_string());
+        }
+    }
 }
 
 fn handle_upgrade_prompt_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
@@ -2977,4 +3023,73 @@ fn execute_plugin_action(action: PluginAction, state: &mut AppState) -> Result<(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod rollover_tests {
+    use super::*;
+    use crate::app::AppState;
+    use crate::keybindings::KeybindingCache;
+    use crate::plugin::{PluginActionRegistry, PluginLoader};
+    use crate::project::Project;
+    use crate::todo::{TodoItem, TodoList};
+    use crate::ui::theme::Theme;
+    use chrono::{Local, NaiveDate};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn make_state_in_rollover_mode() -> AppState {
+        let date = Local::now().date_naive();
+        let todo_list = TodoList {
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+        let mut state = AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
+        );
+        state.open_rollover_modal(
+            NaiveDate::from_ymd_opt(2026, 5, 5).unwrap(),
+            vec![TodoItem::new("X".into(), 0)],
+        );
+        state
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn tab_toggles_remember_choice() {
+        let mut state = make_state_in_rollover_mode();
+        assert!(!state.pending_rollover.as_ref().unwrap().remember_choice);
+        handle_rollover_mode(key(KeyCode::Tab), &mut state).unwrap();
+        assert!(state.pending_rollover.as_ref().unwrap().remember_choice);
+        handle_rollover_mode(key(KeyCode::Tab), &mut state).unwrap();
+        assert!(!state.pending_rollover.as_ref().unwrap().remember_choice);
+    }
+
+    #[test]
+    fn space_also_toggles_remember_choice() {
+        let mut state = make_state_in_rollover_mode();
+        handle_rollover_mode(key(KeyCode::Char(' ')), &mut state).unwrap();
+        assert!(state.pending_rollover.as_ref().unwrap().remember_choice);
+    }
+
+    #[test]
+    fn n_without_remember_leaves_pref_unchanged() {
+        let mut state = make_state_in_rollover_mode();
+        let before = state.auto_rollover_pref;
+        handle_rollover_mode(key(KeyCode::Char('n')), &mut state).unwrap();
+        assert_eq!(state.auto_rollover_pref, before);
+    }
 }

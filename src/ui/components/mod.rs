@@ -725,6 +725,22 @@ fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
         ))));
     }
 
+    // Spacer + "Don't ask again" checkbox row
+    lines.push(ListItem::new(Line::from("")));
+    let checkbox_glyph = if pending.remember_choice { "[x]" } else { "[ ]" };
+    let checkbox_style = if pending.remember_choice {
+        Style::default()
+            .fg(state.theme.foreground)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(state.theme.foreground)
+    };
+    lines.push(ListItem::new(Line::from(vec![
+        Span::raw("  "),
+        Span::styled(checkbox_glyph, checkbox_style),
+        Span::raw(" Don't ask me again — remember this choice (Tab to toggle)"),
+    ])));
+
     let list = List::new(lines)
         .block(
             Block::default()
@@ -752,14 +768,28 @@ fn render_rollover_overlay(f: &mut Frame, state: &AppState) {
                 .fg(ratatui::style::Color::Green)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("es - Rollover now    "),
+        Span::raw("es    "),
         Span::styled(
-            "[L]",
+            "[N]",
             Style::default()
                 .fg(ratatui::style::Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("ater - Dismiss (press R anytime to reopen)"),
+        Span::raw("o    "),
+        Span::styled(
+            "[Tab]",
+            Style::default()
+                .fg(ratatui::style::Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" remember    "),
+        Span::styled(
+            "[Esc]",
+            Style::default()
+                .fg(ratatui::style::Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" cancel"),
     ]));
 
     f.render_widget(footer, footer_area);
