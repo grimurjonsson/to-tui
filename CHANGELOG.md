@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.17] - 2026-06-02
+The view now always advances to the new day at midnight (and on startup), even when you've set "don't ask again" for rollover. Your rollover preference now only controls whether incomplete items get copied over — not whether the displayed date follows the day change — and it's applied consistently whether the day flips while running or you open the app fresh.
+
+### Fixed
+- rollover): decouple day-switch from rollover preference
+
 ## [0.5.16] - 2026-05-11
 Added automatic midnight rollover with a tri-state preference (always auto-rollover, never auto-rollover, or ask each time) so incomplete todos carry forward to the new day without manual intervention.
 

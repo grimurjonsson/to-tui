@@ -1760,44 +1760,59 @@ impl AppState {
         if self.pending_rollover.is_some() {
             return;
         }
-        if self.auto_rollover_pref == crate::config::AutoRolloverPref::AutoNo {
-            return;
-        }
 
         let today = Local::now().date_naive();
         if today <= self.todo_list.date {
             return;
         }
 
-        // Day has crossed. Find candidates for rollover.
+        // The wall-clock day has crossed past the loaded list. Advancing the
+        // view to today must happen regardless of preference — only whether
+        // (and how) incomplete items roll over depends on `auto_rollover_pref`.
         let candidates = match crate::storage::rollover::find_rollover_candidates_for_project(
             &self.current_project.name,
         ) {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                // No incomplete items to roll over — just advance the view
-                // to today's (possibly empty) list so the user sees the new day.
-                if let Err(e) = self.silently_advance_to_today() {
-                    tracing::error!("Failed to advance view to today: {e}");
-                }
-                return;
-            }
+            Ok(c) => c,
             Err(e) => {
                 tracing::error!("Midnight rollover candidate lookup failed: {e}");
                 return;
             }
         };
 
-        let (source_date, items) = candidates;
-        match self.auto_rollover_pref {
-            crate::config::AutoRolloverPref::AutoYes => {
+        self.apply_rollover_preference(candidates);
+    }
+
+    /// Apply the configured rollover preference at a day boundary, given any
+    /// incomplete items found from a previous day.
+    ///
+    /// Shared by the midnight tick and by startup so the two entry points can
+    /// never drift apart. The view is always brought to today; only the
+    /// rollover action depends on `auto_rollover_pref`:
+    /// - `AutoYes` + candidates → roll over silently
+    /// - `Ask` + candidates → open the rollover modal (the view stays put until
+    ///   the user answers, then rollover advances it)
+    /// - `AutoNo`, or no candidates for any preference → advance the view to
+    ///   today without prompting or rolling over
+    pub fn apply_rollover_preference(
+        &mut self,
+        candidates: Option<(NaiveDate, Vec<TodoItem>)>,
+    ) {
+        match (self.auto_rollover_pref, candidates) {
+            (crate::config::AutoRolloverPref::AutoYes, Some((source_date, items))) => {
                 self.execute_rollover_silently(source_date, items);
             }
-            crate::config::AutoRolloverPref::Ask => {
+            (crate::config::AutoRolloverPref::Ask, Some((source_date, items))) => {
                 self.open_rollover_modal(source_date, items);
             }
-            crate::config::AutoRolloverPref::AutoNo => {
-                // Already returned above; included for exhaustiveness.
+            _ => {
+                // AutoNo (with or without candidates), or no candidates at all:
+                // never prompt, never roll over — just ensure the view shows
+                // today's (possibly empty) list so the user sees the new day.
+                if self.todo_list.date != Local::now().date_naive()
+                    && let Err(e) = self.silently_advance_to_today()
+                {
+                    tracing::error!("Failed to advance view to today: {e}");
+                }
             }
         }
     }
@@ -1811,8 +1826,12 @@ impl AppState {
             items,
         ) {
             Ok(new_list) => {
+                let new_date = new_list.date;
                 self.todo_list = new_list;
+                self.viewing_date = new_date;
+                self.today = new_date;
                 self.cursor_position = 0;
+                self.sync_list_state();
                 self.set_status_message(format!(
                     "Auto-rolled over {} item{} from {}",
                     item_count,
@@ -1836,7 +1855,10 @@ impl AppState {
             today,
         )?;
         self.todo_list = new_list;
+        self.viewing_date = today;
+        self.today = today;
         self.cursor_position = 0;
+        self.sync_list_state();
         Ok(())
     }
 
@@ -2375,15 +2397,25 @@ mod tests {
     }
 
     #[test]
-    fn test_check_midnight_noop_when_pref_is_auto_no() {
+    fn test_check_midnight_auto_no_advances_view_without_prompt() {
+        // AutoNo means "don't roll over and don't ask" — but the automatic
+        // day-switch must still happen. The view should advance to today;
+        // only the rollover prompt/auto-execute is suppressed.
         let mut state = yesterday_state();
         state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoNo;
-        let original_date = state.todo_list.date;
+        let today = Local::now().date_naive();
         state.check_midnight_rollover();
-        assert!(state.pending_rollover.is_none());
+        assert!(
+            state.pending_rollover.is_none(),
+            "AutoNo must not open the rollover modal"
+        );
         assert_eq!(
-            state.todo_list.date, original_date,
-            "view should not advance"
+            state.todo_list.date, today,
+            "AutoNo must still advance the view to today"
+        );
+        assert_eq!(
+            state.viewing_date, today,
+            "viewing_date must track the new day"
         );
     }
 
@@ -2407,6 +2439,43 @@ mod tests {
         assert!(
             state.pending_rollover.is_none(),
             "AutoYes must not open modal"
+        );
+    }
+
+    #[test]
+    fn test_apply_rollover_preference_ask_opens_modal() {
+        use crate::todo::TodoItem;
+
+        let mut state = yesterday_state();
+        state.auto_rollover_pref = crate::config::AutoRolloverPref::Ask;
+        let source = Local::now().date_naive() - chrono::Duration::days(1);
+        state.apply_rollover_preference(Some((source, vec![TodoItem::new("X".to_string(), 0)])));
+        assert_eq!(state.mode, Mode::Rollover, "Ask must open the modal");
+        assert_eq!(
+            state.pending_rollover.as_ref().unwrap().source_date,
+            source
+        );
+    }
+
+    #[test]
+    fn test_apply_rollover_preference_auto_no_advances_without_modal() {
+        use crate::todo::TodoItem;
+
+        // AutoNo with candidates present: the items must NOT roll over and the
+        // modal must NOT open, but the view still advances to today. This is the
+        // shared path used by both the midnight tick and startup.
+        let mut state = yesterday_state();
+        state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoNo;
+        let source = Local::now().date_naive() - chrono::Duration::days(1);
+        let today = Local::now().date_naive();
+        state.apply_rollover_preference(Some((source, vec![TodoItem::new("X".to_string(), 0)])));
+        assert!(
+            state.pending_rollover.is_none(),
+            "AutoNo must not open the modal even when candidates exist"
+        );
+        assert_eq!(
+            state.todo_list.date, today,
+            "AutoNo must still advance the view to today"
         );
     }
 

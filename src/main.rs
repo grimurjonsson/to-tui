@@ -308,9 +308,12 @@ fn main() -> Result<()> {
                 config.auto_rollover,
             );
 
-            // Check for rollover candidates and show modal on startup if found
-            if let Ok(Some((source_date, items))) = find_rollover_candidates_for_project(&state.current_project.name) {
-                state.open_rollover_modal(source_date, items);
+            // Apply the rollover preference for any incomplete items left over
+            // from a previous day. Honors auto_rollover (AutoYes rolls silently,
+            // Ask prompts, AutoNo does nothing) — same logic as the midnight tick.
+            match find_rollover_candidates_for_project(&state.current_project.name) {
+                Ok(candidates) => state.apply_rollover_preference(candidates),
+                Err(e) => tracing::error!("Startup rollover candidate lookup failed: {e}"),
             }
 
             // Fire OnLoad event to subscribed plugins
