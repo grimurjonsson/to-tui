@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.20] - 2026-07-13
+Added an interactive totui extension for Pi, letting you manage your todos directly from within Pi.
+
+### Added
+- pi): add interactive totui extension
+
 ## [0.5.19] - 2026-07-13
 Help screen now reflects your configured keybindings, documents modal controls, and scrolls long content cleanly in narrow terminals.
 
