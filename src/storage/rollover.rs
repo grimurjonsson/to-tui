@@ -1,43 +1,82 @@
-use super::database::archive_todos_for_date_and_project;
+use super::database::{active_todo_dates_before, archive_todos_for_date_and_project};
 use super::file::{
     file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project,
 };
 use crate::todo::TodoList;
-use crate::utils::paths::get_daily_file_path_for_project;
-use anyhow::Result;
+use crate::utils::paths::{get_dailies_dir_for_project, get_daily_file_path_for_project};
+use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate};
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use uuid::Uuid;
 
-/// Find incomplete items from the most recent previous day for a specific project.
+/// Find incomplete items from the newest prior list for a specific project.
 /// Returns (source_date, incomplete_items) if found, None otherwise.
 pub fn find_rollover_candidates_for_project(
     project_name: &str,
 ) -> Result<Option<(NaiveDate, Vec<crate::todo::TodoItem>)>> {
-    let today = Local::now().date_naive();
+    find_rollover_candidates_for_project_at(project_name, Local::now().date_naive())
+}
 
-    // Check if today's file already exists - no rollover needed
+fn find_rollover_candidates_for_project_at(
+    project_name: &str,
+    today: NaiveDate,
+) -> Result<Option<(NaiveDate, Vec<crate::todo::TodoItem>)>> {
     if file_exists_for_project(project_name, today)? {
         return Ok(None);
     }
 
-    // Look back up to 30 days for the most recent file with incomplete items
-    for days_back in 1..=30 {
-        if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back))
-            && file_exists_for_project(project_name, check_date)?
-        {
-            let list = load_todo_list_for_project(project_name, check_date)?;
-            let incomplete = list.get_incomplete_items();
+    let mut dates = daily_dates_for_project(project_name)?;
+    dates.extend(active_todo_dates_before(today, project_name)?);
 
-            if !incomplete.is_empty() {
-                return Ok(Some((check_date, incomplete)));
-            }
-            // Found a file but no incomplete items, stop searching
-            break;
+    let Some(source_date) = latest_prior_date(today, dates) else {
+        return Ok(None);
+    };
+
+    let list = load_todo_list_for_project(project_name, source_date)?;
+    let incomplete = list.get_incomplete_items();
+    if incomplete.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some((source_date, incomplete)))
+}
+
+fn latest_prior_date(
+    today: NaiveDate,
+    dates: impl IntoIterator<Item = NaiveDate>,
+) -> Option<NaiveDate> {
+    dates.into_iter().filter(|date| *date < today).max()
+}
+
+fn daily_dates_for_project(project_name: &str) -> Result<Vec<NaiveDate>> {
+    let dailies_dir = get_dailies_dir_for_project(project_name)?;
+    daily_dates_in_dir(&dailies_dir)
+}
+
+fn daily_dates_in_dir(dailies_dir: &Path) -> Result<Vec<NaiveDate>> {
+    if !dailies_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let entries = fs::read_dir(dailies_dir)
+        .with_context(|| format!("Failed to read dailies directory: {}", dailies_dir.display()))?;
+    let mut dates = Vec::new();
+
+    for entry in entries {
+        let path = entry?.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("md") {
+            continue;
+        }
+        if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            && let Ok(date) = NaiveDate::parse_from_str(stem, "%Y-%m-%d")
+        {
+            dates.push(date);
         }
     }
 
-    Ok(None)
+    Ok(dates)
 }
 
 /// Execute the rollover for a specific project: archive old todos and create new list.
@@ -82,6 +121,7 @@ mod tests {
     use super::*;
     use crate::project::DEFAULT_PROJECT_NAME;
     use crate::todo::{TodoItem, TodoState};
+    use tempfile::TempDir;
 
     #[test]
     fn test_create_rolled_over_list() {
@@ -97,5 +137,38 @@ mod tests {
         assert_eq!(list.date, today);
         assert_eq!(list.items[0].content, "Task 1");
         assert_eq!(list.items[1].content, "Task 2");
+    }
+
+    #[test]
+    fn test_daily_dates_in_dir_uses_valid_markdown_date_filenames() {
+        let temp_dir = TempDir::new().unwrap();
+        for filename in ["2026-06-05.md", "2026-06-04.md", "notes.md", "2026-06-03.txt"] {
+            fs::write(temp_dir.path().join(filename), "").unwrap();
+        }
+
+        let mut dates = daily_dates_in_dir(temp_dir.path()).unwrap();
+        dates.sort();
+
+        assert_eq!(
+            dates,
+            vec![
+                NaiveDate::from_ymd_opt(2026, 6, 4).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 6, 5).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_latest_prior_date_has_no_age_limit() {
+        let today = NaiveDate::from_ymd_opt(2026, 7, 13).unwrap();
+        let dates = [
+            NaiveDate::from_ymd_opt(2026, 6, 5).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 5, 8).unwrap(),
+        ];
+
+        assert_eq!(
+            latest_prior_date(today, dates),
+            Some(NaiveDate::from_ymd_opt(2026, 6, 5).unwrap())
+        );
     }
 }

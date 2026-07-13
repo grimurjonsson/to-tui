@@ -966,8 +966,7 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
             // Execute rollover
             if let Some(pending) = state.pending_rollover.take() {
                 let new_list = execute_rollover_for_project(&state.current_project.name, pending.source_date, pending.items)?;
-                state.todo_list = new_list;
-                state.cursor_position = 0;
+                state.replace_with_current_day_list(new_list);
                 state.set_status_message("Rolled over incomplete items".to_string());
             }
             state.mode = Mode::Navigate;
