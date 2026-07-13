@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.18] - 2026-07-13
+Incomplete tasks now roll over correctly even after you've been away for a long time — the app finds your most recent list regardless of how many days have passed, instead of giving up after an arbitrary cutoff.
+
+### Fixed
+- rollover): recover tasks after long absences
+
 ## [0.5.17] - 2026-06-02
 The view now always advances to the new day at midnight (and on startup), even when you've set "don't ask again" for rollover. Your rollover preference now only controls whether incomplete items get copied over — not whether the displayed date follows the day change — and it's applied consistently whether the day flips while running or you open the app fresh.
 

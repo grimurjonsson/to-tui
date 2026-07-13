@@ -1749,11 +1749,8 @@ impl AppState {
         self.pending_rollover.is_some()
     }
 
-    /// Called every UI tick. If the wall-clock day has rolled past the
-    /// currently loaded list and the user is idle, either open the rollover
-    /// modal or auto-execute, depending on `auto_rollover_pref`.
+    /// Called every UI tick after the app's current-day view crosses midnight.
     pub fn check_midnight_rollover(&mut self) {
-        // Cheap fast-path guards — this fires every 100ms.
         if self.mode != Mode::Navigate {
             return;
         }
@@ -1762,13 +1759,10 @@ impl AppState {
         }
 
         let today = Local::now().date_naive();
-        if today <= self.todo_list.date {
+        if today <= self.today || self.todo_list.date != self.today {
             return;
         }
 
-        // The wall-clock day has crossed past the loaded list. Advancing the
-        // view to today must happen regardless of preference — only whether
-        // (and how) incomplete items roll over depends on `auto_rollover_pref`.
         let candidates = match crate::storage::rollover::find_rollover_candidates_for_project(
             &self.current_project.name,
         ) {
@@ -1826,12 +1820,7 @@ impl AppState {
             items,
         ) {
             Ok(new_list) => {
-                let new_date = new_list.date;
-                self.todo_list = new_list;
-                self.viewing_date = new_date;
-                self.today = new_date;
-                self.cursor_position = 0;
-                self.sync_list_state();
+                self.replace_with_current_day_list(new_list);
                 self.set_status_message(format!(
                     "Auto-rolled over {} item{} from {}",
                     item_count,
@@ -1854,12 +1843,17 @@ impl AppState {
             &self.current_project.name,
             today,
         )?;
+        self.replace_with_current_day_list(new_list);
+        Ok(())
+    }
+
+    pub fn replace_with_current_day_list(&mut self, new_list: TodoList) {
+        let today = new_list.date;
         self.todo_list = new_list;
         self.viewing_date = today;
         self.today = today;
         self.cursor_position = 0;
         self.sync_list_state();
-        Ok(())
     }
 
     /// Open the project selection modal
@@ -2398,11 +2392,9 @@ mod tests {
 
     #[test]
     fn test_check_midnight_auto_no_advances_view_without_prompt() {
-        // AutoNo means "don't roll over and don't ask" — but the automatic
-        // day-switch must still happen. The view should advance to today;
-        // only the rollover prompt/auto-execute is suppressed.
         let mut state = yesterday_state();
         state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoNo;
+        state.today = state.todo_list.date;
         let today = Local::now().date_naive();
         state.check_midnight_rollover();
         assert!(
@@ -2417,6 +2409,18 @@ mod tests {
             state.viewing_date, today,
             "viewing_date must track the new day"
         );
+    }
+
+    #[test]
+    fn test_check_midnight_does_not_override_historical_navigation() {
+        let historical_date = Local::now().date_naive() - chrono::Duration::days(7);
+        let mut state = make_test_state_for_date(historical_date);
+        state.auto_rollover_pref = crate::config::AutoRolloverPref::AutoNo;
+
+        state.check_midnight_rollover();
+
+        assert_eq!(state.todo_list.date, historical_date);
+        assert_eq!(state.viewing_date, historical_date);
     }
 
     #[test]
@@ -2477,6 +2481,20 @@ mod tests {
             state.todo_list.date, today,
             "AutoNo must still advance the view to today"
         );
+    }
+
+    #[test]
+    fn test_replace_with_current_day_list_synchronizes_dates() {
+        let mut state = yesterday_state();
+        let today = Local::now().date_naive();
+        let list = TodoList::new(today, std::path::PathBuf::from("/tmp/today.md"));
+
+        state.replace_with_current_day_list(list);
+
+        assert_eq!(state.todo_list.date, today);
+        assert_eq!(state.viewing_date, today);
+        assert_eq!(state.today, today);
+        assert!(!state.is_readonly());
     }
 
     #[test]

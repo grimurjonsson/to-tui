@@ -492,6 +492,30 @@ pub fn has_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Re
     Ok(count > 0)
 }
 
+pub fn active_todo_dates_before(
+    date: NaiveDate,
+    project_name: &str,
+) -> Result<Vec<NaiveDate>> {
+    let conn = get_connection()?;
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT date FROM todos
+         WHERE date < ?1 AND project = ?2 AND deleted_at IS NULL",
+    )?;
+    let rows = stmt.query_map(params![date_str, project_name], |row| row.get::<_, String>(0))?;
+
+    let mut dates = Vec::new();
+    for row in rows {
+        let value = row?;
+        dates.push(
+            NaiveDate::parse_from_str(&value, "%Y-%m-%d")
+                .with_context(|| format!("Invalid todo date in database: {value}"))?,
+        );
+    }
+
+    Ok(dates)
+}
+
 pub fn archive_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Result<usize> {
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
