@@ -7,8 +7,8 @@
 #![allow(non_camel_case_types)]
 
 use abi_stable::{
-    library::RootModule, package_version_strings, sabi_types::VersionStrings, std_types::RBox,
-    StableAbi,
+    StableAbi, library::RootModule, package_version_strings, sabi_types::VersionStrings,
+    std_types::RBox,
 };
 use semver::Version;
 

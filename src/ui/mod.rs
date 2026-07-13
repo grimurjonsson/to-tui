@@ -1,7 +1,7 @@
 pub mod components;
 pub mod theme;
 
-use crate::app::{event::handle_key_event, event::handle_mouse_event, AppState};
+use crate::app::{AppState, event::handle_key_event, event::handle_mouse_event};
 use crate::storage::UiCache;
 use crate::utils::cursor::set_mouse_cursor_default;
 use crate::utils::paths::get_database_path;
@@ -12,16 +12,11 @@ use crossterm::{
         KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
-use ratatui::{
-    backend::CrosstermBackend,
-    layout::Position,
-    style::Modifier,
-    Terminal,
-};
+use ratatui::{Terminal, backend::CrosstermBackend, layout::Position, style::Modifier};
 use std::io::{self, Write};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -166,7 +161,11 @@ async fn run_app(
                 let max_col = buf.area.width as usize;
                 for y in sr..=er.min(max_row.saturating_sub(1)) {
                     let cs = if y == sr { sc } else { 0 };
-                    let ce = if y == er { (ec + 1).min(max_col) } else { max_col };
+                    let ce = if y == er {
+                        (ec + 1).min(max_col)
+                    } else {
+                        max_col
+                    };
                     for x in cs..ce {
                         if let Some(cell) = buf.cell_mut(Position::new(x as u16, y as u16)) {
                             let s = cell.style().add_modifier(Modifier::REVERSED);

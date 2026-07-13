@@ -7,15 +7,15 @@
 //! - Preview view for generated items
 //! - Error view for displaying errors
 
-use crate::app::state::{PluginsModalState, PluginsTab};
 use crate::app::AppState;
+use crate::app::state::{PluginsModalState, PluginsTab};
 use crate::plugin::marketplace::PluginEntry;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Tabs, Wrap},
-    Frame,
 };
 
 /// Render the plugins modal based on current state
@@ -57,7 +57,9 @@ pub fn render_plugins_modal(f: &mut Frame, state: &AppState) {
             options,
             selected_index,
         } => render_select_input_view(f, state, plugin_name, field_name, options, *selected_index),
-        PluginsModalState::Executing { plugin_name } => render_executing_view(f, state, plugin_name),
+        PluginsModalState::Executing { plugin_name } => {
+            render_executing_view(f, state, plugin_name)
+        }
         PluginsModalState::Preview { items } => render_preview_view(f, state, items),
         PluginsModalState::Error { message } => render_error_view(f, state, message),
     }
@@ -186,7 +188,10 @@ fn render_installed_list(f: &mut Frame, state: &AppState, area: Rect, selected_i
             ])
         } else {
             Paragraph::new(Line::from(vec![
-                Span::styled("No plugins installed. ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    "No plugins installed. ",
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled(
                     "Use Marketplace tab to browse and install.",
                     Style::default().fg(Color::Yellow),
@@ -229,10 +234,7 @@ fn render_installed_list(f: &mut Frame, state: &AppState, area: Rect, selected_i
             );
 
             // Description
-            let desc = Span::styled(
-                &plugin.description,
-                Style::default().fg(Color::DarkGray),
-            );
+            let desc = Span::styled(&plugin.description, Style::default().fg(Color::DarkGray));
 
             let line = Line::from(vec![
                 Span::raw(" "),
@@ -372,10 +374,7 @@ fn render_marketplace_list(
             );
 
             // Description
-            let desc = Span::styled(
-                &plugin.description,
-                Style::default().fg(Color::DarkGray),
-            );
+            let desc = Span::styled(&plugin.description, Style::default().fg(Color::DarkGray));
 
             let line = Line::from(vec![
                 Span::raw(" "),
@@ -422,18 +421,30 @@ fn render_details_view(f: &mut Frame, state: &AppState, plugin: &PluginEntry) {
     let lines = vec![
         Line::from(vec![
             Span::styled("Name: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&plugin.name, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                &plugin.name,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]),
         Line::from(""),
         Line::from(vec![
             Span::styled("Version: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(format!("v{}", plugin.version), Style::default().fg(Color::Cyan)),
+            Span::styled(
+                format!("v{}", plugin.version),
+                Style::default().fg(Color::Cyan),
+            ),
         ]),
         Line::from(""),
-        Line::from(vec![
-            Span::styled("Description: ", Style::default().fg(Color::DarkGray)),
-        ]),
-        Line::from(Span::styled(&plugin.description, Style::default().fg(state.theme.foreground))),
+        Line::from(vec![Span::styled(
+            "Description: ",
+            Style::default().fg(Color::DarkGray),
+        )]),
+        Line::from(Span::styled(
+            &plugin.description,
+            Style::default().fg(state.theme.foreground),
+        )),
         Line::from(""),
         Line::from(""),
         if is_installed {
@@ -444,9 +455,19 @@ fn render_details_view(f: &mut Frame, state: &AppState, plugin: &PluginEntry) {
         } else {
             Line::from(vec![
                 Span::styled("Press ", Style::default().fg(Color::DarkGray)),
-                Span::styled("[i]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[i]",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(" or ", Style::default().fg(Color::DarkGray)),
-                Span::styled("[Enter]", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    "[Enter]",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
                 Span::styled(" to install", Style::default().fg(Color::DarkGray)),
             ])
         },
@@ -582,7 +603,10 @@ fn render_select_input_view(
                 Style::default().fg(state.theme.foreground)
             };
 
-            ListItem::new(Line::from(Span::styled(format!(" {} ", display), name_style)))
+            ListItem::new(Line::from(Span::styled(
+                format!(" {} ", display),
+                name_style,
+            )))
         })
         .collect();
 
@@ -604,7 +628,10 @@ fn render_executing_view(f: &mut Frame, state: &AppState, plugin_name: &str) {
     f.render_widget(Clear, area);
 
     let spinner = state.get_spinner_char();
-    let text = format!("{} Running {}...\n\nPlease wait. (Esc to cancel)", spinner, plugin_name);
+    let text = format!(
+        "{} Running {}...\n\nPlease wait. (Esc to cancel)",
+        spinner, plugin_name
+    );
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -660,11 +687,7 @@ fn render_error_view(f: &mut Frame, state: &AppState, message: &str) {
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Error (Press Esc to dismiss) ")
-        .style(
-            Style::default()
-                .bg(state.theme.background)
-                .fg(Color::Red),
-        );
+        .style(Style::default().bg(state.theme.background).fg(Color::Red));
 
     let paragraph = Paragraph::new(message)
         .block(block)

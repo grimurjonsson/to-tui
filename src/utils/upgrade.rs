@@ -276,16 +276,15 @@ pub fn prepare_binary(archive_path: &Path) -> anyhow::Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("Failed to get parent directory of archive"))?
         .join("extracted");
 
-    std::fs::create_dir_all(&extract_dir)
-        .context("Failed to create extraction directory")?;
+    std::fs::create_dir_all(&extract_dir).context("Failed to create extraction directory")?;
 
     // Extract the tar.gz archive
-    let tar_gz = std::fs::File::open(archive_path)
-        .context("Failed to open archive file")?;
+    let tar_gz = std::fs::File::open(archive_path).context("Failed to open archive file")?;
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
 
-    archive.unpack(&extract_dir)
+    archive
+        .unpack(&extract_dir)
         .context("Failed to extract tar.gz archive")?;
 
     // Find the totui binary in the extracted contents
@@ -299,8 +298,7 @@ pub fn prepare_binary(archive_path: &Path) -> anyhow::Result<PathBuf> {
     }
 
     // Verify binary size is reasonable (at least 1MB for a Rust binary)
-    let metadata = std::fs::metadata(&binary_path)
-        .context("Failed to read binary metadata")?;
+    let metadata = std::fs::metadata(&binary_path).context("Failed to read binary metadata")?;
     if metadata.len() < 1_000_000 {
         anyhow::bail!(
             "Extracted binary is too small ({} bytes). Expected a Rust binary.",
@@ -324,8 +322,8 @@ pub fn prepare_binary(archive_path: &Path) -> anyhow::Result<PathBuf> {
 /// # Errors
 /// Returns error with helpful message if we cannot write to the binary location.
 pub fn check_write_permission() -> anyhow::Result<()> {
-    let current_exe = std::env::current_exe()
-        .context("Failed to determine current executable path")?;
+    let current_exe =
+        std::env::current_exe().context("Failed to determine current executable path")?;
 
     let parent_dir = current_exe
         .parent()
@@ -369,12 +367,11 @@ pub fn check_write_permission() -> anyhow::Result<()> {
 /// # Errors
 /// Returns error if replacement or restart fails.
 pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
-    let current_exe = std::env::current_exe()
-        .context("Failed to determine current executable path")?;
+    let current_exe =
+        std::env::current_exe().context("Failed to determine current executable path")?;
 
     // Use self_update's re-exported self_replace for atomic replacement
-    self_update::self_replace::self_replace(new_binary_path)
-        .context("Failed to replace binary")?;
+    self_update::self_replace::self_replace(new_binary_path).context("Failed to replace binary")?;
 
     // Clean up the temp binary file
     let _ = std::fs::remove_file(new_binary_path);
@@ -388,9 +385,7 @@ pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
     {
         use std::os::unix::process::CommandExt;
         let args: Vec<String> = std::env::args().skip(1).collect();
-        let err = std::process::Command::new(&current_exe)
-            .args(&args)
-            .exec();
+        let err = std::process::Command::new(&current_exe).args(&args).exec();
         // exec() only returns on error
         anyhow::bail!("Failed to restart: {}", err);
     }
@@ -411,9 +406,9 @@ pub fn replace_and_restart(new_binary_path: &Path) -> anyhow::Result<()> {
 /// This must be called explicitly because exec() doesn't run Drop handlers.
 fn restore_terminal() {
     use crossterm::{
-        execute,
         event::DisableMouseCapture,
-        terminal::{disable_raw_mode, LeaveAlternateScreen},
+        execute,
+        terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
     use std::io::{self, Write};
 
@@ -442,7 +437,9 @@ mod tests {
     #[test]
     fn test_get_asset_download_url() {
         let url = get_asset_download_url("0.3.1");
-        assert!(url.starts_with("https://github.com/grimurjonsson/to-tui/releases/download/v0.3.1/totui-"));
+        assert!(url.starts_with(
+            "https://github.com/grimurjonsson/to-tui/releases/download/v0.3.1/totui-"
+        ));
         // Release assets are now tar.gz archives
         assert!(url.ends_with(".tar.gz"));
     }

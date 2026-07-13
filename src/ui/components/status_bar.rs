@@ -1,11 +1,11 @@
-use crate::app::mode::Mode;
 use crate::app::AppState;
+use crate::app::mode::Mode;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -17,10 +17,11 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     }
 
     if let Some((message, time)) = &state.status_message
-        && time.elapsed().as_secs() <= 3 {
-            render_status_message(f, message, area);
-            return;
-        }
+        && time.elapsed().as_secs() <= 3
+    {
+        render_status_message(f, message, area);
+        return;
+    }
 
     let mode_text = format!("{}", state.mode);
     let readonly_indicator = if state.is_readonly() {
@@ -71,7 +72,11 @@ pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     // Format: "{left_content} {nav_hint} {padding} {github_link} {version_text} "
     // Spaces: 4 spaces between segments + 1 trailing space
     let padding = area.width.saturating_sub(
-        left_content.len() as u16 + nav_hint.len() as u16 + github_link.len() as u16 + version_text.len() as u16 + 5,
+        left_content.len() as u16
+            + nav_hint.len() as u16
+            + github_link.len() as u16
+            + version_text.len() as u16
+            + 5,
     );
 
     let base_style = Style::default()

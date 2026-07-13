@@ -189,7 +189,7 @@ impl PluginManager {
 
         // Check interface version compatibility (PLUG-06)
         if let Some(min_ver) = manifest.min_interface_version.clone() {
-            use totui_plugin_interface::{is_version_compatible, INTERFACE_VERSION};
+            use totui_plugin_interface::{INTERFACE_VERSION, is_version_compatible};
             match is_version_compatible(&min_ver, INTERFACE_VERSION) {
                 Ok(true) => {
                     // Compatible - continue to return available plugin
@@ -393,10 +393,11 @@ min_interface_version = "99.0.0"
         assert!(info.error.is_none()); // Not a parse error
         assert!(!info.available); // But not available
         assert!(info.availability_reason.is_some());
-        assert!(info
-            .availability_reason
-            .unwrap()
-            .contains("Requires interface version"));
+        assert!(
+            info.availability_reason
+                .unwrap()
+                .contains("Requires interface version")
+        );
     }
 
     #[test]

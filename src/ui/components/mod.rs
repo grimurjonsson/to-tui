@@ -794,10 +794,6 @@ fn render_help_overlay(f: &mut Frame, state: &mut AppState) {
     }
 }
 
-fn help_max_scroll(lines: &[Line], inner: Rect) -> u16 {
-    help_scroll_metrics(lines, inner).1
-}
-
 fn help_scroll_metrics(lines: &[Line], inner: Rect) -> (u16, u16) {
     let paragraph = Paragraph::new(lines.to_vec()).wrap(Wrap { trim: false });
     let total_lines = paragraph.line_count(inner.width).min(u16::MAX as usize) as u16;
@@ -977,8 +973,8 @@ mod help_tests {
             "A long help description that wraps across several narrow terminal rows",
         )];
 
-        assert_eq!(help_max_scroll(&lines, Rect::new(0, 0, 80, 3)), 0);
-        assert!(help_max_scroll(&lines, Rect::new(0, 0, 20, 3)) > 0);
+        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 3)).1, 0);
+        assert!(help_scroll_metrics(&lines, Rect::new(0, 0, 20, 3)).1 > 0);
     }
 
     #[test]

@@ -3,7 +3,7 @@ use crate::todo::{Priority, TodoItem, TodoList, TodoState};
 use crate::utils::paths::get_to_tui_dir;
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::PathBuf;
 use tracing::{debug, trace};
 use uuid::Uuid;
@@ -77,13 +77,15 @@ impl TodoRowData {
         todo.collapsed = self.collapsed != 0;
 
         if let Some(s) = self.created_at_str
-            && let Some(dt) = parse_rfc3339(&s) {
-                todo.created_at = dt;
-            }
+            && let Some(dt) = parse_rfc3339(&s)
+        {
+            todo.created_at = dt;
+        }
         if let Some(s) = self.updated_at_str
-            && let Some(dt) = parse_rfc3339(&s) {
-                todo.modified_at = dt;
-            }
+            && let Some(dt) = parse_rfc3339(&s)
+        {
+            todo.modified_at = dt;
+        }
         if let Some(s) = self.completed_at_str {
             todo.completed_at = parse_rfc3339(&s);
         }
@@ -412,11 +414,13 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
         let deleted_at_str = item.deleted_at.map(|dt| dt.to_rfc3339());
 
         // Check if this is an update (row exists) or insert (new row)
-        let exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM todos WHERE id = ?1)",
-            params![&id_str],
-            |row| row.get(0),
-        ).unwrap_or(false);
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM todos WHERE id = ?1)",
+                params![&id_str],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
 
         if exists {
             trace!(id = %id_str, content = %item.content, "Updating existing todo (possibly restoring from soft-delete)");
@@ -455,15 +459,18 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
             "DELETE FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL AND id NOT IN ({})",
             placeholders
         );
-        
+
         let mut delete_params: Vec<&dyn rusqlite::ToSql> = vec![&date_str, &project_name];
         for id in &item_ids {
             delete_params.push(id);
         }
-        
+
         let removed_count = conn.execute(&sql, rusqlite::params_from_iter(delete_params))?;
         if removed_count > 0 {
-            debug!(removed_count = removed_count, "Removed items no longer in list");
+            debug!(
+                removed_count = removed_count,
+                "Removed items no longer in list"
+            );
         }
     }
 
@@ -492,17 +499,16 @@ pub fn has_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Re
     Ok(count > 0)
 }
 
-pub fn active_todo_dates_before(
-    date: NaiveDate,
-    project_name: &str,
-) -> Result<Vec<NaiveDate>> {
+pub fn active_todo_dates_before(date: NaiveDate, project_name: &str) -> Result<Vec<NaiveDate>> {
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
     let mut stmt = conn.prepare(
         "SELECT DISTINCT date FROM todos
          WHERE date < ?1 AND project = ?2 AND deleted_at IS NULL",
     )?;
-    let rows = stmt.query_map(params![date_str, project_name], |row| row.get::<_, String>(0))?;
+    let rows = stmt.query_map(params![date_str, project_name], |row| {
+        row.get::<_, String>(0)
+    })?;
 
     let mut dates = Vec::new();
     for row in rows {
@@ -614,7 +620,11 @@ pub fn load_projects() -> Result<Vec<Project>> {
             .map(|dt| dt.with_timezone(&Utc))
             .unwrap_or_else(|_| Utc::now());
 
-        result.push(Project { id, name, created_at });
+        result.push(Project {
+            id,
+            name,
+            created_at,
+        });
     }
 
     Ok(result)
@@ -640,7 +650,11 @@ pub fn get_project_by_name(name: &str) -> Result<Option<Project>> {
             let created_at = DateTime::parse_from_rfc3339(&created_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
-            Ok(Some(Project { id, name, created_at }))
+            Ok(Some(Project {
+                id,
+                name,
+                created_at,
+            }))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
@@ -1439,7 +1453,7 @@ mod tests {
     }
 
     /// Regression test for undo crash after deleting non-last item.
-    /// 
+    ///
     /// Bug: Deleting an item soft-deletes it in DB. On undo, the restored
     /// list tried to INSERT the item back, but the soft-deleted row still existed
     /// with the same ID, causing "UNIQUE constraint failed: todos.id".
@@ -1460,12 +1474,12 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
         let mut list = create_test_list(date);
-        
+
         // Create 3 items: A, B, C
         list.add_item("A".to_string());
         list.add_item("B".to_string());
         list.add_item("C".to_string());
-        
+
         let a_id = list.items[0].id;
         let b_id = list.items[1].id;
         let c_id = list.items[2].id;
@@ -1478,37 +1492,45 @@ mod tests {
 
         // Soft delete B (the middle item)
         soft_delete_todos_for_project(&[b_id], date, DEFAULT_PROJECT_NAME).unwrap();
-        
+
         // Verify B is soft-deleted in DB
         let conn = get_connection().unwrap();
-        let b_deleted: bool = conn.query_row(
-            "SELECT deleted_at IS NOT NULL FROM todos WHERE id = ?1",
-            params![b_id.to_string()],
-            |row| row.get(0),
-        ).unwrap();
+        let b_deleted: bool = conn
+            .query_row(
+                "SELECT deleted_at IS NOT NULL FROM todos WHERE id = ?1",
+                params![b_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(b_deleted, "B should be soft-deleted");
 
         // Remove B from in-memory list
         list.items.retain(|item| item.id != b_id);
         assert_eq!(list.items.len(), 2);
-        
+
         // Save the modified list (A, C)
         save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
 
         // Simulate undo: restore the previous state (A, B, C)
         list = undo_state;
         assert_eq!(list.items.len(), 3);
-        
+
         // This should NOT crash - it should UPDATE B (clearing deleted_at)
         let result = save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME);
-        assert!(result.is_ok(), "Undo save should not fail: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "Undo save should not fail: {:?}",
+            result.err()
+        );
 
         // Verify B is restored (deleted_at is NULL)
-        let b_restored: bool = conn.query_row(
-            "SELECT deleted_at IS NULL FROM todos WHERE id = ?1",
-            params![b_id.to_string()],
-            |row| row.get(0),
-        ).unwrap();
+        let b_restored: bool = conn
+            .query_row(
+                "SELECT deleted_at IS NULL FROM todos WHERE id = ?1",
+                params![b_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert!(b_restored, "B should be restored (deleted_at = NULL)");
 
         // Verify all 3 items are back and active
@@ -1533,11 +1555,11 @@ mod tests {
 
         let date = NaiveDate::from_ymd_opt(2025, 12, 31).unwrap();
         let mut list = create_test_list(date);
-        
+
         // Create 2 items: A, B
         list.add_item("A".to_string());
         list.add_item("B".to_string());
-        
+
         let b_id = list.items[1].id;
 
         // Initial save
@@ -1545,21 +1567,26 @@ mod tests {
 
         // Soft delete B
         soft_delete_todos_for_project(&[b_id], date, DEFAULT_PROJECT_NAME).unwrap();
-        
+
         // Remove B from in-memory list
         list.items.retain(|item| item.id != b_id);
-        
+
         // Save without restoring B (just saving A)
         save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
 
         // Verify B is still in DB (soft-deleted) - check raw table
         let conn = get_connection().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM todos WHERE id = ?1 AND deleted_at IS NOT NULL",
-            params![b_id.to_string()],
-            |row| row.get(0),
-        ).unwrap();
-        
-        assert_eq!(count, 1, "Soft-deleted item B should still be in DB for audit trail");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM todos WHERE id = ?1 AND deleted_at IS NOT NULL",
+                params![b_id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(
+            count, 1,
+            "Soft-deleted item B should still be in DB for audit trail"
+        );
     }
 }

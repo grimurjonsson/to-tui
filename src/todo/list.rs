@@ -1,6 +1,6 @@
-use super::priority::Priority;
 use super::TodoItem;
-use anyhow::{anyhow, Result};
+use super::priority::Priority;
+use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
 use std::collections::HashSet;
 use std::path::PathBuf;

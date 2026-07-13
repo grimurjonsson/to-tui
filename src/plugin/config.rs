@@ -4,7 +4,7 @@
 //! against the schema provided by each plugin.
 
 use abi_stable::std_types::{RHashMap, RString, RVec};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 use toml::Value;
 
@@ -112,7 +112,10 @@ impl PluginConfigLoader {
         let mut defaults = HashMap::new();
         for field in schema.fields.iter() {
             if let abi_stable::std_types::ROption::RSome(ref default) = field.default {
-                defaults.insert(field.name.to_string(), Self::ffi_value_to_config_value(default));
+                defaults.insert(
+                    field.name.to_string(),
+                    Self::ffi_value_to_config_value(default),
+                );
             }
         }
         defaults
@@ -153,7 +156,8 @@ impl PluginConfigLoader {
             (FfiConfigType::Select, Value::String(s)) => {
                 // Validate that value is in allowed options (if options provided)
                 if let Some(opts) = options
-                    && !opts.is_empty() && !opts.iter().any(|opt| opt.as_str() == s)
+                    && !opts.is_empty()
+                    && !opts.iter().any(|opt| opt.as_str() == s)
                 {
                     let opts_list: Vec<_> = opts.iter().map(|o| format!("\"{}\"", o)).collect();
                     bail!(
@@ -250,7 +254,11 @@ pub fn generate_config_template(schema: &FfiConfigSchema) -> String {
         }
 
         // Add type and required/optional info
-        let req_str = if field.required { "required" } else { "optional" };
+        let req_str = if field.required {
+            "required"
+        } else {
+            "optional"
+        };
         lines.push(format!("# Type: {} ({})", type_name, req_str));
 
         // For Select type, add options comment
@@ -312,7 +320,8 @@ mod tests {
     #[test]
     fn test_validate_field_type_string() {
         let value = Value::String("hello".to_string());
-        let result = PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::String, None);
+        let result =
+            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::String, None);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ConfigValue::String("hello".to_string()));
     }
@@ -341,8 +350,12 @@ mod tests {
             Value::String("a".to_string()),
             Value::String("b".to_string()),
         ]);
-        let result =
-            PluginConfigLoader::validate_field_type("test", &value, FfiConfigType::StringArray, None);
+        let result = PluginConfigLoader::validate_field_type(
+            "test",
+            &value,
+            FfiConfigType::StringArray,
+            None,
+        );
         assert!(result.is_ok());
         assert_eq!(
             result.unwrap(),
@@ -353,8 +366,12 @@ mod tests {
     #[test]
     fn test_validate_field_type_mismatch_includes_field_name() {
         let value = Value::String("not an integer".to_string());
-        let result =
-            PluginConfigLoader::validate_field_type("my_field", &value, FfiConfigType::Integer, None);
+        let result = PluginConfigLoader::validate_field_type(
+            "my_field",
+            &value,
+            FfiConfigType::Integer,
+            None,
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -367,11 +384,19 @@ mod tests {
     #[test]
     fn test_validate_field_type_string_array_mixed_types() {
         let value = Value::Array(vec![Value::String("a".to_string()), Value::Integer(42)]);
-        let result =
-            PluginConfigLoader::validate_field_type("tags", &value, FfiConfigType::StringArray, None);
+        let result = PluginConfigLoader::validate_field_type(
+            "tags",
+            &value,
+            FfiConfigType::StringArray,
+            None,
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("tags"), "Error should contain field name: {}", err);
+        assert!(
+            err.contains("tags"),
+            "Error should contain field name: {}",
+            err
+        );
     }
 
     #[test]

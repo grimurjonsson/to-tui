@@ -59,9 +59,9 @@ impl Theme {
             cancelled: Color::Gray,
             status_bar_bg: Color::LightBlue,
             status_bar_fg: Color::Black,
-            priority_p0: Color::Rgb(200, 50, 50),   // Darker red for light theme
-            priority_p1: Color::Rgb(180, 130, 0),   // Darker yellow/brown for light theme
-            priority_p2: Color::Rgb(50, 100, 200),  // Darker blue for light theme
+            priority_p0: Color::Rgb(200, 50, 50), // Darker red for light theme
+            priority_p1: Color::Rgb(180, 130, 0), // Darker yellow/brown for light theme
+            priority_p2: Color::Rgb(50, 100, 200), // Darker blue for light theme
         }
     }
 

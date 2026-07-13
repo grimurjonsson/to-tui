@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use arboard::Clipboard;
-use std::sync::Mutex;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 /// Internal yank buffer for headless environments
 static YANK_BUFFER: Mutex<Option<String>> = Mutex::new(None);
@@ -67,7 +67,7 @@ fn save_to_yank_file(text: &str) -> Option<PathBuf> {
     let path = crate::utils::paths::get_to_tui_dir()
         .ok()
         .map(|dir| dir.join("yank.txt"))?;
-    
+
     match std::fs::write(&path, text) {
         Ok(()) => {
             tracing::debug!("Saved yank to {}", path.display());
@@ -90,8 +90,7 @@ pub fn paste_from_clipboard() -> Result<String> {
     }
 
     // Fallback: internal buffer
-    get_from_internal_buffer()
-        .context("No text in clipboard or internal buffer")
+    get_from_internal_buffer().context("No text in clipboard or internal buffer")
 }
 
 #[cfg(test)]
@@ -135,8 +134,8 @@ mod tests {
         // Just verify the enum variants exist and are constructable
         let _sys = CopyResult::SystemClipboard;
         let _internal = CopyResult::InternalBuffer { file_path: None };
-        let _with_path = CopyResult::InternalBuffer { 
-            file_path: Some(PathBuf::from("/tmp/test.txt")) 
+        let _with_path = CopyResult::InternalBuffer {
+            file_path: Some(PathBuf::from("/tmp/test.txt")),
         };
     }
 }

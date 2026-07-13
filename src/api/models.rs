@@ -1,4 +1,9 @@
-use axum::{Json, body::Body, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{
+    Json,
+    body::Body,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -94,7 +99,11 @@ impl ErrorResponse {
     }
 
     pub fn internal(e: impl std::fmt::Display) -> Response<Body> {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(Self::new(e.to_string()))).into_response()
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(Self::new(e.to_string())),
+        )
+            .into_response()
     }
 
     pub fn not_found(message: impl Into<String>) -> Response<Body> {

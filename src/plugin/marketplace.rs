@@ -106,7 +106,10 @@ pub fn fetch_marketplace(owner: &str, repo: &str) -> Result<MarketplaceManifest>
     }
 
     let content = response.text()?;
-    debug!(content_length = content.len(), "Received marketplace manifest content");
+    debug!(
+        content_length = content.len(),
+        "Received marketplace manifest content"
+    );
 
     match MarketplaceManifest::parse(&content) {
         Ok(manifest) => {
@@ -195,14 +198,17 @@ version = "1.0.0"
             .try_init();
 
         let result = fetch_marketplace("grimurjonsson", "to-tui-plugins");
-        
+
         match result {
             Ok(manifest) => {
                 println!("✅ Marketplace fetch successful!");
                 println!("   Name: {}", manifest.marketplace.name);
                 println!("   Plugins: {}", manifest.plugins.len());
                 for plugin in &manifest.plugins {
-                    println!("   - {} v{}: {}", plugin.name, plugin.version, plugin.description);
+                    println!(
+                        "   - {} v{}: {}",
+                        plugin.name, plugin.version, plugin.description
+                    );
                 }
                 assert!(!manifest.plugins.is_empty(), "Expected at least one plugin");
             }

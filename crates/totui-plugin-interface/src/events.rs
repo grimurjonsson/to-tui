@@ -4,8 +4,8 @@
 //! Events are emitted by the host when todo items are created, modified, completed,
 //! deleted, or when a project is loaded.
 
-use abi_stable::std_types::{RString, RVec};
 use abi_stable::StableAbi;
+use abi_stable::std_types::{RString, RVec};
 
 use crate::host_api::FfiCommand;
 use crate::types::FfiTodoItem;

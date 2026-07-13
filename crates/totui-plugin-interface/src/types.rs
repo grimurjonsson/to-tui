@@ -3,8 +3,8 @@
 //! These types use abi_stable to ensure stable memory layout across
 //! different compiler versions and dynamic library boundaries.
 
-use abi_stable::std_types::{ROption, RString};
 use abi_stable::StableAbi;
+use abi_stable::std_types::{ROption, RString};
 
 /// FFI-safe representation of a todo item state.
 #[repr(u8)]

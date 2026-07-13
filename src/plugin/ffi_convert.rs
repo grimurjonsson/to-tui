@@ -142,15 +142,14 @@ impl TryFrom<FfiTodoItem> for TodoItem {
         let modified_at = timestamp_millis_to_datetime(ffi.modified_at)
             .with_context(|| format!("Invalid modified_at timestamp: {}", ffi.modified_at))?;
 
-        let completed_at: Option<DateTime<Utc>> =
-            if let ROption::RSome(ts) = ffi.completed_at {
-                Some(
-                    timestamp_millis_to_datetime(ts)
-                        .with_context(|| format!("Invalid completed_at timestamp: {}", ts))?,
-                )
-            } else {
-                None
-            };
+        let completed_at: Option<DateTime<Utc>> = if let ROption::RSome(ts) = ffi.completed_at {
+            Some(
+                timestamp_millis_to_datetime(ts)
+                    .with_context(|| format!("Invalid completed_at timestamp: {}", ts))?,
+            )
+        } else {
+            None
+        };
 
         Ok(TodoItem {
             id,
@@ -300,9 +299,11 @@ mod tests {
 
         let result: Result<TodoItem> = ffi.try_into();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid due_date format"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid due_date format")
+        );
     }
 }

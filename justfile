@@ -224,6 +224,10 @@ inspect-mcp:
 tui:
     cargo run --release --bin totui
 
+# Run the TUI with RUST_LOG=debug, appending stderr to ./to-tui-debug.log
+tui-debug:
+    RUST_LOG=debug cargo run --release --bin totui 2>> ./to-tui-debug.log
+
 # Setup MCP for local Claude Code development
 setup-mcp-claude-dev:
     #!/usr/bin/env bash
@@ -333,6 +337,29 @@ remove-mcp-opencode:
     else
         echo "totui-mcp not found in OpenCode config"
     fi
+
+# Install totui-mcp pi extension (registers MCP tools in pi agent)
+setup-pi-extension:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    EXT_DIR="$(pwd)/pi-extension/totui-mcp"
+    LINK="$HOME/.pi/agent/extensions/totui-mcp"
+
+    echo "Installing pi extension dependencies..."
+    cd "$EXT_DIR"
+    npm install
+
+    mkdir -p "$HOME/.pi/agent/extensions"
+    if [ -L "$LINK" ] || [ -d "$LINK" ]; then
+        rm -rf "$LINK"
+    fi
+    ln -s "$EXT_DIR" "$LINK"
+
+    echo "✓ Linked $LINK -> $EXT_DIR"
+    echo ""
+    echo "Restart pi (or run /reload) to load totui-mcp tools."
+    echo "Quick test: pi -e \"$EXT_DIR/index.ts\" -p \"list my totui projects\""
 
 # Install totui-mcp skill to Claude Code
 install-claude-skill:

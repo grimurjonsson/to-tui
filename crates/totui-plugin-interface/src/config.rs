@@ -3,8 +3,8 @@
 //! This module defines types for defining plugin config schemas and
 //! passing typed config values across the FFI boundary.
 
-use abi_stable::std_types::{ROption, RString, RVec};
 use abi_stable::StableAbi;
+use abi_stable::std_types::{ROption, RString, RVec};
 
 /// FFI-safe config value types.
 ///

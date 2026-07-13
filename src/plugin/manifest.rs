@@ -163,10 +163,7 @@ impl PluginManifest {
 
             // Description must not be empty
             if action_def.description.is_empty() {
-                return Err(format!(
-                    "Action '{}' has empty description",
-                    action_name
-                ));
+                return Err(format!("Action '{}' has empty description", action_name));
             }
 
             // If default_keybinding is present, it must parse as valid KeySequence
@@ -206,7 +203,10 @@ subprocess = true
         let manifest = PluginManifest::parse(toml).unwrap();
         assert_eq!(manifest.name, "jira-claude");
         assert_eq!(manifest.version, "0.1.6");
-        assert_eq!(manifest.description, "Generate todos from Jira tickets using Claude AI");
+        assert_eq!(
+            manifest.description,
+            "Generate todos from Jira tickets using Claude AI"
+        );
         assert_eq!(manifest.author, Some("grimurjonsson".to_string()));
         assert!(manifest.validate().is_ok());
     }
@@ -322,7 +322,11 @@ another_unknown = 42
         };
         let result = manifest.validate();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid min_interface_version"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("Invalid min_interface_version")
+        );
     }
 
     #[test]

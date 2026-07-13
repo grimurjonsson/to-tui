@@ -1,12 +1,12 @@
+use super::centered_rect;
 use crate::app::AppState;
 use crate::utils::unicode::{after_first_char, first_char_as_str};
-use super::centered_rect;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph},
-    Frame,
 };
 use unicode_width::UnicodeWidthChar;
 
@@ -14,7 +14,12 @@ use unicode_width::UnicodeWidthChar;
 fn truncate_chars(s: &str, max_chars: usize) -> String {
     let truncated: String = s.chars().take(max_chars).collect();
     if truncated.len() < s.len() {
-        format!("{}...", s.chars().take(max_chars.saturating_sub(3)).collect::<String>())
+        format!(
+            "{}...",
+            s.chars()
+                .take(max_chars.saturating_sub(3))
+                .collect::<String>()
+        )
     } else {
         truncated
     }
@@ -146,8 +151,9 @@ pub fn render_description_modal(f: &mut Frame, state: &mut AppState) {
             let sub_text = &state.desc_buffer[vline.buf_row][vline.byte_start..vline.byte_end];
 
             if vis_row == cursor_visual_row {
-                let cursor_col =
-                    state.desc_cursor_col.min(state.desc_buffer[vline.buf_row].len());
+                let cursor_col = state
+                    .desc_cursor_col
+                    .min(state.desc_buffer[vline.buf_row].len());
                 let rel_cursor = cursor_col.saturating_sub(vline.byte_start);
                 let before_cursor = &sub_text[..rel_cursor.min(sub_text.len())];
                 let after_cursor = &sub_text[rel_cursor.min(sub_text.len())..];

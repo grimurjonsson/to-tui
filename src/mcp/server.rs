@@ -7,17 +7,19 @@ use rmcp::{
 };
 use tracing::{debug, error, info, warn};
 
-use crate::project::{ProjectRegistry, DEFAULT_PROJECT_NAME};
+use crate::project::{DEFAULT_PROJECT_NAME, ProjectRegistry};
 use crate::storage::database::soft_delete_todos_for_project;
-use crate::storage::file::{file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project};
+use crate::storage::file::{
+    file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project,
+};
 use crate::storage::rollover::create_rolled_over_list_for_project;
 use crate::todo::{TodoItem, TodoList};
 
 use super::errors::{IntoMcpError, McpErrorDetail};
 use super::schemas::{
-    CreateTodoRequest, DeleteTodoRequest, DeleteTodoResponse, ListProjectsRequest, ListTodosRequest,
-    MarkCompleteRequest, ProjectItemResponse, ProjectListResponse, TodoItemResponse, TodoListResponse,
-    UpdateTodoRequest, parse_date, parse_state, parse_uuid,
+    CreateTodoRequest, DeleteTodoRequest, DeleteTodoResponse, ListProjectsRequest,
+    ListTodosRequest, MarkCompleteRequest, ProjectItemResponse, ProjectListResponse,
+    TodoItemResponse, TodoListResponse, UpdateTodoRequest, parse_date, parse_state, parse_uuid,
 };
 
 #[derive(Clone)]
@@ -39,32 +41,38 @@ impl Default for TodoMcpServer {
     }
 }
 
-fn load_list_with_rollover(project: &str, date: chrono::NaiveDate) -> Result<TodoList, McpErrorDetail> {
+fn load_list_with_rollover(
+    project: &str,
+    date: chrono::NaiveDate,
+) -> Result<TodoList, McpErrorDetail> {
     let today = Local::now().date_naive();
 
     if date == today && !file_exists_for_project(project, date).into_mcp_storage_error()? {
         debug!(date = %date, project = %project, "No todos for today, checking for rollover candidates");
         for days_back in 1..=30 {
             if let Some(check_date) = today.checked_sub_days(chrono::Days::new(days_back))
-                && file_exists_for_project(project, check_date).into_mcp_storage_error()? {
-                    let list = load_todo_list_for_project(project, check_date).into_mcp_storage_error()?;
-                    let incomplete = list.get_incomplete_items();
+                && file_exists_for_project(project, check_date).into_mcp_storage_error()?
+            {
+                let list =
+                    load_todo_list_for_project(project, check_date).into_mcp_storage_error()?;
+                let incomplete = list.get_incomplete_items();
 
-                    if !incomplete.is_empty() {
-                        info!(
-                            from_date = %check_date,
-                            to_date = %today,
-                            project = %project,
-                            count = incomplete.len(),
-                            "Rolling over incomplete todos"
-                        );
-                        let rolled_list =
-                            create_rolled_over_list_for_project(project, today, incomplete).into_mcp_storage_error()?;
-                        save_todo_list_for_project(&rolled_list, project).into_mcp_storage_error()?;
-                        return Ok(rolled_list);
-                    }
-                    break;
+                if !incomplete.is_empty() {
+                    info!(
+                        from_date = %check_date,
+                        to_date = %today,
+                        project = %project,
+                        count = incomplete.len(),
+                        "Rolling over incomplete todos"
+                    );
+                    let rolled_list =
+                        create_rolled_over_list_for_project(project, today, incomplete)
+                            .into_mcp_storage_error()?;
+                    save_todo_list_for_project(&rolled_list, project).into_mcp_storage_error()?;
+                    return Ok(rolled_list);
                 }
+                break;
+            }
         }
     }
 
@@ -96,14 +104,16 @@ fn format_error(detail: McpErrorDetail) -> String {
 }
 
 fn parse_date_or_err(date_str: Option<&str>) -> Result<chrono::NaiveDate, String> {
-    parse_date(date_str).map_err(|msg| {
-        format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format"))
-    })
+    parse_date(date_str)
+        .map_err(|msg| format_error(McpErrorDetail::invalid_input(&msg, "Use YYYY-MM-DD format")))
 }
 
 fn parse_uuid_or_err(id_str: &str) -> Result<uuid::Uuid, String> {
     parse_uuid(id_str).map_err(|msg| {
-        format_error(McpErrorDetail::invalid_input(&msg, "Use list_todos to get valid IDs"))
+        format_error(McpErrorDetail::invalid_input(
+            &msg,
+            "Use list_todos to get valid IDs",
+        ))
     })
 }
 
@@ -218,7 +228,8 @@ impl TodoMcpServer {
         list.items.insert(insert_index, item);
 
         save_todo_list_for_project(&list, &project)
-            .into_mcp_storage_error().map_err(format_error)?;
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
 
         info!(id = %response.id, content = %response.content, project = %project, "create_todo completed");
         Ok(Json(response))
@@ -294,7 +305,8 @@ impl TodoMcpServer {
         let response = TodoItemResponse::from(&*item);
 
         save_todo_list_for_project(&list, &project)
-            .into_mcp_storage_error().map_err(format_error)?;
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
 
         info!(id = %response.id, state = %response.state, project = %project, "update_todo completed");
         Ok(Json(response))
@@ -330,19 +342,22 @@ impl TodoMcpServer {
 
         let (start, end) = list
             .get_item_range(idx)
-            .into_mcp_storage_error().map_err(format_error)?;
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
 
         let deleted_count = end - start;
 
         let ids: Vec<_> = list.items[start..end].iter().map(|item| item.id).collect();
         soft_delete_todos_for_project(&ids, date, &project)
-            .into_mcp_storage_error().map_err(format_error)?;
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
 
         list.items.drain(start..end);
         list.recalculate_parent_ids();
 
         save_todo_list_for_project(&list, &project)
-            .into_mcp_storage_error().map_err(format_error)?;
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
 
         info!(deleted_count = deleted_count, project = %project, "delete_todo completed");
         Ok(Json(DeleteTodoResponse {
@@ -383,7 +398,8 @@ impl TodoMcpServer {
         let response = TodoItemResponse::from(&*item);
 
         save_todo_list_for_project(&list, &project)
-            .into_mcp_storage_error().map_err(format_error)?;
+            .into_mcp_storage_error()
+            .map_err(format_error)?;
 
         info!(id = %response.id, new_state = %response.state, project = %project, "mark_complete completed");
         Ok(Json(response))
