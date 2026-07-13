@@ -3,22 +3,28 @@ use super::state::{
     AppState, MoveToProjectSubState, PluginResultSource, PluginSubState, PluginsModalState,
     PluginsTab, ProjectSubState,
 };
-use crate::clipboard::{copy_to_clipboard, CopyResult};
+use crate::clipboard::{CopyResult, copy_to_clipboard};
 use crate::config::Config;
 use crate::keybindings::{Action, KeyBinding, KeyLookupResult};
 use crate::plugin::{
-    marketplace::PluginEntry, CommandExecutor, GeneratorInfo, PluginAction, PluginErrorKind,
-    PluginHostApiImpl, PluginLoadError,
+    CommandExecutor, GeneratorInfo, PluginAction, PluginErrorKind, PluginHostApiImpl,
+    PluginLoadError, marketplace::PluginEntry,
 };
-use crate::project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
+use crate::project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry};
 use crate::storage::file::save_todo_list_for_project;
-use crate::storage::{execute_rollover_for_project, find_rollover_candidates_for_project, soft_delete_todos_for_project};
-use crate::utils::paths::{get_dailies_dir_for_project, get_logs_dir, get_project_dir};
+use crate::storage::{
+    execute_rollover_for_project, find_rollover_candidates_for_project,
+    soft_delete_todos_for_project,
+};
 use crate::utils::cursor::{set_mouse_cursor_default, set_mouse_cursor_pointer};
+use crate::utils::paths::{get_dailies_dir_for_project, get_logs_dir, get_project_dir};
 use crate::utils::unicode::{
     next_char_boundary, next_word_boundary, prev_char_boundary, prev_word_boundary,
 };
-use crate::utils::upgrade::{check_write_permission, prepare_binary, replace_and_restart, PluginUpgradeSubState, UpgradeSubState};
+use crate::utils::upgrade::{
+    PluginUpgradeSubState, UpgradeSubState, check_write_permission, prepare_binary,
+    replace_and_restart,
+};
 use abi_stable::sabi_trait::TD_Opaque;
 use abi_stable::std_types::RBox;
 use anyhow::Result;
@@ -26,12 +32,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use std::collections::HashSet;
 use std::fs;
 use totui_plugin_interface::{
-    call_plugin_execute_with_host, FfiConfigType, FfiConfigValue, FfiEvent, FfiEventSource,
-    FfiFieldChange, HostApi_TO,
+    FfiConfigType, FfiConfigValue, FfiEvent, FfiEventSource, FfiFieldChange, HostApi_TO,
+    call_plugin_execute_with_host,
 };
 
-/// Total number of lines in the help content (must match render_help_overlay)
-const HELP_TOTAL_LINES: u16 = 58;
 const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
@@ -53,11 +57,9 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
                 }
                 Ok(CopyResult::InternalBuffer { file_path }) => {
                     let msg = match file_path {
-                        Some(path) => format!(
-                            "Copied to buffer: {} | {}",
-                            display_text,
-                            path.display()
-                        ),
+                        Some(path) => {
+                            format!("Copied to buffer: {} | {}", display_text, path.display())
+                        }
                         None => format!("Copied to buffer: {}", display_text),
                     };
                     state.set_status_message(msg);
@@ -78,21 +80,34 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 
     // Handle help overlay scrolling when help is visible
     if state.show_help {
-        // Calculate max scroll based on terminal height
-        // Help popup is 80% of terminal height, minus 2 for borders
-        let popup_height = (state.terminal_height * 80) / 100;
-        let inner_height = popup_height.saturating_sub(2);
-        let max_scroll = HELP_TOTAL_LINES.saturating_sub(inner_height);
-
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 state.help_scroll = state.help_scroll.saturating_sub(1);
                 return Ok(());
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if state.help_scroll < max_scroll {
+                if state.help_scroll < state.help_max_scroll {
                     state.help_scroll = state.help_scroll.saturating_add(1);
                 }
+                return Ok(());
+            }
+            KeyCode::PageUp => {
+                state.help_scroll = state.help_scroll.saturating_sub(state.help_page_size);
+                return Ok(());
+            }
+            KeyCode::PageDown => {
+                state.help_scroll = state
+                    .help_scroll
+                    .saturating_add(state.help_page_size)
+                    .min(state.help_max_scroll);
+                return Ok(());
+            }
+            KeyCode::Home => {
+                state.help_scroll = 0;
+                return Ok(());
+            }
+            KeyCode::End => {
+                state.help_scroll = state.help_max_scroll;
                 return Ok(());
             }
             KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
@@ -122,16 +137,15 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
     // Handle scroll events in help overlay
     if state.show_help {
-        let popup_height = (state.terminal_height * 80) / 100;
-        let inner_height = popup_height.saturating_sub(2);
-        let max_scroll = HELP_TOTAL_LINES.saturating_sub(inner_height);
-
         match mouse.kind {
             MouseEventKind::ScrollUp => {
                 state.help_scroll = state.help_scroll.saturating_sub(3);
             }
             MouseEventKind::ScrollDown => {
-                state.help_scroll = state.help_scroll.saturating_add(3).min(max_scroll);
+                state.help_scroll = state
+                    .help_scroll
+                    .saturating_add(3)
+                    .min(state.help_max_scroll);
             }
             _ => {}
         }
@@ -140,7 +154,8 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
 
     // Handle mouse move events for cursor hover effects
     if let MouseEventKind::Moved = mouse.kind {
-        let is_over_link = is_mouse_over_status_bar_link(state, mouse.row as usize, mouse.column as usize);
+        let is_over_link =
+            is_mouse_over_status_bar_link(state, mouse.row as usize, mouse.column as usize);
 
         if is_over_link && !state.cursor_is_pointer {
             set_mouse_cursor_pointer();
@@ -216,7 +231,9 @@ fn handle_left_click(state: &mut AppState, clicked_row: usize, clicked_col: usiz
             format!("v{}", env!("CARGO_PKG_VERSION"))
         };
 
-        let version_start = state.terminal_width.saturating_sub(version_text.len() as u16) as usize;
+        let version_start = state
+            .terminal_width
+            .saturating_sub(version_text.len() as u16) as usize;
         let github_start = version_start.saturating_sub(github_link.len());
         let github_end = version_start - 1;
 
@@ -478,10 +495,7 @@ fn calculate_item_visual_height(
 
 /// Calculate the visual height of an expanded description box.
 /// Description boxes have: top border (1) + content lines + bottom border (1)
-fn calculate_description_visual_height(
-    state: &AppState,
-    item: &crate::todo::TodoItem,
-) -> usize {
+fn calculate_description_visual_height(state: &AppState, item: &crate::todo::TodoItem) -> usize {
     if let Some(ref desc) = item.description {
         // Calculate box width similar to rendering
         let available_width = state.terminal_width.saturating_sub(2) as usize;
@@ -640,7 +654,9 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::EditDescription => {
             if state.selected_item().is_some() {
-                let description = state.selected_item().and_then(|item| item.description.clone());
+                let description = state
+                    .selected_item()
+                    .and_then(|item| item.description.clone());
                 let desc_buffer: Vec<String> = match &description {
                     Some(desc) => desc.split('\n').map(String::from).collect(),
                     None => vec![String::new()],
@@ -774,7 +790,9 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             // Check if we have pending rollover data, or try to find new candidates
             if state.has_pending_rollover() {
                 state.mode = Mode::Rollover;
-            } else if let Ok(Some((source_date, items))) = find_rollover_candidates_for_project(&state.current_project.name) {
+            } else if let Ok(Some((source_date, items))) =
+                find_rollover_candidates_for_project(&state.current_project.name)
+            {
                 state.open_rollover_modal(source_date, items);
             } else {
                 state.set_status_message("No incomplete items to rollover".to_string());
@@ -817,35 +835,33 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 }
             }
         }
-        Action::CopyLogPath => {
-            match get_logs_dir() {
-                Ok(logs_dir) => {
-                    let path_str = logs_dir.join("totui.log").display().to_string();
-                    match copy_to_clipboard(&path_str) {
-                        Ok(CopyResult::SystemClipboard) => {
-                            state.set_status_message(format!("Log path copied: {}", path_str));
-                        }
-                        Ok(CopyResult::InternalBuffer { file_path }) => {
-                            let msg = match file_path {
-                                Some(fp) => format!(
-                                    "Log path copied to buffer: {} | Saved to {}",
-                                    path_str,
-                                    fp.display()
-                                ),
-                                None => format!("Log path copied to buffer: {}", path_str),
-                            };
-                            state.set_status_message(msg);
-                        }
-                        Err(e) => {
-                            state.set_status_message(format!("Could not copy log path: {}", e));
-                        }
+        Action::CopyLogPath => match get_logs_dir() {
+            Ok(logs_dir) => {
+                let path_str = logs_dir.join("totui.log").display().to_string();
+                match copy_to_clipboard(&path_str) {
+                    Ok(CopyResult::SystemClipboard) => {
+                        state.set_status_message(format!("Log path copied: {}", path_str));
+                    }
+                    Ok(CopyResult::InternalBuffer { file_path }) => {
+                        let msg = match file_path {
+                            Some(fp) => format!(
+                                "Log path copied to buffer: {} | Saved to {}",
+                                path_str,
+                                fp.display()
+                            ),
+                            None => format!("Log path copied to buffer: {}", path_str),
+                        };
+                        state.set_status_message(msg);
+                    }
+                    Err(e) => {
+                        state.set_status_message(format!("Could not copy log path: {}", e));
                     }
                 }
-                Err(e) => {
-                    state.set_status_message(format!("Could not copy log path: {}", e));
-                }
             }
-        }
+            Err(e) => {
+                state.set_status_message(format!("Could not copy log path: {}", e));
+            }
+        },
         _ => {}
     }
     Ok(())
@@ -965,7 +981,11 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
 
             // Execute rollover
             if let Some(pending) = state.pending_rollover.take() {
-                let new_list = execute_rollover_for_project(&state.current_project.name, pending.source_date, pending.items)?;
+                let new_list = execute_rollover_for_project(
+                    &state.current_project.name,
+                    pending.source_date,
+                    pending.items,
+                )?;
                 state.replace_with_current_day_list(new_list);
                 state.set_status_message("Rolled over incomplete items".to_string());
             }
@@ -975,7 +995,11 @@ fn handle_rollover_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
                 persist_auto_rollover_pref(state, crate::config::AutoRolloverPref::AutoYes);
             }
         }
-        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Esc => {
+        KeyCode::Char('n')
+        | KeyCode::Char('N')
+        | KeyCode::Char('l')
+        | KeyCode::Char('L')
+        | KeyCode::Esc => {
             let remember = state
                 .pending_rollover
                 .as_ref()
@@ -1140,7 +1164,10 @@ fn handle_plugin_upgrade_mode(
     plugin_sub_state: &PluginUpgradeSubState,
 ) -> Result<()> {
     match plugin_sub_state {
-        PluginUpgradeSubState::PluginList { updates, selected_index } => {
+        PluginUpgradeSubState::PluginList {
+            updates,
+            selected_index,
+        } => {
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     if *selected_index > 0 {
@@ -1201,7 +1228,9 @@ fn handle_plugin_upgrade_mode(
                 }
             }
         }
-        PluginUpgradeSubState::Complete { remaining_updates, .. } => {
+        PluginUpgradeSubState::Complete {
+            remaining_updates, ..
+        } => {
             match key.code {
                 KeyCode::Enter => {
                     // Continue to next plugin or exit
@@ -1218,11 +1247,19 @@ fn handle_plugin_upgrade_mode(
                 _ => {}
             }
         }
-        PluginUpgradeSubState::Error { plugin_name, remaining_updates, .. } => {
+        PluginUpgradeSubState::Error {
+            plugin_name,
+            remaining_updates,
+            ..
+        } => {
             match key.code {
                 KeyCode::Char('r') | KeyCode::Char('R') => {
                     // Retry - find the plugin and start download again
-                    if let Some(plugin) = state.plugin_updates_available.iter().find(|p| &p.plugin_name == plugin_name) {
+                    if let Some(plugin) = state
+                        .plugin_updates_available
+                        .iter()
+                        .find(|p| &p.plugin_name == plugin_name)
+                    {
                         state.start_plugin_download(&plugin.clone());
                     }
                 }
@@ -1570,7 +1607,9 @@ fn handle_plugins_modal(
             plugin,
             marketplace_plugins,
             marketplace_index,
-        } => handle_plugins_modal_details(key, state, plugin, marketplace_plugins, marketplace_index),
+        } => {
+            handle_plugins_modal_details(key, state, plugin, marketplace_plugins, marketplace_index)
+        }
         PluginsModalState::Input {
             plugin_name,
             input_buffer,
@@ -1693,7 +1732,11 @@ fn handle_plugins_tabs(
         KeyCode::Down | KeyCode::Char('j') => {
             match active_tab {
                 PluginsTab::Installed => {
-                    let max = state.plugin_loader.loaded_plugins().count().saturating_sub(1);
+                    let max = state
+                        .plugin_loader
+                        .loaded_plugins()
+                        .count()
+                        .saturating_sub(1);
                     if installed_index < max {
                         installed_index += 1;
                     }
@@ -1853,15 +1896,17 @@ fn handle_plugins_modal_input(
                 plugin_name: plugin_name.clone(),
             });
 
-            match state.plugin_loader.spawn_generate(&plugin_name, &input_buffer) {
+            match state
+                .plugin_loader
+                .spawn_generate(&plugin_name, &input_buffer)
+            {
                 Ok(rx) => {
                     state.plugin_result_rx = Some(rx);
                     state.plugin_result_source = Some(PluginResultSource::PluginsModal);
                 }
                 Err(e) => {
-                    state.plugins_modal_state = Some(PluginsModalState::Error {
-                        message: e.message,
-                    });
+                    state.plugins_modal_state =
+                        Some(PluginsModalState::Error { message: e.message });
                 }
             }
         }
@@ -1929,7 +1974,9 @@ fn handle_plugins_modal_input(
 
 /// Parse Select field options from "display|value" format.
 /// If no pipe separator, uses the same value for both display and value.
-fn parse_select_options(options: &abi_stable::std_types::RVec<abi_stable::std_types::RString>) -> Vec<(String, String)> {
+fn parse_select_options(
+    options: &abi_stable::std_types::RVec<abi_stable::std_types::RString>,
+) -> Vec<(String, String)> {
     options
         .iter()
         .map(|opt| {
@@ -2277,15 +2324,16 @@ fn handle_plugin_input(
                 plugin_name: plugin_name.clone(),
             });
 
-            match state.plugin_loader.spawn_generate(&plugin_name, &input_buffer) {
+            match state
+                .plugin_loader
+                .spawn_generate(&plugin_name, &input_buffer)
+            {
                 Ok(rx) => {
                     state.plugin_result_rx = Some(rx);
                     state.plugin_result_source = Some(PluginResultSource::PluginSubState);
                 }
                 Err(e) => {
-                    state.plugin_state = Some(PluginSubState::Error {
-                        message: e.message,
-                    });
+                    state.plugin_state = Some(PluginSubState::Error { message: e.message });
                 }
             }
             return Ok(());
@@ -2467,8 +2515,9 @@ fn handle_project_selecting(
                         selected_index,
                     });
                 } else if project.name == state.current_project.name {
-                    state
-                        .set_status_message("Cannot delete the currently active project".to_string());
+                    state.set_status_message(
+                        "Cannot delete the currently active project".to_string(),
+                    );
                     state.project_state = Some(ProjectSubState::Selecting {
                         projects,
                         selected_index,
@@ -2780,11 +2829,13 @@ fn handle_move_to_project_mode(key: KeyEvent, state: &mut AppState) -> Result<()
                             Ok(count) => {
                                 state.set_status_message(format!(
                                     "Moved {} item(s) to '{}'",
-                                    count,
-                                    dest_project.name
+                                    count, dest_project.name
                                 ));
                                 // Save source list
-                                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+                                save_todo_list_for_project(
+                                    &state.todo_list,
+                                    &state.current_project.name,
+                                )?;
                                 state.unsaved_changes = false;
                                 state.last_save_time = Some(std::time::Instant::now());
                             }
@@ -2843,7 +2894,9 @@ fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<(
             let current_line = state.desc_buffer[state.desc_cursor_row].clone();
             let (before, after) = current_line.split_at(state.desc_cursor_col);
             state.desc_buffer[state.desc_cursor_row] = before.to_string();
-            state.desc_buffer.insert(state.desc_cursor_row + 1, after.to_string());
+            state
+                .desc_buffer
+                .insert(state.desc_cursor_row + 1, after.to_string());
             state.desc_cursor_row += 1;
             state.desc_cursor_col = 0;
         }
@@ -2853,8 +2906,7 @@ fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<(
                     &state.desc_buffer[state.desc_cursor_row],
                     state.desc_cursor_col,
                 );
-                state.desc_buffer[state.desc_cursor_row]
-                    .drain(prev..state.desc_cursor_col);
+                state.desc_buffer[state.desc_cursor_row].drain(prev..state.desc_cursor_col);
                 state.desc_cursor_col = prev;
             } else if state.desc_cursor_row > 0 {
                 // Merge with previous line
@@ -2871,8 +2923,7 @@ fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<(
                     &state.desc_buffer[state.desc_cursor_row],
                     state.desc_cursor_col,
                 );
-                state.desc_buffer[state.desc_cursor_row]
-                    .drain(state.desc_cursor_col..next);
+                state.desc_buffer[state.desc_cursor_row].drain(state.desc_cursor_col..next);
             } else if state.desc_cursor_row + 1 < state.desc_buffer.len() {
                 // Merge next line into current
                 let next_line = state.desc_buffer.remove(state.desc_cursor_row + 1);
@@ -2931,8 +2982,7 @@ fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<(
             state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
         }
         KeyCode::Char(c) => {
-            state.desc_buffer[state.desc_cursor_row]
-                .insert(state.desc_cursor_col, c);
+            state.desc_buffer[state.desc_cursor_row].insert(state.desc_cursor_col, c);
             state.desc_cursor_col += c.len_utf8();
         }
         _ => {}
@@ -3090,5 +3140,26 @@ mod rollover_tests {
         let before = state.auto_rollover_pref;
         handle_rollover_mode(key(KeyCode::Char('n')), &mut state).unwrap();
         assert_eq!(state.auto_rollover_pref, before);
+    }
+
+    #[test]
+    fn help_navigation_supports_page_and_boundary_keys() {
+        let mut state = make_state_in_rollover_mode();
+        state.show_help = true;
+        state.help_scroll = 5;
+        state.help_page_size = 7;
+        state.help_max_scroll = 20;
+
+        handle_key_event(key(KeyCode::PageDown), &mut state).unwrap();
+        assert_eq!(state.help_scroll, 12);
+
+        handle_key_event(key(KeyCode::End), &mut state).unwrap();
+        assert_eq!(state.help_scroll, 20);
+
+        handle_key_event(key(KeyCode::PageUp), &mut state).unwrap();
+        assert_eq!(state.help_scroll, 13);
+
+        handle_key_event(key(KeyCode::Home), &mut state).unwrap();
+        assert_eq!(state.help_scroll, 0);
     }
 }

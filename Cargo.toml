@@ -20,7 +20,7 @@ name = "totui-mcp"
 path = "src/bin/totui-mcp.rs"
 
 [dependencies]
-ratatui = "0.30"
+ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }

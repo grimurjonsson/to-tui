@@ -447,10 +447,13 @@ pub struct KeybindingCache {
     navigate_single: HashMap<KeyBinding, Action>,
     navigate_sequences: HashMap<KeyBinding, HashMap<KeyBinding, Action>>,
     navigate_sequence_starters: HashSet<KeyBinding>,
+    navigate_bindings: HashMap<Action, Vec<String>>,
 
     edit_single: HashMap<KeyBinding, Action>,
+    edit_bindings: HashMap<Action, Vec<String>>,
 
     visual_single: HashMap<KeyBinding, Action>,
+    visual_bindings: HashMap<Action, Vec<String>>,
 }
 
 impl KeybindingCache {
@@ -459,12 +462,15 @@ impl KeybindingCache {
         let mut navigate_sequences: HashMap<KeyBinding, HashMap<KeyBinding, Action>> =
             HashMap::new();
         let mut navigate_sequence_starters = HashSet::new();
+        let mut navigate_bindings = HashMap::new();
         let mut edit_single = HashMap::new();
+        let mut edit_bindings = HashMap::new();
 
         for (key_str, action_str) in &config.navigate {
             if let (Ok(seq), Ok(action)) =
                 (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
             {
+                add_binding_label(&mut navigate_bindings, action, &seq);
                 if seq.is_single() {
                     navigate_single.insert(seq.0[0], action);
                 } else {
@@ -482,26 +488,34 @@ impl KeybindingCache {
         for (key_str, action_str) in &config.edit {
             if let (Ok(seq), Ok(action)) =
                 (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
-                && seq.is_single() {
-                    edit_single.insert(seq.0[0], action);
-                }
+                && seq.is_single()
+            {
+                add_binding_label(&mut edit_bindings, action, &seq);
+                edit_single.insert(seq.0[0], action);
+            }
         }
 
         let mut visual_single = HashMap::new();
+        let mut visual_bindings = HashMap::new();
         for (key_str, action_str) in &config.visual {
             if let (Ok(seq), Ok(action)) =
                 (key_str.parse::<KeySequence>(), action_str.parse::<Action>())
-                && seq.is_single() {
-                    visual_single.insert(seq.0[0], action);
-                }
+                && seq.is_single()
+            {
+                add_binding_label(&mut visual_bindings, action, &seq);
+                visual_single.insert(seq.0[0], action);
+            }
         }
 
         Self {
             navigate_single,
             navigate_sequences,
             navigate_sequence_starters,
+            navigate_bindings,
             edit_single,
+            edit_bindings,
             visual_single,
+            visual_bindings,
         }
     }
 
@@ -514,9 +528,10 @@ impl KeybindingCache {
 
         if let Some(first_key) = pending {
             if let Some(second_map) = self.navigate_sequences.get(&first_key)
-                && let Some(&action) = second_map.get(&binding) {
-                    return KeyLookupResult::Action(action);
-                }
+                && let Some(&action) = second_map.get(&binding)
+            {
+                return KeyLookupResult::Action(action);
+            }
             return KeyLookupResult::None;
         }
 
@@ -542,6 +557,18 @@ impl KeybindingCache {
     pub fn get_visual_action(&self, event: &KeyEvent) -> Option<Action> {
         let binding = KeyBinding::from_event(event);
         self.visual_single.get(&binding).copied()
+    }
+
+    pub fn navigate_bindings_for(&self, action: Action) -> Option<&[String]> {
+        self.navigate_bindings.get(&action).map(Vec::as_slice)
+    }
+
+    pub fn edit_bindings_for(&self, action: Action) -> Option<&[String]> {
+        self.edit_bindings.get(&action).map(Vec::as_slice)
+    }
+
+    pub fn visual_bindings_for(&self, action: Action) -> Option<&[String]> {
+        self.visual_bindings.get(&action).map(Vec::as_slice)
     }
 }
 
@@ -586,6 +613,81 @@ impl KeybindingsConfig {
         // plugins has no defaults - user overrides only
 
         self
+    }
+}
+
+fn add_binding_label(
+    bindings: &mut HashMap<Action, Vec<String>>,
+    action: Action,
+    sequence: &KeySequence,
+) {
+    let labels = bindings.entry(action).or_default();
+    let label = format_key_sequence(sequence);
+    if !labels.contains(&label) {
+        labels.push(label);
+        labels.sort();
+    }
+}
+
+fn format_key_sequence(sequence: &KeySequence) -> String {
+    if sequence
+        .0
+        .iter()
+        .all(|binding| matches!(binding.code, KeyCode::Char(_)) && binding.modifiers.is_empty())
+    {
+        return sequence
+            .0
+            .iter()
+            .filter_map(|binding| match binding.code {
+                KeyCode::Char(character) => Some(character),
+                _ => None,
+            })
+            .collect();
+    }
+
+    sequence
+        .0
+        .iter()
+        .map(format_key_binding)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_key_binding(binding: &KeyBinding) -> String {
+    let mut modifiers = Vec::new();
+    if binding.modifiers.contains(KeyModifiers::CONTROL) {
+        modifiers.push("Ctrl");
+    }
+    if binding.modifiers.contains(KeyModifiers::ALT) {
+        modifiers.push("Alt");
+    }
+    if binding.modifiers.contains(KeyModifiers::SHIFT) {
+        modifiers.push("Shift");
+    }
+
+    let key = match binding.code {
+        KeyCode::Char(' ') => "Space".to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Up => "↑".to_string(),
+        KeyCode::Down => "↓".to_string(),
+        KeyCode::Left => "←".to_string(),
+        KeyCode::Right => "→".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "Shift+Tab".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Esc => "Esc".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::F(number) => format!("F{number}"),
+        _ => format!("{:?}", binding.code),
+    };
+
+    if modifiers.is_empty() || binding.code == KeyCode::BackTab {
+        key
+    } else {
+        format!("{}+{key}", modifiers.join("+"))
     }
 }
 
@@ -782,6 +884,25 @@ mod tests {
 
         let result2 = cache.lookup_navigate(&d_event, Some(d_binding));
         assert_eq!(result2, KeyLookupResult::Action(Action::Delete));
+    }
+
+    #[test]
+    fn test_cache_exposes_configured_binding_labels() {
+        let mut config = KeybindingsConfig::default();
+        config
+            .navigate
+            .insert("<C-n>".to_string(), "new_item".to_string());
+
+        let cache = KeybindingCache::from_config(&config);
+        let labels = cache.navigate_bindings_for(Action::NewItem).unwrap();
+
+        assert!(labels.contains(&"Ctrl+n".to_string()));
+        assert!(
+            cache
+                .navigate_bindings_for(Action::Delete)
+                .unwrap()
+                .contains(&"dd".to_string())
+        );
     }
 
     #[test]

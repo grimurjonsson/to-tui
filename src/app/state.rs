@@ -1,19 +1,20 @@
 use super::mode::Mode;
 use crate::keybindings::{KeyBinding, KeybindingCache};
 use crate::plugin::{
-    marketplace::PluginEntry, GeneratorInfo, HookDispatcher, PluginActionRegistry, PluginLoadError,
-    PluginLoader,
+    GeneratorInfo, HookDispatcher, PluginActionRegistry, PluginLoadError, PluginLoader,
+    marketplace::PluginEntry,
 };
 use crate::project::{Project, ProjectRegistry};
+use crate::storage::UiCache;
 use crate::storage::file::{load_todo_list_for_project, load_todos_for_viewing_in_project};
 use crate::storage::rollover::find_rollover_candidates_for_project;
-use crate::storage::UiCache;
 use crate::todo::{PriorityCycle, TodoItem, TodoList};
 use crate::ui::theme::Theme;
 use crate::utils::upgrade::{
-    get_asset_download_url, spawn_download, DownloadProgress, PluginUpgradeSubState, UpgradeSubState,
+    DownloadProgress, PluginUpgradeSubState, UpgradeSubState, get_asset_download_url,
+    spawn_download,
 };
-use crate::utils::version_check::{spawn_version_checker, PluginUpdateInfo, VersionCheckResult};
+use crate::utils::version_check::{PluginUpdateInfo, VersionCheckResult, spawn_version_checker};
 use anyhow::Result;
 use chrono::{Duration, Local, NaiveDate};
 use ratatui::widgets::ListState;
@@ -68,17 +69,11 @@ pub enum PluginsModalState {
         selected_index: usize,
     },
     /// Executing plugin
-    Executing {
-        plugin_name: String,
-    },
+    Executing { plugin_name: String },
     /// Preview generated items
-    Preview {
-        items: Vec<TodoItem>,
-    },
+    Preview { items: Vec<TodoItem> },
     /// Error display
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Tracks which UI flow initiated a plugin generate call,
@@ -147,7 +142,7 @@ pub enum MoveToProjectSubState {
     Selecting {
         projects: Vec<Project>,
         selected_index: usize,
-        item_index: usize,  // Index of item being moved
+        item_index: usize, // Index of item being moved
     },
 }
 
@@ -193,6 +188,10 @@ pub struct AppState {
     pub terminal_height: u16,
     /// Help overlay scroll offset
     pub help_scroll: u16,
+    /// Largest valid help overlay scroll offset, updated during rendering.
+    pub help_max_scroll: u16,
+    /// Number of visible help lines, updated during rendering.
+    pub help_page_size: u16,
     /// New version available (if any)
     pub new_version_available: Option<String>,
     /// Receiver for version check results
@@ -314,6 +313,8 @@ impl AppState {
             terminal_width: 80,  // Default, updated on first render
             terminal_height: 24, // Default, updated on first render
             help_scroll: 0,
+            help_max_scroll: 0,
+            help_page_size: 1,
             new_version_available: None,
             version_check_rx: spawn_version_checker(),
             session_dismissed_upgrade: false,
@@ -355,7 +356,10 @@ impl AppState {
 
     /// Get the currently selected todo's ID for caching
     pub fn get_selected_todo_id(&self) -> Option<Uuid> {
-        self.todo_list.items.get(self.cursor_position).map(|item| item.id)
+        self.todo_list
+            .items
+            .get(self.cursor_position)
+            .map(|item| item.id)
     }
 
     pub fn is_readonly(&self) -> bool {
@@ -481,7 +485,10 @@ impl AppState {
             }
             heights.push(Self::estimate_item_line_height(item, available_width));
             if !item.collapsed && item.description.is_some() {
-                heights.push(Self::estimate_description_line_height(item, available_width));
+                heights.push(Self::estimate_description_line_height(
+                    item,
+                    available_width,
+                ));
             }
         }
 
@@ -675,11 +682,19 @@ impl AppState {
 
     pub fn save_undo(&mut self) {
         if self.undo_stack.len() >= MAX_UNDO_HISTORY {
-            trace!("Undo stack full ({}), removing oldest entry", MAX_UNDO_HISTORY);
+            trace!(
+                "Undo stack full ({}), removing oldest entry",
+                MAX_UNDO_HISTORY
+            );
             self.undo_stack.remove(0);
         }
-        
-        let item_ids: Vec<String> = self.todo_list.items.iter().map(|i| i.id.to_string()).collect();
+
+        let item_ids: Vec<String> = self
+            .todo_list
+            .items
+            .iter()
+            .map(|i| i.id.to_string())
+            .collect();
         debug!(
             stack_depth = self.undo_stack.len() + 1,
             item_count = self.todo_list.items.len(),
@@ -687,16 +702,21 @@ impl AppState {
             ids = ?item_ids,
             "save_undo: pushing state to undo stack"
         );
-        
+
         self.undo_stack
             .push((self.todo_list.clone(), self.cursor_position));
     }
 
     pub fn undo(&mut self) -> bool {
         if let Some((list, cursor)) = self.undo_stack.pop() {
-            let old_ids: Vec<String> = self.todo_list.items.iter().map(|i| i.id.to_string()).collect();
+            let old_ids: Vec<String> = self
+                .todo_list
+                .items
+                .iter()
+                .map(|i| i.id.to_string())
+                .collect();
             let new_ids: Vec<String> = list.items.iter().map(|i| i.id.to_string()).collect();
-            
+
             debug!(
                 stack_depth_after = self.undo_stack.len(),
                 old_item_count = self.todo_list.items.len(),
@@ -707,7 +727,7 @@ impl AppState {
                 new_ids = ?new_ids,
                 "undo: restoring previous state"
             );
-            
+
             self.todo_list = list;
             self.cursor_position = cursor;
             self.unsaved_changes = true;
@@ -1050,9 +1070,10 @@ impl AppState {
 
     pub fn clear_expired_status_message(&mut self) {
         if let Some((_, time)) = &self.status_message
-            && time.elapsed().as_secs() > 3 {
-                self.status_message = None;
-            }
+            && time.elapsed().as_secs() > 3
+        {
+            self.status_message = None;
+        }
     }
 
     pub fn check_plugin_result(&mut self) {
@@ -1103,8 +1124,7 @@ impl AppState {
                     let message = "Plugin execution thread crashed".to_string();
                     match source {
                         Some(PluginResultSource::PluginsModal) => {
-                            self.plugins_modal_state =
-                                Some(PluginsModalState::Error { message });
+                            self.plugins_modal_state = Some(PluginsModalState::Error { message });
                         }
                         Some(PluginResultSource::PluginSubState) | None => {
                             self.plugin_state = Some(PluginSubState::Error { message });
@@ -1427,9 +1447,7 @@ impl AppState {
                         break;
                     }
                 }
-                found_dir.ok_or_else(|| {
-                    anyhow::anyhow!("No plugin.toml found in archive")
-                })?
+                found_dir.ok_or_else(|| anyhow::anyhow!("No plugin.toml found in archive"))?
             };
 
             // Remove old plugin directory if it exists
@@ -1564,7 +1582,10 @@ impl AppState {
 
         // Fire event for state change on the main item (not all children)
         if let Some(ffi_item) = self.todo_to_ffi(self.cursor_position) {
-            let event = if self.todo_list.items[self.cursor_position].state.is_complete() {
+            let event = if self.todo_list.items[self.cursor_position]
+                .state
+                .is_complete()
+            {
                 FfiEvent::OnComplete { todo: ffi_item }
             } else {
                 FfiEvent::OnModify {
@@ -1589,7 +1610,10 @@ impl AppState {
 
                 // Fire event for state change
                 if let Some(ffi_item) = self.todo_to_ffi(self.cursor_position) {
-                    let event = if self.todo_list.items[self.cursor_position].state.is_complete() {
+                    let event = if self.todo_list.items[self.cursor_position]
+                        .state
+                        .is_complete()
+                    {
                         FfiEvent::OnComplete { todo: ffi_item }
                     } else {
                         FfiEvent::OnModify {
@@ -1623,7 +1647,10 @@ impl AppState {
                     .priority
                     .map(|p| p.to_string())
                     .unwrap_or_else(|| "None".to_string());
-                self.status_message = Some((format!("Priority: {}", priority_str), std::time::Instant::now()));
+                self.status_message = Some((
+                    format!("Priority: {}", priority_str),
+                    std::time::Instant::now(),
+                ));
                 self.unsaved_changes = true;
             }
         }
@@ -1787,10 +1814,7 @@ impl AppState {
     ///   the user answers, then rollover advances it)
     /// - `AutoNo`, or no candidates for any preference → advance the view to
     ///   today without prompting or rolling over
-    pub fn apply_rollover_preference(
-        &mut self,
-        candidates: Option<(NaiveDate, Vec<TodoItem>)>,
-    ) {
+    pub fn apply_rollover_preference(&mut self, candidates: Option<(NaiveDate, Vec<TodoItem>)>) {
         match (self.auto_rollover_pref, candidates) {
             (crate::config::AutoRolloverPref::AutoYes, Some((source_date, items))) => {
                 self.execute_rollover_silently(source_date, items);
@@ -1839,10 +1863,8 @@ impl AppState {
     /// Used when no incomplete items exist to roll over.
     fn silently_advance_to_today(&mut self) -> anyhow::Result<()> {
         let today = Local::now().date_naive();
-        let new_list = crate::storage::file::load_todo_list_for_project(
-            &self.current_project.name,
-            today,
-        )?;
+        let new_list =
+            crate::storage::file::load_todo_list_for_project(&self.current_project.name, today)?;
         self.replace_with_current_day_list(new_list);
         Ok(())
     }
@@ -1888,7 +1910,10 @@ impl AppState {
     pub fn switch_project(&mut self, project: Project) -> Result<()> {
         // Save any unsaved changes first to the CURRENT project before switching
         if self.unsaved_changes {
-            crate::storage::file::save_todo_list_for_project(&self.todo_list, &self.current_project.name)?;
+            crate::storage::file::save_todo_list_for_project(
+                &self.todo_list,
+                &self.current_project.name,
+            )?;
             self.unsaved_changes = false;
         }
 
@@ -1926,7 +1951,7 @@ impl AppState {
         let projects: Vec<Project> = registry
             .list_sorted()
             .into_iter()
-            .filter(|p| p.name != self.current_project.name)  // Exclude current
+            .filter(|p| p.name != self.current_project.name) // Exclude current
             .cloned()
             .collect();
 
@@ -2003,8 +2028,8 @@ impl AppState {
             .into_iter()
             .map(|mut item| {
                 item.indent_level = item.indent_level.saturating_sub(base_indent);
-                item.id = uuid::Uuid::new_v4();  // New IDs for destination
-                item.parent_id = None;  // Will be recalculated
+                item.id = uuid::Uuid::new_v4(); // New IDs for destination
+                item.parent_id = None; // Will be recalculated
                 item
             })
             .collect();
@@ -2274,8 +2299,7 @@ fn extract_todo_content(s: &str) -> Option<String> {
                             pos
                         } else {
                             // No fold icon (no children) - fold icon was 2 spaces
-                            let leading =
-                                prefix.len() - prefix.trim_start_matches(' ').len();
+                            let leading = prefix.len() - prefix.trim_start_matches(' ').len();
                             leading.saturating_sub(2)
                         };
 
@@ -2384,10 +2408,7 @@ mod tests {
         });
         state.check_midnight_rollover();
         // pending_rollover unchanged
-        assert_eq!(
-            state.pending_rollover.as_ref().unwrap().source_date,
-            source
-        );
+        assert_eq!(state.pending_rollover.as_ref().unwrap().source_date, source);
     }
 
     #[test]
@@ -2455,10 +2476,7 @@ mod tests {
         let source = Local::now().date_naive() - chrono::Duration::days(1);
         state.apply_rollover_preference(Some((source, vec![TodoItem::new("X".to_string(), 0)])));
         assert_eq!(state.mode, Mode::Rollover, "Ask must open the modal");
-        assert_eq!(
-            state.pending_rollover.as_ref().unwrap().source_date,
-            source
-        );
+        assert_eq!(state.pending_rollover.as_ref().unwrap().source_date, source);
     }
 
     #[test]
@@ -2566,7 +2584,10 @@ mod tests {
         state.mode = Mode::Navigate;
         let should_show = !state.session_dismissed_upgrade
             && state.skipped_version.as_ref() != state.new_version_available.as_ref();
-        assert_eq!(should_show, false, "Should not auto-show after session dismiss");
+        assert_eq!(
+            should_show, false,
+            "Should not auto-show after session dismiss"
+        );
     }
 
     #[test]
@@ -2717,9 +2738,7 @@ mod tests {
     #[test]
     fn test_handle_plugin_panic() {
         use crate::keybindings::KeybindingCache;
-        use crate::plugin::{
-            PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader,
-        };
+        use crate::plugin::{PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader};
         use crate::todo::TodoList;
         use crate::ui::theme::Theme;
         use chrono::Local;
@@ -2850,9 +2869,7 @@ mod tests {
     #[test]
     fn test_dismiss_plugin_error_popup() {
         use crate::keybindings::KeybindingCache;
-        use crate::plugin::{
-            PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader,
-        };
+        use crate::plugin::{PluginActionRegistry, PluginErrorKind, PluginLoadError, PluginLoader};
         use crate::todo::TodoList;
         use crate::ui::theme::Theme;
         use chrono::Local;
@@ -2914,8 +2931,7 @@ mod tests {
     #[test]
     fn test_clean_selection_joins_wrapped_lines() {
         // indent_level=0 with fold icon
-        let input =
-            "│▶ [ ] This is a very long todo item       │\n│        that wraps to the next line       │";
+        let input = "│▶ [ ] This is a very long todo item       │\n│        that wraps to the next line       │";
         let result = clean_selection_text(input);
         assert_eq!(
             result,
@@ -2928,10 +2944,7 @@ mod tests {
         // indent_level=0 with fold icon ▼
         let input = "│▼ [ ] Task with desc                      │\n│    ╭──────────────────╮│\n│    │ Some notes here  ││\n│    │ More notes       ││\n│    ╰──────────────────╯│";
         let result = clean_selection_text(input);
-        assert_eq!(
-            result,
-            "[ ] Task with desc\nSome notes here\nMore notes"
-        );
+        assert_eq!(result, "[ ] Task with desc\nSome notes here\nMore notes");
     }
 
     #[test]
@@ -2986,10 +2999,7 @@ mod tests {
         // Selecting just description content with scrollbar and decorative borders
         let input = "╭──────────────────────────────╮█\n│ Line one of description      │█\n│ Line two of description      │█\n╰──────────────────────────────╯█";
         let result = clean_selection_text(input);
-        assert_eq!(
-            result,
-            "Line one of description\nLine two of description"
-        );
+        assert_eq!(result, "Line one of description\nLine two of description");
     }
 
     #[test]
