@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{Local, NaiveDate};
 use std::fs;
 use std::path::PathBuf;
@@ -58,11 +58,9 @@ pub fn get_plugins_dir() -> Result<PathBuf> {
 ///
 /// Returns ~/.config/to-tui/plugins/<name>/ using XDG config directory.
 pub fn get_plugin_config_dir(plugin_name: &str) -> Result<PathBuf> {
-    let config_dir = dirs::config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
-    Ok(config_dir
-        .join("to-tui")
-        .join("plugins")
-        .join(plugin_name))
+    let config_dir =
+        dirs::config_dir().ok_or_else(|| anyhow!("Could not find config directory"))?;
+    Ok(config_dir.join("to-tui").join("plugins").join(plugin_name))
 }
 
 /// Get the config file path for a specific plugin.

@@ -17,10 +17,10 @@ use chrono::Local;
 use clap::Parser;
 use cli::{Cli, Commands, DEFAULT_API_PORT, PluginCommand, ServeCommand};
 use config::Config;
-use plugin::{PluginActionRegistry, PluginLoader, PluginManager};
-use plugin::config::{generate_config_template, PluginConfigLoader};
-use utils::paths::{get_logs_dir, get_plugin_config_dir, get_plugin_config_path};
 use keybindings::KeybindingCache;
+use plugin::config::{PluginConfigLoader, generate_config_template};
+use plugin::{PluginActionRegistry, PluginLoader, PluginManager};
+use project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry};
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -28,12 +28,12 @@ use std::net::TcpStream;
 use std::panic;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use project::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
-use storage::file::{file_exists_for_project, load_todo_list_for_project};
 use storage::file::save_todo_list_for_project;
-use storage::{ensure_installation_ready, find_rollover_candidates_for_project, UiCache};
+use storage::file::{file_exists_for_project, load_todo_list_for_project};
+use storage::{UiCache, ensure_installation_ready, find_rollover_candidates_for_project};
 use ui::theme::Theme;
 use utils::paths::{get_crash_log_path, get_daily_file_path_for_project, get_pid_file_path};
+use utils::paths::{get_logs_dir, get_plugin_config_dir, get_plugin_config_path};
 
 /// Load today's todo list for a specific project without prompting for rollover.
 /// Creates an empty list if no existing todos are found.
@@ -96,7 +96,10 @@ fn install_crash_handler() {
             }
 
             // Add backtrace
-            crash_report.push_str(&format!("\nBacktrace:\n{}\n", std::backtrace::Backtrace::force_capture()));
+            crash_report.push_str(&format!(
+                "\nBacktrace:\n{}\n",
+                std::backtrace::Backtrace::force_capture()
+            ));
             crash_report.push('\n');
 
             // Append to crash log
@@ -138,7 +141,9 @@ fn init_file_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     if log_file_path.exists() {
         if let Ok(metadata) = fs::metadata(&log_file_path) {
             if let Ok(modified) = metadata.modified() {
-                let modified_date = chrono::DateTime::<Local>::from(modified).format("%Y-%m-%d").to_string();
+                let modified_date = chrono::DateTime::<Local>::from(modified)
+                    .format("%Y-%m-%d")
+                    .to_string();
                 let today = Local::now().format("%Y-%m-%d").to_string();
                 if modified_date != today {
                     let rolled_name = logs_dir.join(format!("totui.log.{}", modified_date));
@@ -228,7 +233,8 @@ fn main() -> Result<()> {
 
             // Load dynamic plugins with config validation
             let mut plugin_loader = PluginLoader::new();
-            let (mut plugin_errors, config_errors) = plugin_loader.load_all_with_config(&plugin_manager);
+            let (mut plugin_errors, config_errors) =
+                plugin_loader.load_all_with_config(&plugin_manager);
 
             // Log load errors
             if !plugin_errors.is_empty() {
@@ -280,11 +286,8 @@ fn main() -> Result<()> {
                         .cloned()
                         .unwrap_or_default();
 
-                    let warnings = registry.register_plugin(
-                        &plugin_info.manifest,
-                        &overrides,
-                        &keybindings,
-                    );
+                    let warnings =
+                        registry.register_plugin(&plugin_info.manifest, &overrides, &keybindings);
 
                     for warning in warnings {
                         tracing::warn!("{}", warning);
@@ -475,9 +478,10 @@ fn write_pid_file(pid: u32) -> Result<()> {
     let pid_path = get_pid_file_path()?;
 
     if let Some(parent) = pid_path.parent()
-        && !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)?;
+    }
 
     fs::write(&pid_path, pid.to_string())?;
     Ok(())
@@ -560,7 +564,8 @@ fn handle_show(date: Option<String>, project: Option<String>) -> Result<()> {
                 let list = load_today_list_for_project(project_name)?;
                 (list.items, today, false)
             } else {
-                let items = storage::load_archived_todos_for_date_and_project(parsed_date, project_name)?;
+                let items =
+                    storage::load_archived_todos_for_date_and_project(parsed_date, project_name)?;
                 (items, parsed_date, true)
             }
         } else {
@@ -591,7 +596,12 @@ fn handle_show(date: Option<String>, project: Option<String>) -> Result<()> {
     } else {
         "📋 Todo List"
     };
-    println!("\n{}{} - {}\n", label, project_label, display_date.format("%B %d, %Y"));
+    println!(
+        "\n{}{} - {}\n",
+        label,
+        project_label,
+        display_date.format("%B %d, %Y")
+    );
 
     for (idx, item) in items.iter().enumerate() {
         let indent = "  ".repeat(item.indent_level);
@@ -746,10 +756,7 @@ fn select_items_interactive(items: &[todo::TodoItem]) -> Result<Vec<todo::TodoIt
         .items(&display_items)
         .interact()?;
 
-    Ok(selections
-        .into_iter()
-        .map(|i| items[i].clone())
-        .collect())
+    Ok(selections.into_iter().map(|i| items[i].clone()).collect())
 }
 
 fn handle_import_archive() -> Result<()> {
@@ -839,7 +846,11 @@ fn handle_plugin_command(command: PluginCommand) -> Result<()> {
             }
             Ok(())
         }
-        PluginCommand::Install { source, version, force } => {
+        PluginCommand::Install {
+            source,
+            version,
+            force,
+        } => {
             use plugin::installer::{PluginInstaller, PluginSource};
 
             let mut plugin_source = PluginSource::parse(&source)?;
@@ -1064,7 +1075,9 @@ fn handle_plugin_config(name: &str, init: bool) -> Result<()> {
                     println!("  {}{}: {}", field.name, req, type_name);
 
                     // Show options for Select fields
-                    if field.field_type == totui_plugin_interface::FfiConfigType::Select && !field.options.is_empty() {
+                    if field.field_type == totui_plugin_interface::FfiConfigType::Select
+                        && !field.options.is_empty()
+                    {
                         let opts: Vec<_> = field.options.iter().map(|s| s.as_str()).collect();
                         println!("      Options: {}", opts.join(", "));
                     }

@@ -3,10 +3,10 @@
 //! This module defines the core Plugin trait using `#[sabi_trait]` from abi_stable,
 //! which generates the necessary FFI-safe trait object types.
 
+use abi_stable::StableAbi;
 use abi_stable::sabi_trait;
 use abi_stable::std_types::{RBox, RHashMap, RResult, RString, RVec};
-use abi_stable::StableAbi;
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use crate::config::{FfiConfigSchema, FfiConfigValue};
 use crate::events::{FfiEvent, FfiEventType, FfiHookResponse};

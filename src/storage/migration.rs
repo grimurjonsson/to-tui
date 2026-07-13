@@ -26,7 +26,7 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::{debug, info};
 
-use crate::project::{ProjectRegistry, DEFAULT_PROJECT_NAME};
+use crate::project::{DEFAULT_PROJECT_NAME, ProjectRegistry};
 use crate::storage::database;
 use crate::utils::paths::{
     get_dailies_dir_for_project, get_legacy_dailies_dir, get_projects_dir, get_to_tui_dir,
@@ -78,7 +78,10 @@ pub fn initialize_fresh_install() -> Result<()> {
     let dailies_dir = get_dailies_dir_for_project(DEFAULT_PROJECT_NAME)?;
     if !dailies_dir.exists() {
         fs::create_dir_all(&dailies_dir)?;
-        debug!("Created default project dailies directory: {:?}", dailies_dir);
+        debug!(
+            "Created default project dailies directory: {:?}",
+            dailies_dir
+        );
     }
 
     info!("Fresh install initialized with default project");
@@ -118,9 +121,8 @@ fn migrate_dailies_directory() -> Result<()> {
 
             // Only move if destination doesn't exist (idempotent)
             if !new_path.exists() {
-                fs::rename(&path, &new_path).with_context(|| {
-                    format!("Failed to move {:?} to {:?}", path, new_path)
-                })?;
+                fs::rename(&path, &new_path)
+                    .with_context(|| format!("Failed to move {:?} to {:?}", path, new_path))?;
                 debug!("Moved {:?} to {:?}", path, new_path);
                 moved_count += 1;
             } else {

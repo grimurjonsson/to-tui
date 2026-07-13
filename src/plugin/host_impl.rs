@@ -195,8 +195,7 @@ impl HostApi for PluginHostApiImpl<'_> {
 
             // Filter by date range (using created_at)
             if let ROption::RSome(ref date_from_str) = query.date_from
-                && let Ok(date_from) =
-                    chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d")
+                && let Ok(date_from) = chrono::NaiveDate::parse_from_str(date_from_str, "%Y-%m-%d")
                 && item.created_at.date_naive() < date_from
             {
                 continue;
@@ -310,11 +309,11 @@ impl HostApi for PluginHostApiImpl<'_> {
         let mut results = RVec::new();
 
         for project_name in &self.enabled_projects {
-            let metadata_str =
-                match metadata::get_project_metadata(project_name, &self.plugin_name) {
-                    Ok(data) => data,
-                    Err(_) => continue,
-                };
+            let metadata_str = match metadata::get_project_metadata(project_name, &self.plugin_name)
+            {
+                Ok(data) => data,
+                Err(_) => continue,
+            };
 
             // Only include if metadata is not empty
             if metadata_str != "{}" {

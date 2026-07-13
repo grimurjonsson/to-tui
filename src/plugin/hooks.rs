@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use totui_plugin_interface::{call_plugin_on_event, FfiCommand, FfiEvent, FfiEventType};
+use totui_plugin_interface::{FfiCommand, FfiEvent, FfiEventType, call_plugin_on_event};
 
 use crate::plugin::loader::LoadedPlugin;
 
@@ -197,8 +197,8 @@ fn call_hook_with_timeout(
     event: FfiEvent,
     timeout: Duration,
 ) -> Result<totui_plugin_interface::FfiHookResponse, String> {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
 
     // Use atomic flag for timeout coordination

@@ -1,6 +1,9 @@
 /target
 .claude/
 release-binaries/
+.DS_Store
+to-tui-debug.log
+pi-extension/totui-mcp/node_modules/
 
 # Local planning docs
 DB_DESIGN.md

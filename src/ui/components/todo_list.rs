@@ -3,11 +3,11 @@ use crate::todo::{Priority, TodoState};
 use crate::ui::theme::Theme;
 use crate::utils::unicode::{after_first_char, first_char_as_str};
 use ratatui::{
+    Frame,
     layout::{Margin, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Scrollbar, ScrollbarOrientation, ScrollbarState},
-    Frame,
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -27,9 +27,7 @@ fn priority_badge(priority: Option<Priority>, theme: &Theme) -> Option<(String, 
 /// Used for prefix elements (indent, fold icon, checkbox)
 fn compute_base_style(state: TodoState, theme: &Theme, is_in_selection: bool) -> Style {
     if is_in_selection {
-        Style::default()
-            .bg(Color::DarkGray)
-            .fg(theme.foreground)
+        Style::default().bg(Color::DarkGray).fg(theme.foreground)
     } else {
         match state {
             TodoState::Checked => Style::default().fg(Color::DarkGray),
@@ -74,11 +72,7 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
         let is_collapsible = has_children || has_description;
 
         let fold_icon = if is_collapsible {
-            if item.collapsed {
-                "▶ "
-            } else {
-                "▼ "
-            }
+            if item.collapsed { "▶ " } else { "▼ " }
         } else {
             "  "
         };
@@ -116,7 +110,10 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
 
         // Get priority badge if item has priority
         let badge = priority_badge(item.priority, &state.theme);
-        let badge_width = badge.as_ref().map(|(text, _)| text.width() + 1).unwrap_or(0); // +1 for space after badge
+        let badge_width = badge
+            .as_ref()
+            .map(|(text, _)| text.width() + 1)
+            .unwrap_or(0); // +1 for space after badge
 
         let is_in_selection = state.is_selected(idx) && state.mode == Mode::Visual;
 
@@ -125,7 +122,8 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
         // Content style includes strikethrough for cancelled items
         let text_style = compute_content_style(item.state, &state.theme, is_in_selection);
 
-        let content_max_width = available_width.saturating_sub(prefix_width + badge_width + checkbox_width);
+        let content_max_width =
+            available_width.saturating_sub(prefix_width + badge_width + checkbox_width);
 
         let is_editing_this_item =
             state.mode == Mode::Edit && !state.is_creating_new_item && idx == state.cursor_position;
@@ -166,7 +164,8 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                 let display_text = format!("{truncated_content}{collapse_indicator}");
 
                 // Pad to full width for proper highlight
-                let current_width = prefix_width + badge_width + checkbox_width + display_text.width();
+                let current_width =
+                    prefix_width + badge_width + checkbox_width + display_text.width();
                 let padding = " ".repeat(available_width.saturating_sub(current_width));
 
                 let mut spans = vec![Span::styled(prefix.clone(), base_style)];
@@ -198,7 +197,8 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                 for (i, line_text) in wrapped_lines.iter().enumerate() {
                     if i == 0 {
                         // Pad to full width for proper highlight
-                        let current_width = prefix_width + badge_width + checkbox_width + line_text.width();
+                        let current_width =
+                            prefix_width + badge_width + checkbox_width + line_text.width();
                         let padding = " ".repeat(available_width.saturating_sub(current_width));
 
                         let mut spans = vec![Span::styled(prefix.clone(), base_style)];
@@ -240,126 +240,130 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
         }
 
         if !item.collapsed
-            && let Some(ref desc) = item.description {
-                let base_indent = "  ".repeat(item.indent_level);
-                let border_color = ratatui::style::Color::Rgb(100, 100, 120);
-                let text_color = ratatui::style::Color::Rgb(180, 180, 190);
+            && let Some(ref desc) = item.description
+        {
+            let base_indent = "  ".repeat(item.indent_level);
+            let border_color = ratatui::style::Color::Rgb(100, 100, 120);
+            let text_color = ratatui::style::Color::Rgb(180, 180, 190);
 
-                let top_left = "╭";
-                let top_right = "╮";
-                let bottom_left = "╰";
-                let bottom_right = "╯";
-                let horizontal = "─";
-                let vertical = "│";
+            let top_left = "╭";
+            let top_right = "╮";
+            let bottom_left = "╰";
+            let bottom_right = "╯";
+            let horizontal = "─";
+            let vertical = "│";
 
-                let box_indent = format!("{base_indent}    ");
-                let box_indent_width = box_indent.width();
-                let inner_width = available_width.saturating_sub(box_indent_width + 4);
-                let desc_wrapped = wrap_text(desc, inner_width);
+            let box_indent = format!("{base_indent}    ");
+            let box_indent_width = box_indent.width();
+            let inner_width = available_width.saturating_sub(box_indent_width + 4);
+            let desc_wrapped = wrap_text(desc, inner_width);
 
-                let border_width = inner_width + 2;
-                let top_border = format!(
-                    "{}{}{}",
-                    top_left,
-                    horizontal.repeat(border_width),
-                    top_right
-                );
-                let bottom_border = format!(
-                    "{}{}{}",
-                    bottom_left,
-                    horizontal.repeat(border_width),
-                    bottom_right
-                );
+            let border_width = inner_width + 2;
+            let top_border = format!(
+                "{}{}{}",
+                top_left,
+                horizontal.repeat(border_width),
+                top_right
+            );
+            let bottom_border = format!(
+                "{}{}{}",
+                bottom_left,
+                horizontal.repeat(border_width),
+                bottom_right
+            );
 
-                let border_style = Style::default().fg(border_color);
-                let text_style = Style::default().fg(text_color);
+            let border_style = Style::default().fg(border_color);
+            let text_style = Style::default().fg(text_color);
 
-                // Calculate how many lines we can afford for this description.
-                // ratatui's List drops items that don't fully fit, so we truncate
-                // the description to the remaining viewport budget.
-                let remaining = if list_item_index >= scroll_offset {
-                    viewport_height.saturating_sub(height_from_offset)
-                } else {
-                    viewport_height
-                };
-                let full_height = desc_wrapped.len() + 2; // content + top/bottom border
-                let max_lines = if full_height > remaining && remaining >= 2 {
-                    // Truncate: top border + as many content lines as fit
-                    remaining
-                } else {
-                    full_height
-                };
+            // Calculate how many lines we can afford for this description.
+            // ratatui's List drops items that don't fully fit, so we truncate
+            // the description to the remaining viewport budget.
+            let remaining = if list_item_index >= scroll_offset {
+                viewport_height.saturating_sub(height_from_offset)
+            } else {
+                viewport_height
+            };
+            let full_height = desc_wrapped.len() + 2; // content + top/bottom border
+            let max_lines = if full_height > remaining && remaining >= 2 {
+                // Truncate: top border + as many content lines as fit
+                remaining
+            } else {
+                full_height
+            };
 
-                let mut desc_lines: Vec<Line> = Vec::new();
+            let mut desc_lines: Vec<Line> = Vec::new();
 
-                if max_lines >= 2 {
+            if max_lines >= 2 {
+                desc_lines.push(Line::from(vec![
+                    Span::styled(box_indent.clone(), Style::default()),
+                    Span::styled(top_border, border_style),
+                ]));
+
+                let content_lines_budget = max_lines.saturating_sub(2); // reserve bottom border
+                let is_truncated = content_lines_budget < desc_wrapped.len();
+
+                for (i, line_text) in desc_wrapped.iter().enumerate() {
+                    if i >= content_lines_budget {
+                        break;
+                    }
+                    let padding = inner_width.saturating_sub(line_text.width());
+                    let padded_text = format!("{}{}", line_text, " ".repeat(padding));
                     desc_lines.push(Line::from(vec![
                         Span::styled(box_indent.clone(), Style::default()),
-                        Span::styled(top_border, border_style),
+                        Span::styled(format!("{vertical} "), border_style),
+                        Span::styled(padded_text, text_style),
+                        Span::styled(format!(" {vertical}"), border_style),
                     ]));
+                }
 
-                    let content_lines_budget = max_lines.saturating_sub(2); // reserve bottom border
-                    let is_truncated = content_lines_budget < desc_wrapped.len();
-
-                    for (i, line_text) in desc_wrapped.iter().enumerate() {
-                        if i >= content_lines_budget {
-                            break;
-                        }
-                        let padding = inner_width.saturating_sub(line_text.width());
-                        let padded_text = format!("{}{}", line_text, " ".repeat(padding));
-                        desc_lines.push(Line::from(vec![
-                            Span::styled(box_indent.clone(), Style::default()),
-                            Span::styled(format!("{vertical} "), border_style),
-                            Span::styled(padded_text, text_style),
-                            Span::styled(format!(" {vertical}"), border_style),
-                        ]));
-                    }
-
-                    if is_truncated {
-                        // Show truncation indicator as bottom border
-                        let more_count = desc_wrapped.len() - content_lines_budget;
-                        let more_text = format!("─── {more_count} more line{} ", if more_count == 1 { "" } else { "s" });
-                        let remaining_border = border_width.saturating_sub(more_text.width());
-                        let trunc_border = format!(
-                            "{bottom_left}{}{}{bottom_right}",
-                            more_text,
-                            horizontal.repeat(remaining_border),
-                        );
-                        desc_lines.push(Line::from(vec![
-                            Span::styled(box_indent.clone(), Style::default()),
-                            Span::styled(trunc_border, border_style),
-                        ]));
-                    } else {
-                        desc_lines.push(Line::from(vec![
-                            Span::styled(box_indent.clone(), Style::default()),
-                            Span::styled(bottom_border, border_style),
-                        ]));
-                    }
-                } else if max_lines == 1 {
-                    // Only room for a single line - show collapsed indicator
-                    let count = desc_wrapped.len();
-                    let label = format!(" {count} more line{} ", if count == 1 { "" } else { "s" });
-                    let fill = border_width.saturating_sub(label.width());
-                    let collapsed_border = format!(
+                if is_truncated {
+                    // Show truncation indicator as bottom border
+                    let more_count = desc_wrapped.len() - content_lines_budget;
+                    let more_text = format!(
+                        "─── {more_count} more line{} ",
+                        if more_count == 1 { "" } else { "s" }
+                    );
+                    let remaining_border = border_width.saturating_sub(more_text.width());
+                    let trunc_border = format!(
                         "{bottom_left}{}{}{bottom_right}",
-                        label,
-                        horizontal.repeat(fill),
+                        more_text,
+                        horizontal.repeat(remaining_border),
                     );
                     desc_lines.push(Line::from(vec![
                         Span::styled(box_indent.clone(), Style::default()),
-                        Span::styled(collapsed_border, border_style),
+                        Span::styled(trunc_border, border_style),
+                    ]));
+                } else {
+                    desc_lines.push(Line::from(vec![
+                        Span::styled(box_indent.clone(), Style::default()),
+                        Span::styled(bottom_border, border_style),
                     ]));
                 }
-
-                if !desc_lines.is_empty() {
-                    let h = desc_lines.len();
-                    items.push(ListItem::new(desc_lines));
-                    if list_item_index >= scroll_offset {
-                        height_from_offset += h;
-                    }
-                    list_item_index += 1;
-                }
+            } else if max_lines == 1 {
+                // Only room for a single line - show collapsed indicator
+                let count = desc_wrapped.len();
+                let label = format!(" {count} more line{} ", if count == 1 { "" } else { "s" });
+                let fill = border_width.saturating_sub(label.width());
+                let collapsed_border = format!(
+                    "{bottom_left}{}{}{bottom_right}",
+                    label,
+                    horizontal.repeat(fill),
+                );
+                desc_lines.push(Line::from(vec![
+                    Span::styled(box_indent.clone(), Style::default()),
+                    Span::styled(collapsed_border, border_style),
+                ]));
             }
+
+            if !desc_lines.is_empty() {
+                let h = desc_lines.len();
+                items.push(ListItem::new(desc_lines));
+                if list_item_index >= scroll_offset {
+                    height_from_offset += h;
+                }
+                list_item_index += 1;
+            }
+        }
 
         let should_show_new_item_below = state.is_creating_new_item
             && state.mode == Mode::Edit
@@ -442,7 +446,12 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
     let scroll_info = if total_rendered_lines > viewport_height {
         let scroll_offset = state.list_state.offset();
         let end_idx = (scroll_offset + viewport_height).min(total_visible_items);
-        format!(" [{}-{}/{}]", scroll_offset + 1, end_idx, total_visible_items)
+        format!(
+            " [{}-{}/{}]",
+            scroll_offset + 1,
+            end_idx,
+            total_visible_items
+        )
     } else {
         String::new()
     };
@@ -601,16 +610,17 @@ fn find_cursor_line(text: &str, cursor_pos: usize, max_width: usize) -> usize {
 
         if current_width + char_width > max_width && current_width > 0 {
             if let Some(space_byte) = last_space_byte
-                && space_byte > line_start_byte {
-                    if cursor_pos <= space_byte {
-                        return current_line;
-                    }
-                    current_line += 1;
-                    line_start_byte = space_byte + 1;
-                    current_width = text[line_start_byte..=byte_idx].width();
-                    last_space_byte = None;
-                    continue;
+                && space_byte > line_start_byte
+            {
+                if cursor_pos <= space_byte {
+                    return current_line;
                 }
+                current_line += 1;
+                line_start_byte = space_byte + 1;
+                current_width = text[line_start_byte..=byte_idx].width();
+                last_space_byte = None;
+                continue;
+            }
             current_line += 1;
             line_start_byte = byte_idx;
             current_width = char_width;

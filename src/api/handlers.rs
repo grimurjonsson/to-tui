@@ -7,7 +7,7 @@ use axum::{
 use chrono::Local;
 use uuid::Uuid;
 
-use crate::project::{ProjectRegistry, DEFAULT_PROJECT_NAME};
+use crate::project::{DEFAULT_PROJECT_NAME, ProjectRegistry};
 use crate::storage::file::{load_todo_list_for_project, save_todo_list_for_project};
 use crate::todo::TodoItem;
 
@@ -18,7 +18,9 @@ use super::models::{
 
 /// Helper to get project name with validation
 #[allow(clippy::result_large_err)]
-fn get_validated_project(project: Option<String>) -> Result<String, axum::response::Response<axum::body::Body>> {
+fn get_validated_project(
+    project: Option<String>,
+) -> Result<String, axum::response::Response<axum::body::Body>> {
     let project_name = project.unwrap_or_else(|| DEFAULT_PROJECT_NAME.to_string());
 
     // Validate project exists
@@ -28,7 +30,9 @@ fn get_validated_project(project: Option<String>) -> Result<String, axum::respon
     };
 
     if registry.get_by_name(&project_name).is_none() {
-        return Err(ErrorResponse::not_found(format!("Project not found: {project_name}")));
+        return Err(ErrorResponse::not_found(format!(
+            "Project not found: {project_name}"
+        )));
     }
 
     Ok(project_name)

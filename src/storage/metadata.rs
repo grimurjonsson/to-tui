@@ -445,10 +445,12 @@ mod tests {
         let result = set_todo_metadata(&todo_id, plugin_name, data, false);
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Keys starting with '_' are reserved"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Keys starting with '_' are reserved")
+        );
     }
 
     #[test]

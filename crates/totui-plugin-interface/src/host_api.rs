@@ -3,9 +3,9 @@
 //! This module defines the types and trait used by plugins to query and mutate
 //! todos through the host application. All types are FFI-safe via abi_stable.
 
+use abi_stable::StableAbi;
 use abi_stable::sabi_trait;
 use abi_stable::std_types::{ROption, RString, RVec};
-use abi_stable::StableAbi;
 
 use crate::types::{FfiPriority, FfiTodoItem, FfiTodoState};
 

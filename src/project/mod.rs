@@ -1,3 +1,3 @@
 mod registry;
 
-pub use registry::{Project, ProjectRegistry, DEFAULT_PROJECT_NAME};
+pub use registry::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry};

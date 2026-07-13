@@ -3,7 +3,7 @@
 //! This module provides the CommandExecutor that processes plugin commands
 //! (FfiCommand) and applies them to the todo list with proper temp ID resolution.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{NaiveDate, Utc};
 use std::collections::HashMap;
 use totui_plugin_interface::{FfiCommand, FfiMovePosition, FfiPriority, FfiTodoState};
@@ -791,8 +791,13 @@ mod tests {
             let mut executor = CommandExecutor::new(plugin_name.clone());
 
             // First set metadata
-            metadata::set_project_metadata("my-project", &plugin_name, r#"{"key": "value"}"#, false)
-                .unwrap();
+            metadata::set_project_metadata(
+                "my-project",
+                &plugin_name,
+                r#"{"key": "value"}"#,
+                false,
+            )
+            .unwrap();
 
             // Then delete via command
             let commands = vec![FfiCommand::DeleteProjectMetadata {
@@ -908,10 +913,12 @@ mod tests {
 
             let result = executor.execute_batch(commands, &mut list);
             assert!(result.is_err());
-            assert!(result
-                .unwrap_err()
-                .to_string()
-                .contains("Keys starting with '_' are reserved"));
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("Keys starting with '_' are reserved")
+            );
         }
 
         #[test]
@@ -1020,7 +1027,11 @@ mod tests {
             executor2.execute_batch(commands, &mut list).unwrap();
 
             // Verify soft delete
-            let item = list.items.iter().find(|i| i.content == "To be deleted").unwrap();
+            let item = list
+                .items
+                .iter()
+                .find(|i| i.content == "To be deleted")
+                .unwrap();
             assert!(item.deleted_at.is_some());
         }
     }

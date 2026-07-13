@@ -8,7 +8,7 @@
 //! - Session-based disabling for panicked plugins
 
 use abi_stable::{
-    library::{lib_header_from_path, LibraryError},
+    library::{LibraryError, lib_header_from_path},
     std_types::{RBox, RString},
 };
 use std::collections::HashMap;
@@ -17,11 +17,11 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use totui_plugin_interface::{
-    call_plugin_on_config_loaded, FfiEventType, PluginModule_Ref, Plugin_TO, UpdateNotifier,
-    INTERFACE_VERSION,
+    FfiEventType, INTERFACE_VERSION, Plugin_TO, PluginModule_Ref, UpdateNotifier,
+    call_plugin_on_config_loaded,
 };
 
-use crate::plugin::config::{to_ffi_config, PluginConfigLoader};
+use crate::plugin::config::{PluginConfigLoader, to_ffi_config};
 use crate::plugin::{PluginInfo, PluginManager};
 
 /// Global sender for plugin update notifications.
@@ -268,13 +268,12 @@ impl PluginLoader {
         // PluginModule_Ref::load_from() uses a global static per module type, which
         // causes all plugins to share the same factory function pointer.
         // Using lib_header_from_path() loads each dylib independently.
-        let lib_header = lib_header_from_path(&dylib_path).map_err(|lib_err| {
-            Self::map_library_error(plugin_name, &lib_err)
-        })?;
+        let lib_header = lib_header_from_path(&dylib_path)
+            .map_err(|lib_err| Self::map_library_error(plugin_name, &lib_err))?;
 
-        let module: PluginModule_Ref = lib_header.init_root_module().map_err(|lib_err| {
-            Self::map_library_error(plugin_name, &lib_err)
-        })?;
+        let module: PluginModule_Ref = lib_header
+            .init_root_module()
+            .map_err(|lib_err| Self::map_library_error(plugin_name, &lib_err))?;
 
         // Create plugin instance by calling the factory function
         let plugin = (module.create_plugin())();
@@ -343,7 +342,10 @@ impl PluginLoader {
     ///
     /// Looks for .dylib (macOS), .so (Linux), or .dll (Windows) files.
     /// Returns the path to the first matching library file.
-    fn find_dylib_in_directory(dir: &Path, plugin_name: &str) -> Result<std::path::PathBuf, PluginLoadError> {
+    fn find_dylib_in_directory(
+        dir: &Path,
+        plugin_name: &str,
+    ) -> Result<std::path::PathBuf, PluginLoadError> {
         let extensions = if cfg!(target_os = "macos") {
             &["dylib"][..]
         } else if cfg!(target_os = "windows") {
@@ -415,10 +417,7 @@ impl PluginLoader {
             _ => PluginLoadError {
                 plugin_name: plugin_name.to_string(),
                 error_kind: PluginErrorKind::Other(error_detail.clone()),
-                message: format!(
-                    "Plugin {} failed to load: {}",
-                    plugin_name, error_detail
-                ),
+                message: format!("Plugin {} failed to load: {}", plugin_name, error_detail),
             },
         }
     }
@@ -487,7 +486,11 @@ impl PluginLoader {
         // Get a reference to the plugin for use in the closure
         // We need to borrow the plugin again after the check
         // Deref through Arc to get &Plugin_TO reference
-        let plugin_ref = &*self.plugins.get(&plugin_name.to_lowercase()).unwrap().plugin;
+        let plugin_ref = &*self
+            .plugins
+            .get(&plugin_name.to_lowercase())
+            .unwrap()
+            .plugin;
 
         // Call the function with panic catching
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(plugin_ref)));
@@ -514,7 +517,9 @@ impl PluginLoader {
 
                 Err(PluginLoadError {
                     plugin_name: plugin_name.to_string(),
-                    error_kind: PluginErrorKind::Panicked { message: msg.clone() },
+                    error_kind: PluginErrorKind::Panicked {
+                        message: msg.clone(),
+                    },
                     message: format!("Plugin {} panicked: {}", plugin_name, msg),
                 })
             }
@@ -552,8 +557,7 @@ impl PluginLoader {
                     items
                         .into_iter()
                         .map(|ffi_item| {
-                            crate::todo::TodoItem::try_from(ffi_item)
-                                .map_err(|e| e.to_string())
+                            crate::todo::TodoItem::try_from(ffi_item).map_err(|e| e.to_string())
                         })
                         .collect::<Result<Vec<_>, _>>()
                 }
@@ -575,7 +579,10 @@ impl PluginLoader {
         &self,
         plugin_name: &str,
         input: &str,
-    ) -> Result<std::sync::mpsc::Receiver<Result<Vec<crate::todo::TodoItem>, String>>, PluginLoadError> {
+    ) -> Result<
+        std::sync::mpsc::Receiver<Result<Vec<crate::todo::TodoItem>, String>>,
+        PluginLoadError,
+    > {
         // Validate plugin exists and is not disabled
         let plugin = self.get(plugin_name).ok_or_else(|| PluginLoadError {
             plugin_name: plugin_name.to_string(),
@@ -587,7 +594,10 @@ impl PluginLoader {
             return Err(PluginLoadError {
                 plugin_name: plugin_name.to_string(),
                 error_kind: PluginErrorKind::SessionDisabled,
-                message: format!("Plugin {} is disabled for this session after a previous error", plugin_name),
+                message: format!(
+                    "Plugin {} is disabled for this session after a previous error",
+                    plugin_name
+                ),
             });
         }
 
@@ -603,14 +613,12 @@ impl PluginLoader {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 let ffi_result = plugin_ref.generate(RString::from(input_owned.as_str()));
                 match ffi_result.into_result() {
-                    Ok(items) => {
-                        items
-                            .into_iter()
-                            .map(|ffi_item| {
-                                crate::todo::TodoItem::try_from(ffi_item).map_err(|e| e.to_string())
-                            })
-                            .collect::<Result<Vec<_>, _>>()
-                    }
+                    Ok(items) => items
+                        .into_iter()
+                        .map(|ffi_item| {
+                            crate::todo::TodoItem::try_from(ffi_item).map_err(|e| e.to_string())
+                        })
+                        .collect::<Result<Vec<_>, _>>(),
                     Err(err) => Err(err.to_string()),
                 }
             }));

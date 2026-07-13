@@ -60,8 +60,12 @@ fn daily_dates_in_dir(dailies_dir: &Path) -> Result<Vec<NaiveDate>> {
         return Ok(Vec::new());
     }
 
-    let entries = fs::read_dir(dailies_dir)
-        .with_context(|| format!("Failed to read dailies directory: {}", dailies_dir.display()))?;
+    let entries = fs::read_dir(dailies_dir).with_context(|| {
+        format!(
+            "Failed to read dailies directory: {}",
+            dailies_dir.display()
+        )
+    })?;
     let mut dates = Vec::new();
 
     for entry in entries {
@@ -142,7 +146,12 @@ mod tests {
     #[test]
     fn test_daily_dates_in_dir_uses_valid_markdown_date_filenames() {
         let temp_dir = TempDir::new().unwrap();
-        for filename in ["2026-06-05.md", "2026-06-04.md", "notes.md", "2026-06-03.txt"] {
+        for filename in [
+            "2026-06-05.md",
+            "2026-06-04.md",
+            "notes.md",
+            "2026-06-03.txt",
+        ] {
             fs::write(temp_dir.path().join(filename), "").unwrap();
         }
 

@@ -22,8 +22,8 @@ pub use host_api::{
     FfiTodoQuery, HostApi, HostApi_TO,
 };
 pub use plugin::{
-    call_plugin_execute_with_host, call_plugin_generate, call_plugin_on_config_loaded,
-    call_plugin_on_event, Plugin, Plugin_TO, UpdateNotifier,
+    Plugin, Plugin_TO, UpdateNotifier, call_plugin_execute_with_host, call_plugin_generate,
+    call_plugin_on_config_loaded, call_plugin_on_event,
 };
 pub use types::{FfiPriority, FfiTodoItem, FfiTodoState};
-pub use version::{is_version_compatible, PluginModule, PluginModule_Ref, INTERFACE_VERSION};
+pub use version::{INTERFACE_VERSION, PluginModule, PluginModule_Ref, is_version_compatible};

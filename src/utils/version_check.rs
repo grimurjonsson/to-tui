@@ -1,7 +1,7 @@
 use crate::config::Config;
-use crate::plugin::manager::PluginSource;
-use crate::plugin::marketplace::{fetch_marketplace, DEFAULT_MARKETPLACE};
 use crate::plugin::PluginManager;
+use crate::plugin::manager::PluginSource;
+use crate::plugin::marketplace::{DEFAULT_MARKETPLACE, fetch_marketplace};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -109,7 +109,10 @@ fn check_all_updates() -> VersionCheckResult {
 
     // Check plugin updates
     let plugin_updates = check_plugin_updates();
-    tracing::debug!(plugin_updates = plugin_updates.len(), "Plugin update check complete");
+    tracing::debug!(
+        plugin_updates = plugin_updates.len(),
+        "Plugin update check complete"
+    );
 
     VersionCheckResult {
         app_update,

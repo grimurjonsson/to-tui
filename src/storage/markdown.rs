@@ -1,5 +1,5 @@
 use crate::todo::{Priority, TodoItem, TodoList, TodoState};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::NaiveDate;
 use std::path::PathBuf;
 
@@ -65,9 +65,10 @@ pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Re
         }
 
         if let Some(desc) = pending_description.take()
-            && let Some(last_item) = items.last_mut() {
-                last_item.description = Some(desc);
-            }
+            && let Some(last_item) = items.last_mut()
+        {
+            last_item.description = Some(desc);
+        }
 
         if let Some(mut item) = parse_todo_line(line)? {
             let parent_id = find_parent_id(&items, item.indent_level);
@@ -77,9 +78,10 @@ pub fn parse_todo_list(content: &str, date: NaiveDate, file_path: PathBuf) -> Re
     }
 
     if let Some(desc) = pending_description.take()
-        && let Some(last_item) = items.last_mut() {
-            last_item.description = Some(desc);
-        }
+        && let Some(last_item) = items.last_mut()
+    {
+        last_item.description = Some(desc);
+    }
 
     Ok(TodoList::with_items(date, file_path, items))
 }
@@ -128,7 +130,16 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
     let (content, due_date) = parse_due_date(&content);
     let (content, priority) = parse_priority(&content);
 
-    let mut item = TodoItem::full(content, state, indent_level, None, due_date, None, priority, false);
+    let mut item = TodoItem::full(
+        content,
+        state,
+        indent_level,
+        None,
+        due_date,
+        None,
+        priority,
+        false,
+    );
 
     if let Some(parsed_id) = id {
         item.id = parsed_id;
@@ -139,67 +150,70 @@ fn parse_todo_line(line: &str) -> Result<Option<TodoItem>> {
 
 fn parse_id(content: &str) -> (String, Option<uuid::Uuid>) {
     if let Some(start) = content.find("@id(")
-        && let Some(end) = content[start..].find(')') {
-            let id_str = &content[start + 4..start + end];
-            let id = uuid::Uuid::parse_str(id_str).ok();
+        && let Some(end) = content[start..].find(')')
+    {
+        let id_str = &content[start + 4..start + end];
+        let id = uuid::Uuid::parse_str(id_str).ok();
 
-            let mut cleaned = String::new();
-            cleaned.push_str(content[..start].trim());
-            if start + end + 1 < content.len() {
-                let suffix = content[start + end + 1..].trim();
-                if !suffix.is_empty() {
-                    if !cleaned.is_empty() {
-                        cleaned.push(' ');
-                    }
-                    cleaned.push_str(suffix);
+        let mut cleaned = String::new();
+        cleaned.push_str(content[..start].trim());
+        if start + end + 1 < content.len() {
+            let suffix = content[start + end + 1..].trim();
+            if !suffix.is_empty() {
+                if !cleaned.is_empty() {
+                    cleaned.push(' ');
                 }
+                cleaned.push_str(suffix);
             }
-            return (cleaned, id);
         }
+        return (cleaned, id);
+    }
     (content.to_string(), None)
 }
 
 fn parse_due_date(content: &str) -> (String, Option<NaiveDate>) {
     if let Some(start) = content.find("@due(")
-        && let Some(end) = content[start..].find(')') {
-            let date_str = &content[start + 5..start + end];
-            let due_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
+        && let Some(end) = content[start..].find(')')
+    {
+        let date_str = &content[start + 5..start + end];
+        let due_date = NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
 
-            let mut cleaned = String::new();
-            cleaned.push_str(content[..start].trim());
-            if start + end + 1 < content.len() {
-                let suffix = content[start + end + 1..].trim();
-                if !suffix.is_empty() {
-                    if !cleaned.is_empty() {
-                        cleaned.push(' ');
-                    }
-                    cleaned.push_str(suffix);
+        let mut cleaned = String::new();
+        cleaned.push_str(content[..start].trim());
+        if start + end + 1 < content.len() {
+            let suffix = content[start + end + 1..].trim();
+            if !suffix.is_empty() {
+                if !cleaned.is_empty() {
+                    cleaned.push(' ');
                 }
+                cleaned.push_str(suffix);
             }
-            return (cleaned, due_date);
         }
+        return (cleaned, due_date);
+    }
     (content.to_string(), None)
 }
 
 fn parse_priority(content: &str) -> (String, Option<Priority>) {
     if let Some(start) = content.find("@priority(")
-        && let Some(end) = content[start..].find(')') {
-            let priority_str = &content[start + 10..start + end];
-            let priority = priority_str.parse::<Priority>().ok();
+        && let Some(end) = content[start..].find(')')
+    {
+        let priority_str = &content[start + 10..start + end];
+        let priority = priority_str.parse::<Priority>().ok();
 
-            let mut cleaned = String::new();
-            cleaned.push_str(content[..start].trim());
-            if start + end + 1 < content.len() {
-                let suffix = content[start + end + 1..].trim();
-                if !suffix.is_empty() {
-                    if !cleaned.is_empty() {
-                        cleaned.push(' ');
-                    }
-                    cleaned.push_str(suffix);
+        let mut cleaned = String::new();
+        cleaned.push_str(content[..start].trim());
+        if start + end + 1 < content.len() {
+            let suffix = content[start + end + 1..].trim();
+            if !suffix.is_empty() {
+                if !cleaned.is_empty() {
+                    cleaned.push(' ');
                 }
+                cleaned.push_str(suffix);
             }
-            return (cleaned, priority);
         }
+        return (cleaned, priority);
+    }
     (content.to_string(), None)
 }
 
@@ -463,6 +477,9 @@ Empty line above
         let parsed = parse_todo_list(&markdown, date, path).unwrap();
         assert_eq!(parsed.items[0].content, "Task with both");
         assert_eq!(parsed.items[0].priority, Some(Priority::P0));
-        assert_eq!(parsed.items[0].due_date, Some(NaiveDate::from_ymd_opt(2026, 1, 15).unwrap()));
+        assert_eq!(
+            parsed.items[0].due_date,
+            Some(NaiveDate::from_ymd_opt(2026, 1, 15).unwrap())
+        );
     }
 }

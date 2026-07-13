@@ -13,7 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tar::Archive;
 use tempfile::tempdir;
-use totui_plugin_interface::{is_version_compatible, INTERFACE_VERSION};
+use totui_plugin_interface::{INTERFACE_VERSION, is_version_compatible};
 use tracing::debug;
 
 /// Result of a successful plugin installation.
@@ -104,8 +104,8 @@ impl PluginSource {
     /// Parse a local filesystem path.
     fn parse_local(source: &str) -> Result<Self> {
         let expanded = if source.starts_with('~') {
-            let home = dirs::home_dir()
-                .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+            let home =
+                dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
             home.join(&source[2..])
         } else {
             PathBuf::from(source)
@@ -214,8 +214,9 @@ impl PluginInstaller {
 
         // Ensure plugins directory exists
         if !plugins_dir.exists() {
-            fs::create_dir_all(&plugins_dir)
-                .with_context(|| format!("Failed to create plugins directory: {:?}", plugins_dir))?;
+            fs::create_dir_all(&plugins_dir).with_context(|| {
+                format!("Failed to create plugins directory: {:?}", plugins_dir)
+            })?;
         }
 
         let target_dir = plugins_dir.join(plugin_name);
@@ -557,10 +558,12 @@ description = "Test plugin"
 
         let result = PluginInstaller::install_from_local(&plugin_dir, false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("does not contain plugin.toml"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("does not contain plugin.toml")
+        );
     }
 
     #[test]
@@ -574,10 +577,12 @@ description = "Test plugin"
 
         let result = PluginInstaller::install_from_local(&plugin_dir, false);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Invalid plugin manifest"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid plugin manifest")
+        );
     }
 
     #[test]
