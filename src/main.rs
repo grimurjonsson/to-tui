@@ -15,7 +15,7 @@ use to_tui::utils;
 use anyhow::{Result, anyhow};
 use chrono::Local;
 use clap::Parser;
-use cli::{Cli, Commands, DEFAULT_API_PORT, PluginCommand, ServeCommand, TodoCommand};
+use cli::{Cli, Commands, DEFAULT_API_PORT, HookCommand, PluginCommand, ServeCommand, TodoCommand};
 use config::Config;
 use keybindings::KeybindingCache;
 use plugin::config::{PluginConfigLoader, generate_config_template};
@@ -210,6 +210,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Todo { command }) => {
             handle_todo_command(command)?;
+        }
+        Some(Commands::Hook { command }) => {
+            handle_hook_command(command);
         }
         None => {
             // Initialize file logging for TUI mode
@@ -809,6 +812,123 @@ fn handle_import_archive() -> Result<()> {
 
     println!("\nTotal: {imported} items imported to archive");
     Ok(())
+}
+
+/// Handle a Claude Code hook event.
+///
+/// This runs at the end of every turn of every session on the machine, so it is
+/// built to do nothing loudly: any failure — unparseable payload, missing
+/// project, deleted tree — exits quietly with no output. A hook that errors or
+/// chatters is worse than no hook at all.
+fn handle_hook_command(command: HookCommand) {
+    match command {
+        HookCommand::Stop { project } => {
+            if let Some(output) = hook_stop(project.as_deref())
+                && let Ok(json) = serde_json::to_string(&output)
+            {
+                println!("{json}");
+            }
+        }
+        HookCommand::SessionStart { project } => {
+            if let Some(output) = hook_session_start(project.as_deref())
+                && let Ok(json) = serde_json::to_string(&output)
+            {
+                println!("{json}");
+            }
+        }
+        HookCommand::SessionEnd => hook_session_end(),
+    }
+}
+
+/// Tell a resumed or post-compaction session which tree it is driving.
+///
+/// A brand-new session is skipped: it has no history to have forgotten, and the
+/// skill establishes its own tree.
+fn hook_session_start(project: Option<&str>) -> Option<to_tui::hook::HookOutput> {
+    use to_tui::hook;
+    use to_tui::todo::ops;
+
+    let mut raw = String::new();
+    std::io::stdin().read_to_string(&mut raw).ok()?;
+    let payload: hook::SessionStartPayload = serde_json::from_str(&raw).ok()?;
+    if payload.session_id.is_empty() || !hook::needs_context_reinjection(&payload.source) {
+        return None;
+    }
+
+    let state = hook::load_session(&payload.session_id)?;
+    let items = ops::list(project, None).ok()?.items;
+    let summary = hook::summarize(&items, &state.root_id)?;
+    Some(hook::HookOutput::session_start(summary))
+}
+
+/// Release this session's claim so its tree can be picked up again, and take the
+/// opportunity to sweep claims left behind by sessions that died without a
+/// SessionEnd. Prints nothing either way.
+fn hook_session_end() {
+    use to_tui::hook;
+
+    let mut raw = String::new();
+    if std::io::stdin().read_to_string(&mut raw).is_err() {
+        return;
+    }
+    let Ok(payload) = serde_json::from_str::<hook::SessionEndPayload>(&raw) else {
+        return;
+    };
+
+    if !payload.session_id.is_empty() && hook::should_release_claim(&payload.reason) {
+        let _ = hook::release_session(&payload.session_id);
+    }
+    hook::sweep_stale_claims(30);
+}
+
+fn hook_stop(project: Option<&str>) -> Option<to_tui::hook::HookOutput> {
+    use to_tui::hook;
+    use to_tui::todo::ops;
+
+    let mut raw = String::new();
+    std::io::stdin().read_to_string(&mut raw).ok()?;
+    let payload: hook::StopPayload = serde_json::from_str(&raw).ok()?;
+    if payload.session_id.is_empty() {
+        return None;
+    }
+
+    let items = ops::list(project, None).ok()?.items;
+    let mut state = hook::load_session(&payload.session_id);
+
+    // No tree claimed yet: adopt one only when the choice is unambiguous.
+    if state.is_none() {
+        let claimed = hook::roots_claimed_by_others(&payload.session_id);
+        let candidates: Vec<String> = hook::candidate_roots(&items)
+            .into_iter()
+            .filter(|r| !claimed.contains(r))
+            .collect();
+        let [root] = candidates.as_slice() else {
+            return None; // zero candidates, or ambiguous — stay quiet
+        };
+        state = Some(hook::SessionState {
+            root_id: root.clone(),
+            project: project.unwrap_or_default().to_string(),
+            cwd: payload.cwd.clone(),
+            last_active_leaf: hook::active_leaf_id(&items, root),
+            last_change_turn: payload.turn_number,
+        });
+    }
+
+    let mut state = state?;
+
+    // A changed active leaf restarts the staleness clock.
+    let current_leaf = hook::active_leaf_id(&items, &state.root_id);
+    if current_leaf != state.last_active_leaf {
+        state.last_active_leaf = current_leaf;
+        state.last_change_turn = payload.turn_number;
+    }
+    let active_for = payload.turn_number.saturating_sub(state.last_change_turn);
+
+    let _ = hook::save_session(&payload.session_id, &state);
+
+    let finding = hook::evaluate(&items, &state.root_id, Some(active_for))?;
+    let root = hook::root_content(&items, &state.root_id)?;
+    Some(hook::HookOutput::stop(finding.message(&root)))
 }
 
 /// Read a `--json` argument, treating `-` as "read the object from stdin".
