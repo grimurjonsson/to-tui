@@ -29,8 +29,9 @@ rather than guessing.
 
 Opening move for a new task:
 
-1. `list_todos` — look for an existing root this work belongs under.
-2. Create the tree: root (if none matched) → one child per milestone.
+1. `list_todos` — find the `Claude Code` root (create it if absent) and look
+   under it for a tree this work belongs to.
+2. Create the tree under `Claude Code` → one child per milestone.
 3. Set the first leaf to `*` and its ancestors to `*`.
 4. Work. After each milestone: that leaf → `x`, next leaf → `*`.
 5. At the end: all leaves `x`, ancestors `x`.
@@ -86,12 +87,22 @@ Put the *why* and the identifiers in `description`, not in `content`. Content sh
 </granularity>
 
 <rooting>
-Reuse an existing root when the work plainly belongs to it; create one only when nothing fits.
+**Everything you create goes under a single top-level item named exactly
+`Claude Code`.** Top-level items outside it are the user's own lists — never add
+to them, and never create a new top-level item beside them. That one rule is what
+keeps their board theirs, and it is also what the Stop hook uses to decide which
+trees are yours to watch.
 
-1. `list_todos` and read the top-level items.
-2. Match on the work's subject — a ticket key, a project, a feature name. When a root matches, nest the new milestones under it (or under the right child of it).
-3. No match → create a new root whose content names the task in the user's own terms.
-4. Ambiguous match → ask, using AskUserQuestion. Do not guess between two plausible roots; a tree grafted in the wrong place is worse than one extra root.
+1. `list_todos` and find the `Claude Code` item. Create it if absent.
+2. Under it, look for an existing tree this work belongs to — a ticket key, a
+   project, a feature name. When one matches, nest the new milestones there.
+3. No match → create a new tree under `Claude Code`, named in the user's own terms.
+4. Ambiguous match → ask, using AskUserQuestion. Do not guess between two
+   plausible trees; a tree grafted in the wrong place is worse than one extra tree.
+
+So the shape is `Claude Code` → task → milestones. Your milestones sit one level
+deeper than they otherwise would, which makes the 3-level guidance in the sizing
+notes above a real constraint: prefer more trees over deeper nesting.
 </rooting>
 
 <ownership>
@@ -149,6 +160,7 @@ If a verification step is itself a leaf ("Run full suite"), it cannot be `x` unt
 - **`delete_todo` on anything you did not just create.** It cascades to children.
 - **Tracking trivial work.** A two-step task tracked in totui is noise; the user asked for scope visibility, not a receipt.
 - **Passing `project` on every call out of habit.** It defaults to `default`; pass it only when the user named another.
+- **Creating a top-level item.** Everything you make belongs under `Claude Code`.
 - **Leaving a tree all-pending after finishing.** Worse than not tracking, because it reads as work that never happened.
 </anti_patterns>
 

@@ -199,6 +199,25 @@ pub struct SessionState {
     /// Turn number when `last_active_leaf` last changed.
     #[serde(default)]
     pub last_change_turn: u64,
+    /// Whether the "nothing is tracked" note has already been raised. Hooks have
+    /// no way to prompt, so this fires once and then stays quiet for the session
+    /// regardless of what the user decides.
+    #[serde(default)]
+    pub prompted: bool,
+}
+
+impl SessionState {
+    /// A session that exists only to remember that the note was already raised.
+    pub fn prompted_only() -> Self {
+        Self {
+            prompted: true,
+            ..Default::default()
+        }
+    }
+
+    pub fn has_claim(&self) -> bool {
+        !self.root_id.is_empty()
+    }
 }
 
 pub fn sessions_dir() -> anyhow::Result<PathBuf> {
@@ -277,19 +296,56 @@ fn leaves(items: &[TodoItemResponse], start: usize, end: usize) -> Vec<&TodoItem
         .collect()
 }
 
-/// Top-level items whose subtree contains an active leaf — candidate trees for a
-/// session that has not claimed one yet.
-pub fn candidate_roots(items: &[TodoItemResponse]) -> Vec<String> {
+/// Top-level item that agent-created trees live under. Scoping candidates to its
+/// children keeps the hook away from the user's own lists entirely.
+pub const AGENT_ROOT: &str = "Claude Code";
+
+/// Index of the agent root, if the list has one.
+fn agent_root_idx(items: &[TodoItemResponse]) -> Option<usize> {
     items
         .iter()
-        .enumerate()
-        .filter(|(_, it)| it.indent_level == 0)
-        .filter(|(idx, _)| {
-            let (s, e) = subtree_range(items, *idx);
-            items[s..e].iter().any(|i| is_active(&i.state))
+        .position(|i| i.indent_level == 0 && i.content.trim() == AGENT_ROOT)
+}
+
+/// Trees a session may claim: the children of the agent root, or — when no agent
+/// root exists — top-level items, so lists predating the convention still work.
+///
+/// Only trees containing an active leaf qualify. A tree the model built but never
+/// started is invisible here; the ask-once note is what surfaces that case.
+pub fn candidate_roots(items: &[TodoItemResponse]) -> Vec<String> {
+    let (scope_start, scope_end, depth) = match agent_root_idx(items) {
+        Some(idx) => {
+            let (s, e) = subtree_range(items, idx);
+            (s + 1, e, items[idx].indent_level + 1)
+        }
+        None => (0, items.len(), 0),
+    };
+
+    (scope_start..scope_end)
+        .filter(|&i| items[i].indent_level == depth)
+        .filter(|&i| {
+            let (s, e) = subtree_range(items, i);
+            items[s..e].iter().any(|it| is_active(&it.state))
         })
-        .map(|(_, it)| it.id.clone())
+        .map(|i| items[i].id.clone())
         .collect()
+}
+
+/// Whether the list has anything a session could plausibly be tracking. Used to
+/// decide if the "nothing is tracked" note is worth raising at all.
+pub fn has_trackable_work(items: &[TodoItemResponse]) -> bool {
+    let Some(idx) = agent_root_idx(items) else {
+        return false;
+    };
+    let (s, e) = subtree_range(items, idx);
+    items[s + 1..e].iter().any(|i| !is_terminal(&i.state))
+}
+
+/// The one-time note raised when a session has no tree to watch.
+pub fn untracked_note() -> String {
+    format!(
+        "No totui tree is being tracked for this session, so progress is not visible in the user's TUI. If this session is doing multi-step work, it belongs under the \"{AGENT_ROOT}\" root; if not, no action is needed. This note is raised once per session."
+    )
 }
 
 /// The single active leaf of a tree, when there is exactly one. Used to notice
@@ -524,6 +580,67 @@ mod tests {
             item("b", "Other leaf", 1, " "),
         ];
         assert_eq!(evaluate(&items, "root", Some(0)), None);
+    }
+
+    #[test]
+    fn candidates_are_scoped_to_the_agent_root_when_one_exists() {
+        // The user's own top-level lists must never become claim candidates,
+        // even when they contain active items.
+        let items = vec![
+            item("vko", "VKO", 0, "*"),
+            item("vko1", "Some user task", 1, "*"),
+            item("cc", AGENT_ROOT, 0, "*"),
+            item("t1", "Agent tree", 1, "*"),
+            item("t1a", "Leaf", 2, "*"),
+        ];
+        assert_eq!(candidate_roots(&items), vec!["t1".to_string()]);
+    }
+
+    #[test]
+    fn falls_back_to_top_level_when_there_is_no_agent_root() {
+        // Lists predating the convention still work.
+        let items = vec![item("r", "Old tree", 0, "*"), item("a", "Leaf", 1, "*")];
+        assert_eq!(candidate_roots(&items), vec!["r".to_string()]);
+    }
+
+    #[test]
+    fn trackable_work_means_unfinished_items_under_the_agent_root() {
+        let idle = vec![
+            item("cc", AGENT_ROOT, 0, " "),
+            item("t", "Finished tree", 1, "x"),
+        ];
+        assert!(!has_trackable_work(&idle));
+
+        let live = vec![
+            item("cc", AGENT_ROOT, 0, " "),
+            item("t", "Unstarted tree", 1, " "),
+        ];
+        assert!(has_trackable_work(&live));
+    }
+
+    #[test]
+    fn no_agent_root_means_nothing_trackable_so_the_note_never_fires() {
+        // The overwhelming majority of sessions on a machine. They must never
+        // hear from this hook at all.
+        let items = vec![item("vko", "VKO", 0, "*"), item("a", "User leaf", 1, "*")];
+        assert!(!has_trackable_work(&items));
+    }
+
+    #[test]
+    fn the_untracked_note_states_the_situation_without_ordering_anything() {
+        let note = untracked_note();
+        assert!(note.contains(AGENT_ROOT));
+        assert!(note.contains("once per session"));
+        for imperative in ["You must", "Create a", "Remember to"] {
+            assert!(!note.contains(imperative), "imperative in: {note}");
+        }
+    }
+
+    #[test]
+    fn prompted_only_state_carries_no_claim() {
+        let s = SessionState::prompted_only();
+        assert!(s.prompted);
+        assert!(!s.has_claim());
     }
 
     #[test]

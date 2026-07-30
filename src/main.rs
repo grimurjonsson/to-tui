@@ -893,28 +893,46 @@ fn hook_stop(project: Option<&str>) -> Option<to_tui::hook::HookOutput> {
     }
 
     let items = ops::list(project, None).ok()?.items;
-    let mut state = hook::load_session(&payload.session_id);
+    let existing = hook::load_session(&payload.session_id);
 
     // No tree claimed yet: adopt one only when the choice is unambiguous.
-    if state.is_none() {
-        let claimed = hook::roots_claimed_by_others(&payload.session_id);
-        let candidates: Vec<String> = hook::candidate_roots(&items)
-            .into_iter()
-            .filter(|r| !claimed.contains(r))
-            .collect();
-        let [root] = candidates.as_slice() else {
-            return None; // zero candidates, or ambiguous — stay quiet
-        };
-        state = Some(hook::SessionState {
-            root_id: root.clone(),
-            project: project.unwrap_or_default().to_string(),
-            cwd: payload.cwd.clone(),
-            last_active_leaf: hook::active_leaf_id(&items, root),
-            last_change_turn: payload.turn_number,
-        });
-    }
+    let mut state = match existing {
+        Some(s) if s.has_claim() => s,
+        other => {
+            let claimed = hook::roots_claimed_by_others(&payload.session_id);
+            let candidates: Vec<String> = hook::candidate_roots(&items)
+                .into_iter()
+                .filter(|r| !claimed.contains(r))
+                .collect();
 
-    let mut state = state?;
+            match candidates.as_slice() {
+                [root] => hook::SessionState {
+                    root_id: root.clone(),
+                    project: project.unwrap_or_default().to_string(),
+                    cwd: payload.cwd.clone(),
+                    last_active_leaf: hook::active_leaf_id(&items, root),
+                    last_change_turn: payload.turn_number,
+                    prompted: other.map(|s| s.prompted).unwrap_or(false),
+                },
+                // Nothing to claim. Raise the untracked note once, but only when
+                // there is agent work sitting there unwatched — a session that
+                // simply is not using totui should never hear from this hook.
+                [] => {
+                    let already_prompted = other.is_some_and(|s| s.prompted);
+                    if already_prompted || !hook::has_trackable_work(&items) {
+                        return None;
+                    }
+                    let _ = hook::save_session(
+                        &payload.session_id,
+                        &hook::SessionState::prompted_only(),
+                    );
+                    return Some(hook::HookOutput::stop(hook::untracked_note()));
+                }
+                // Ambiguous — refuse to guess.
+                _ => return None,
+            }
+        }
+    };
 
     // A changed active leaf restarts the staleness clock.
     let current_leaf = hook::active_leaf_id(&items, &state.root_id);
@@ -1004,6 +1022,21 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
             };
             let item = ops::update(project.as_deref(), date.as_deref(), &id, spec)
                 .map_err(|e| anyhow!(e))?;
+            print_json(&item)
+        }
+        TodoCommand::Move {
+            id,
+            parent,
+            project,
+            date,
+        } => {
+            let item = ops::move_item(
+                project.as_deref(),
+                date.as_deref(),
+                &id,
+                parent.as_deref(),
+            )
+            .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Get { id, project, date } => {
