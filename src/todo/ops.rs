@@ -375,6 +375,80 @@ pub fn toggle_complete(
     Ok(response)
 }
 
+/// Re-parent a todo, carrying its whole subtree with it.
+///
+/// `new_parent` of `None` moves the item to the top level. Indent levels of the
+/// moved subtree are shifted by the same delta so its internal shape survives.
+pub fn move_item(
+    project: Option<&str>,
+    date: Option<&str>,
+    id: &str,
+    new_parent: Option<&str>,
+) -> Result<TodoItemResponse, OpsError> {
+    let project = resolve_project(project)?;
+    let date = parse_date_arg(date)?;
+    let uuid = parse_id(id)?;
+    let mut list = load_list(&project, date)?;
+
+    let idx = list
+        .items
+        .iter()
+        .position(|i| i.id == uuid)
+        .ok_or_else(|| not_found_todo(id, date))?;
+    let (start, end) = list.get_item_range(idx).map_err(OpsError::storage)?;
+
+    // Resolve the destination before detaching anything, so a bad target leaves
+    // the list untouched.
+    let (target_indent, mut insert_at) = match new_parent {
+        Some(pid) => {
+            let parent_uuid = parse_id(pid)?;
+            if parent_uuid == uuid {
+                return Err(OpsError::Validation {
+                    message: "A todo cannot be its own parent".to_string(),
+                    suggestion: "Pick a different parent, or omit it to move to the top level"
+                        .to_string(),
+                });
+            }
+            let parent_idx = list
+                .items
+                .iter()
+                .position(|i| i.id == parent_uuid)
+                .ok_or_else(|| OpsError::NotFound {
+                    message: format!("Parent todo with id '{pid}' not found"),
+                    suggestion: "Use list_todos to get valid parent IDs".to_string(),
+                })?;
+            if parent_idx >= start && parent_idx < end {
+                return Err(OpsError::Validation {
+                    message: "Cannot move a todo inside its own subtree".to_string(),
+                    suggestion: "Pick a parent outside the item being moved".to_string(),
+                });
+            }
+            list.find_insert_position_for_child(parent_uuid)
+                .ok_or_else(|| not_found_todo(pid, date))?
+        }
+        None => (0, list.items.len()),
+    };
+
+    let moved: Vec<TodoItem> = list.items.drain(start..end).collect();
+
+    // Draining shifts everything after the removed slice left.
+    if insert_at > start {
+        insert_at -= end - start;
+    }
+    insert_at = insert_at.min(list.items.len());
+
+    let old_indent = moved[0].indent_level;
+    for (offset, mut item) in moved.into_iter().enumerate() {
+        item.indent_level = target_indent + (item.indent_level - old_indent);
+        list.items.insert(insert_at + offset, item);
+    }
+
+    list.recalculate_parent_ids();
+    let response = TodoItemResponse::from(&list.items[insert_at]);
+    save(&list, &project)?;
+    Ok(response)
+}
+
 /// Delete a todo and every descendant. Returns the ids removed.
 ///
 /// Dropping items from the list and saving is NOT enough: the save path upserts,
@@ -501,6 +575,52 @@ mod tests {
         let spec: UpdateSpec = serde_json::from_str("{}").expect("empty patch is valid");
         assert!(spec.content.is_none());
         assert!(spec.state.is_none());
+    }
+
+    // --- move --------------------------------------------------------------
+    //
+    // move_item needs a live store, so these cover the index arithmetic that
+    // decides where a drained subtree lands — the part most likely to be wrong.
+
+    /// Mirrors the reinsertion maths in `move_item`.
+    fn reinsert_index(start: usize, end: usize, insert_at: usize, len_after: usize) -> usize {
+        let adjusted = if insert_at > start {
+            insert_at - (end - start)
+        } else {
+            insert_at
+        };
+        adjusted.min(len_after)
+    }
+
+    #[test]
+    fn moving_forward_accounts_for_the_drained_slice() {
+        // items 1..3 removed, target was index 5 -> shifts left by 2
+        assert_eq!(reinsert_index(1, 3, 5, 4), 3);
+    }
+
+    #[test]
+    fn moving_backward_needs_no_adjustment() {
+        // target index 0 is before the removed slice, so it is unaffected
+        assert_eq!(reinsert_index(3, 5, 0, 4), 0);
+    }
+
+    #[test]
+    fn reinsert_never_runs_past_the_end() {
+        assert_eq!(reinsert_index(0, 2, 9, 3), 3);
+    }
+
+    #[test]
+    fn indent_delta_preserves_subtree_shape() {
+        // A subtree rooted at indent 0 with a child at 1 and grandchild at 2,
+        // moved under a parent at indent 1, must become 1 / 2 / 3.
+        let old_root_indent = 0usize;
+        let target_indent = 1usize;
+        let shape = [0usize, 1, 2];
+        let moved: Vec<usize> = shape
+            .iter()
+            .map(|lvl| target_indent + (lvl - old_root_indent))
+            .collect();
+        assert_eq!(moved, vec![1, 2, 3]);
     }
 
     // --- error mapping -----------------------------------------------------

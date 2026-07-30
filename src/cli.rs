@@ -152,6 +152,18 @@ pub enum TodoCommand {
         #[arg(short, long)]
         date: Option<String>,
     },
+    /// Re-parent a todo, carrying its children with it
+    Move {
+        /// UUID of the todo to move
+        id: String,
+        /// UUID of the new parent. Omit to move it to the top level.
+        #[arg(long)]
+        parent: Option<String>,
+        #[arg(short, long)]
+        project: Option<String>,
+        #[arg(short, long)]
+        date: Option<String>,
+    },
     /// Print one todo as JSON
     Get {
         /// UUID of the todo
