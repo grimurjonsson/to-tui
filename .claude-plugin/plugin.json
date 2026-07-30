@@ -1,6 +1,8 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "totui-mcp",
-  "description": "MCP server for to-tui - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
+  "displayName": "to-tui",
+  "description": "MCP server and skills for to-tui - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
   "version": "0.5.20",
   "author": {
     "name": "to-tui"

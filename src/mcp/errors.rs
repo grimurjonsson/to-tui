@@ -34,10 +34,9 @@ impl McpErrorDetail {
             code: "INVALID_STATE".to_string(),
             message: message.into(),
             retryable: true,
-            suggestion: Some(
-                "Valid states: ' ' (empty), 'x' (done), '?' (question), '!' (important)"
-                    .to_string(),
-            ),
+            // Sourced from ops::VALID_STATES so this cannot drift from what the
+            // parser actually accepts. It previously omitted '*' and '-'.
+            suggestion: Some(format!("Valid states: {}", crate::todo::ops::VALID_STATES)),
         }
     }
 
@@ -56,6 +55,32 @@ impl McpErrorDetail {
             message: message.into(),
             retryable: false,
             suggestion: None,
+        }
+    }
+}
+
+/// Bridge the shared ops layer's error kinds onto the MCP wire contract.
+///
+/// The codes below are what MCP clients branch on, so this mapping is pinned by
+/// tests in `todo::ops`.
+impl From<crate::todo::ops::OpsError> for McpErrorDetail {
+    fn from(err: crate::todo::ops::OpsError) -> Self {
+        use crate::todo::ops::OpsError;
+        match err {
+            OpsError::NotFound {
+                message,
+                suggestion,
+            } => Self::not_found(message, suggestion),
+            OpsError::InvalidInput {
+                message,
+                suggestion,
+            } => Self::invalid_input(message, suggestion),
+            OpsError::InvalidState { message } => Self::invalid_state(message),
+            OpsError::Validation {
+                message,
+                suggestion,
+            } => Self::validation_error(message, suggestion),
+            OpsError::Storage { message } => Self::storage_error(message),
         }
     }
 }

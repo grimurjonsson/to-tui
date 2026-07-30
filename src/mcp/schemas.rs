@@ -1,7 +1,5 @@
-use chrono::NaiveDate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use crate::project::Project;
 use crate::todo::{TodoItem, TodoState};
@@ -223,19 +221,6 @@ pub struct DeleteTodoResponse {
     pub message: String,
 }
 
-pub fn parse_date(date_str: Option<&str>) -> Result<NaiveDate, String> {
-    match date_str {
-        Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .map_err(|_| format!("Invalid date format '{s}'. Use YYYY-MM-DD format.")),
-        None => Ok(chrono::Local::now().date_naive()),
-    }
-}
-
-pub fn parse_uuid(id_str: &str) -> Result<Uuid, String> {
-    Uuid::parse_str(id_str)
-        .map_err(|_| format!("Invalid UUID format '{id_str}'. Use list_todos to get valid IDs."))
-}
-
-pub fn parse_state(state_str: &str) -> Option<TodoState> {
-    TodoState::parse(state_str)
-}
+// Date, UUID and state parsing live in `todo::ops` (parse_date_arg / parse_id /
+// parse_state_arg) so the CLI and this server cannot disagree about what a valid
+// input is. Do not reintroduce local copies here.
