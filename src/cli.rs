@@ -62,6 +62,32 @@ pub enum Commands {
         #[command(subcommand)]
         command: TodoCommand,
     },
+    /// Claude Code hook entry points. Not intended to be run by hand.
+    Hook {
+        #[command(subcommand)]
+        command: HookCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum HookCommand {
+    /// Handle a Claude Code `Stop` event: read the hook payload on stdin and,
+    /// when the session's totui tree has drifted, print a reminder for the model.
+    /// Prints nothing and exits 0 when there is nothing to say.
+    Stop {
+        /// Project holding the tracked tree
+        #[arg(short, long)]
+        project: Option<String>,
+    },
+    /// Handle a Claude Code `SessionStart` event: when the session is resuming or
+    /// coming back from a compaction, restate which tree it is driving.
+    SessionStart {
+        #[arg(short, long)]
+        project: Option<String>,
+    },
+    /// Handle a Claude Code `SessionEnd` event: release this session's claim on
+    /// its tree so it can be picked up again.
+    SessionEnd,
 }
 
 /// Scriptable todo access. Every subcommand prints JSON on stdout and a plain
