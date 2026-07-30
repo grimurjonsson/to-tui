@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.22] - 2026-07-30
+Live totui tree watching — the TUI now updates automatically as work happens, via session start/stop hooks.
+
+### Added
+- SessionStart/Stop/SessionEnd hooks for live totui tree watching
+
 ## [0.5.21] - 2026-07-30
 Manage todos directly from the command line with new add, list, update, complete, and delete commands, backed by a shared operations layer so the CLI, TUI, API, and MCP server all behave consistently. A new totui skill lets Claude Code mirror its in-progress work into your todo list, so you can watch scope and progress update live in the TUI.
 
