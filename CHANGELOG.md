@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.23] - 2026-07-30
+Stopping. The changelog TL;DR is delivered; VICE-1388 remains open and untouched pending your call.
+
+### Added
+- Claude Code root scoping, todo move, ask-once session note
+
 ## [0.5.22] - 2026-07-30
 Live totui tree watching — the TUI now updates automatically as work happens, via session start/stop hooks.
 
