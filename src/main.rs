@@ -15,7 +15,7 @@ use to_tui::utils;
 use anyhow::{Result, anyhow};
 use chrono::Local;
 use clap::Parser;
-use cli::{Cli, Commands, DEFAULT_API_PORT, PluginCommand, ServeCommand};
+use cli::{Cli, Commands, DEFAULT_API_PORT, PluginCommand, ServeCommand, TodoCommand};
 use config::Config;
 use keybindings::KeybindingCache;
 use plugin::config::{PluginConfigLoader, generate_config_template};
@@ -207,6 +207,9 @@ fn main() -> Result<()> {
         }
         Some(Commands::Plugin { command }) => {
             handle_plugin_command(command)?;
+        }
+        Some(Commands::Todo { command }) => {
+            handle_todo_command(command)?;
         }
         None => {
             // Initialize file logging for TUI mode
@@ -806,6 +809,104 @@ fn handle_import_archive() -> Result<()> {
 
     println!("\nTotal: {imported} items imported to archive");
     Ok(())
+}
+
+/// Read a `--json` argument, treating `-` as "read the object from stdin".
+/// Stdin matters for hooks, which receive their own JSON and would otherwise
+/// have to shell-escape a nested object onto the command line.
+fn read_json_arg(arg: &str) -> Result<String> {
+    if arg == "-" {
+        let mut buf = String::new();
+        std::io::stdin().read_to_string(&mut buf)?;
+        Ok(buf)
+    } else {
+        Ok(arg.to_string())
+    }
+}
+
+fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+fn handle_todo_command(command: TodoCommand) -> Result<()> {
+    use to_tui::todo::ops;
+
+    match command {
+        TodoCommand::Create {
+            json,
+            content,
+            description,
+            state,
+            due_date,
+            parent_id,
+            priority,
+            project,
+            date,
+        } => {
+            let spec: ops::CreateSpec = match json {
+                Some(raw) => serde_json::from_str(&read_json_arg(&raw)?)
+                    .map_err(|e| anyhow!("Invalid --json: {e}"))?,
+                None => ops::CreateSpec {
+                    content: content
+                        .ok_or_else(|| anyhow!("Provide --content or --json"))?,
+                    description,
+                    state,
+                    due_date,
+                    parent_id,
+                    priority,
+                },
+            };
+            let item = ops::create(project.as_deref(), date.as_deref(), spec).map_err(|e| anyhow!(e))?;
+            print_json(&item)
+        }
+        TodoCommand::Update {
+            id,
+            json,
+            content,
+            description,
+            state,
+            due_date,
+            priority,
+            project,
+            date,
+        } => {
+            let spec: ops::UpdateSpec = match json {
+                Some(raw) => serde_json::from_str(&read_json_arg(&raw)?)
+                    .map_err(|e| anyhow!("Invalid --json: {e}"))?,
+                None => ops::UpdateSpec {
+                    content,
+                    description,
+                    state,
+                    due_date,
+                    priority,
+                },
+            };
+            let item = ops::update(project.as_deref(), date.as_deref(), &id, spec)
+                .map_err(|e| anyhow!(e))?;
+            print_json(&item)
+        }
+        TodoCommand::Get { id, project, date } => {
+            let item =
+                ops::get(project.as_deref(), date.as_deref(), &id).map_err(|e| anyhow!(e))?;
+            print_json(&item)
+        }
+        TodoCommand::List { project, date } => {
+            let result = ops::list(project.as_deref(), date.as_deref()).map_err(|e| anyhow!(e))?;
+            // Print the bare array so callers can pipe straight into `jq '.[]'`.
+            print_json(&result.items)
+        }
+        TodoCommand::Delete { id, project, date } => {
+            let removed =
+                ops::delete(project.as_deref(), date.as_deref(), &id).map_err(|e| anyhow!(e))?;
+            print_json(&serde_json::json!({ "deleted": removed }))
+        }
+        TodoCommand::Projects => {
+            let registry = ProjectRegistry::load()?;
+            let names: Vec<&str> = registry.projects.iter().map(|p| p.name.as_str()).collect();
+            print_json(&names)
+        }
+    }
 }
 
 fn handle_plugin_command(command: PluginCommand) -> Result<()> {

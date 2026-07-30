@@ -57,6 +57,102 @@ pub enum Commands {
         #[command(subcommand)]
         command: PluginCommand,
     },
+    /// Read and write todos as JSON (for scripts, hooks and automation)
+    Todo {
+        #[command(subcommand)]
+        command: TodoCommand,
+    },
+}
+
+/// Scriptable todo access. Every subcommand prints JSON on stdout and a plain
+/// message on stderr when it fails, so callers can pipe stdout straight into `jq`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum TodoCommand {
+    /// Create a todo. Supply --json or the individual flags.
+    Create {
+        /// Full spec as a JSON object, or `-` to read it from stdin.
+        /// Keys: content, description, state, due_date, parent_id, priority.
+        #[arg(long, conflicts_with = "content")]
+        json: Option<String>,
+
+        /// Todo text (required unless --json is given)
+        #[arg(long)]
+        content: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+        /// ' ' pending, '*' in progress, 'x' done, '?' question, '!' important, '-' cancelled
+        #[arg(long)]
+        state: Option<String>,
+        /// Due date, YYYY-MM-DD
+        #[arg(long)]
+        due_date: Option<String>,
+        /// UUID of the parent todo, to nest this one under it
+        #[arg(long)]
+        parent_id: Option<String>,
+        /// p0, p1 or p2
+        #[arg(long)]
+        priority: Option<String>,
+
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Day the todo lives on, YYYY-MM-DD. Defaults to today.
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+    /// Update an existing todo. Omitted fields are left unchanged.
+    Update {
+        /// UUID of the todo
+        id: String,
+
+        /// Patch as a JSON object, or `-` to read it from stdin.
+        /// Keys: content, description, state, due_date, priority.
+        #[arg(long)]
+        json: Option<String>,
+
+        #[arg(long)]
+        content: Option<String>,
+        /// Pass an empty string to clear the description
+        #[arg(long)]
+        description: Option<String>,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long)]
+        due_date: Option<String>,
+        #[arg(long)]
+        priority: Option<String>,
+
+        #[arg(short, long)]
+        project: Option<String>,
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+    /// Print one todo as JSON
+    Get {
+        /// UUID of the todo
+        id: String,
+        #[arg(short, long)]
+        project: Option<String>,
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+    /// Print every todo for a project/date as a JSON array
+    List {
+        #[arg(short, long)]
+        project: Option<String>,
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+    /// Delete a todo and all of its children
+    Delete {
+        /// UUID of the todo
+        id: String,
+        #[arg(short, long)]
+        project: Option<String>,
+        #[arg(short, long)]
+        date: Option<String>,
+    },
+    /// Print the available project names as a JSON array
+    Projects,
 }
 
 #[derive(Subcommand, Debug, Clone)]

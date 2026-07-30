@@ -4,12 +4,27 @@ description: Interact with the todo-mcp server to list, create, update, complete
 ---
 
 <objective>
-Manage todos via the todo-mcp server. Supports hierarchical todos (parent/child relationships), due dates, descriptions, and multiple states.
+Manage todos via the to-tui MCP server. Supports hierarchical todos (parent/child relationships), due dates, descriptions, and multiple states.
 </objective>
+
+<tool_names>
+Tools below are named bare (`list_todos`, `create_todo`, ...). The **actual**
+callable name carries a prefix set by how the server was installed, so it is not
+stable across installs:
+
+| Install path | Prefix | Example |
+|---|---|---|
+| This plugin, via marketplace | `mcp__plugin_<marketplace>_<server>__` | `mcp__plugin_totui-mcp_totui-mcp__list_todos` |
+| Server wired directly in `.mcp.json` | `mcp__<server>__` | `mcp__totui-mcp__list_todos` |
+
+**Never hardcode a prefix.** Find the tool whose name *ends with* the bare name
+in your available tools and call that. If no such tool is present, the to-tui MCP
+server is not connected — say so rather than guessing at a name.
+</tool_names>
 
 <quick_start>
 <list_todos>
-**Tool**: `todo-mcp_list_todos`
+**Tool**: `list_todos`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -41,7 +56,7 @@ Automatically rolls over incomplete todos from previous days if today's list is 
 </list_todos>
 
 <create_todo>
-**Tool**: `todo-mcp_create_todo`
+**Tool**: `create_todo`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -61,7 +76,7 @@ parent_id: "4497a476-61d0-4f13-9603-65b1eae5e37f"
 </create_todo>
 
 <update_todo>
-**Tool**: `todo-mcp_update_todo`
+**Tool**: `update_todo`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -74,13 +89,19 @@ parent_id: "4497a476-61d0-4f13-9603-65b1eae5e37f"
 
 **States**:
 - `' '` (space) - pending
+- `'*'` - in progress
 - `'x'` - done
 - `'?'` - question
 - `'!'` - important
+- `'-'` - cancelled
+
+Note: the server's own `state` parameter description omits `'*'`. That is a
+documentation bug, not a missing feature - `'*'` is accepted and reports back as
+`state_description: "in_progress"`.
 </update_todo>
 
 <mark_complete>
-**Tool**: `todo-mcp_mark_complete`
+**Tool**: `mark_complete`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -91,7 +112,7 @@ Toggles completion: marks pending as done `[x]`, or done as pending `[ ]`.
 </mark_complete>
 
 <delete_todo>
-**Tool**: `todo-mcp_delete_todo`
+**Tool**: `delete_todo`
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
