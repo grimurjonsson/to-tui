@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 
 use crate::keybindings::KeybindingsConfig;
@@ -90,6 +90,11 @@ pub struct Config {
 
     #[serde(default)]
     pub auto_rollover: AutoRolloverPref,
+
+    /// Folder key (git repo root or directory path) -> project name,
+    /// learned automatically as projects are used per folder
+    #[serde(default)]
+    pub folder_projects: BTreeMap<String, String>,
 }
 
 fn default_theme() -> String {
@@ -111,6 +116,7 @@ impl Default for Config {
             plugins: PluginsConfig::default(),
             marketplaces: MarketplacesConfig::default(),
             auto_rollover: AutoRolloverPref::default(),
+            folder_projects: BTreeMap::new(),
         }
     }
 }
@@ -129,6 +135,20 @@ impl Config {
         config.keybindings = config.keybindings.merge_with_defaults();
 
         Ok(config)
+    }
+
+    /// Point all folder bindings for a renamed project at its new name
+    pub fn rebind_project_name(&mut self, old_name: &str, new_name: &str) {
+        for project in self.folder_projects.values_mut() {
+            if project == old_name {
+                *project = new_name.to_string();
+            }
+        }
+    }
+
+    /// Remove all folder bindings for a deleted project
+    pub fn unbind_project(&mut self, name: &str) {
+        self.folder_projects.retain(|_, project| project != name);
     }
 
     pub fn save(&self) -> Result<()> {
@@ -259,6 +279,80 @@ mod tests {
             let config: Config = toml::from_str(&toml_str).unwrap();
             assert_eq!(config.auto_rollover, expected, "input was {input}");
         }
+    }
+
+    #[test]
+    fn test_folder_projects_missing_field_defaults_to_empty() {
+        let toml_str = "theme = \"dark\"\n";
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.folder_projects.is_empty());
+    }
+
+    #[test]
+    fn test_folder_projects_serialization_roundtrip() {
+        let mut config = Config::default();
+        config
+            .folder_projects
+            .insert("/Users/me/repo".to_string(), "proj-a".to_string());
+
+        let toml_str = toml::to_string(&config).unwrap();
+        assert!(toml_str.contains("[folder_projects]"));
+
+        let parsed: Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(
+            parsed.folder_projects.get("/Users/me/repo"),
+            Some(&"proj-a".to_string())
+        );
+    }
+
+    #[test]
+    fn test_folder_projects_deserialization() {
+        let toml_str = r#"
+        [folder_projects]
+        "/Users/me/repo" = "proj-a"
+        "#;
+
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.folder_projects.get("/Users/me/repo"),
+            Some(&"proj-a".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rebind_project_name_updates_all_folders() {
+        let mut config = Config::default();
+        config
+            .folder_projects
+            .insert("/repo/a".to_string(), "old".to_string());
+        config
+            .folder_projects
+            .insert("/repo/b".to_string(), "old".to_string());
+        config
+            .folder_projects
+            .insert("/repo/c".to_string(), "other".to_string());
+
+        config.rebind_project_name("old", "new");
+
+        assert_eq!(config.folder_projects["/repo/a"], "new");
+        assert_eq!(config.folder_projects["/repo/b"], "new");
+        assert_eq!(config.folder_projects["/repo/c"], "other");
+    }
+
+    #[test]
+    fn test_unbind_project_removes_its_folders() {
+        let mut config = Config::default();
+        config
+            .folder_projects
+            .insert("/repo/a".to_string(), "doomed".to_string());
+        config
+            .folder_projects
+            .insert("/repo/b".to_string(), "kept".to_string());
+
+        config.unbind_project("doomed");
+
+        assert!(!config.folder_projects.contains_key("/repo/a"));
+        assert_eq!(config.folder_projects["/repo/b"], "kept");
     }
 
     #[test]

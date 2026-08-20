@@ -10,7 +10,7 @@ use crate::plugin::{
     CommandExecutor, GeneratorInfo, PluginAction, PluginErrorKind, PluginHostApiImpl,
     PluginLoadError, marketplace::PluginEntry,
 };
-use crate::project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry};
+use crate::project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry, current_folder_key};
 use crate::storage::file::save_todo_list_for_project;
 use crate::storage::{
     execute_rollover_for_project, find_rollover_candidates_for_project,
@@ -2468,9 +2468,12 @@ fn handle_project_selecting(
                 if project.name != state.current_project.name {
                     let project = project.clone();
 
-                    // Save last_used_project to config
+                    // Save last_used_project and folder binding to config
                     if let Ok(mut config) = Config::load() {
                         config.last_used_project = Some(project.name.clone());
+                        if let Some(key) = current_folder_key() {
+                            config.folder_projects.insert(key, project.name.clone());
+                        }
                         let _ = config.save();
                     }
 
@@ -2567,6 +2570,9 @@ fn handle_project_create_input(
                     // Switch to the new project
                     if let Ok(mut config) = Config::load() {
                         config.last_used_project = Some(project.name.clone());
+                        if let Some(key) = current_folder_key() {
+                            config.folder_projects.insert(key, project.name.clone());
+                        }
                         let _ = config.save();
                     }
                     state.switch_project(project)?;
@@ -2665,6 +2671,12 @@ fn handle_project_rename_input(
                         fs::rename(&old_dir, &new_dir)?;
                     }
 
+                    // Keep folder bindings pointing at the renamed project
+                    if let Ok(mut config) = Config::load() {
+                        config.rebind_project_name(&project_name, &new_name);
+                        let _ = config.save();
+                    }
+
                     state.set_status_message(format!(
                         "Renamed '{}' to '{}'",
                         project_name, new_name
@@ -2757,6 +2769,12 @@ fn handle_project_confirm_delete(
                     }
 
                     // TODO: Also delete todos from database for this project
+
+                    // Drop folder bindings that pointed at the deleted project
+                    if let Ok(mut config) = Config::load() {
+                        config.unbind_project(&project_name);
+                        let _ = config.save();
+                    }
 
                     state.set_status_message(format!("Deleted project '{}'", project_name));
                     state.open_project_modal();

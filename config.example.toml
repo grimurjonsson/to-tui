@@ -10,6 +10,13 @@ theme = "default"
 # This affects multi-key sequences like "dd" for delete
 timeoutlen = 1000
 
+# Folder-aware project selection (maintained automatically, no setup needed).
+# totui remembers which project you last used in each folder (keyed by the
+# git repository root, or the folder itself outside a repo) and opens it when
+# launched from there. Entries can also be edited or removed by hand.
+# [folder_projects]
+# "/Users/me/work/repo-a" = "project-a"
+
 # =============================================================================
 # NAVIGATE MODE KEYBINDINGS
 # =============================================================================

@@ -49,22 +49,31 @@ fn load_today_list_for_project(project_name: &str) -> Result<todo::TodoList> {
     }
 }
 
-/// Get the current project from config or default
-fn get_current_project(config: &Config) -> Result<Project> {
+/// Get the current project: the one mapped to the current folder if any,
+/// else the last used project, else the default. Records the folder binding
+/// so subsequent launches from this folder are stable.
+fn get_current_project(config: &mut Config) -> Result<Project> {
     let mut registry = ProjectRegistry::load()?;
     registry.ensure_default_project()?;
 
-    // Try to use last_used_project from config
-    if let Some(ref last_project_name) = config.last_used_project
-        && let Some(project) = registry.get_by_name(last_project_name)
+    let folder_key = project::current_folder_key();
+    let name = project::resolve_project_name(
+        folder_key.as_deref(),
+        &config.folder_projects,
+        config.last_used_project.as_deref(),
+        |n| registry.get_by_name(n).is_some(),
+    );
+
+    if let Some(key) = folder_key
+        && config.folder_projects.get(&key) != Some(&name)
     {
-        return Ok(project.clone());
+        config.folder_projects.insert(key, name.clone());
+        let _ = config.save();
     }
 
-    // Fall back to default project
     Ok(registry
-        .get_by_name(DEFAULT_PROJECT_NAME)
-        .expect("Default project must exist after ensure_default_project")
+        .get_by_name(&name)
+        .expect("Resolved project must exist in registry")
         .clone())
 }
 
@@ -182,7 +191,7 @@ fn main() -> Result<()> {
     ensure_installation_ready()?;
 
     let cli = Cli::parse();
-    let config = Config::load()?;
+    let mut config = Config::load()?;
 
     match cli.command {
         Some(Commands::Add { task }) => {
@@ -224,7 +233,7 @@ fn main() -> Result<()> {
             ensure_server_running(DEFAULT_API_PORT)?;
 
             // Determine which project to load
-            let current_project = get_current_project(&config)?;
+            let current_project = get_current_project(&mut config)?;
             let list = load_today_list_for_project(&current_project.name)?;
 
             // Load UI cache for restoring cursor position
@@ -986,8 +995,7 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                 Some(raw) => serde_json::from_str(&read_json_arg(&raw)?)
                     .map_err(|e| anyhow!("Invalid --json: {e}"))?,
                 None => ops::CreateSpec {
-                    content: content
-                        .ok_or_else(|| anyhow!("Provide --content or --json"))?,
+                    content: content.ok_or_else(|| anyhow!("Provide --content or --json"))?,
                     description,
                     state,
                     due_date,
@@ -995,7 +1003,8 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                     priority,
                 },
             };
-            let item = ops::create(project.as_deref(), date.as_deref(), spec).map_err(|e| anyhow!(e))?;
+            let item =
+                ops::create(project.as_deref(), date.as_deref(), spec).map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Update {
@@ -1030,13 +1039,8 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
             project,
             date,
         } => {
-            let item = ops::move_item(
-                project.as_deref(),
-                date.as_deref(),
-                &id,
-                parent.as_deref(),
-            )
-            .map_err(|e| anyhow!(e))?;
+            let item = ops::move_item(project.as_deref(), date.as_deref(), &id, parent.as_deref())
+                .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Get { id, project, date } => {
