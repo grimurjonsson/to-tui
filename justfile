@@ -650,6 +650,10 @@ _release bump msg="":
     # Update Cargo.lock with new version
     cargo check --quiet
 
+    # Remember the starting branch (or commit, if detached) so the flow can
+    # return here afterwards - HEAD may be a worktree branch rather than main
+    ORIG_REF=$(git symbolic-ref --quiet --short HEAD || git rev-parse HEAD)
+
     read -p "Create release branch, commit, and tag? [Y/n] " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
@@ -710,11 +714,29 @@ _release bump msg="":
                     read -p "Merge the PR now? [Y/n] " -n 1 -r
                     echo
                     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-                        gh pr merge "$RELEASE_BRANCH" --merge --delete-branch
-                        echo "✓ PR merged and release branch deleted"
-                        git checkout main
-                        git pull origin main
-                        echo "✓ Switched to main and pulled latest"
+                        gh pr merge "$RELEASE_BRANCH" --merge
+                        echo "✓ PR merged"
+
+                        # Leave the release branch before deleting it; done
+                        # explicitly instead of gh's --delete-branch, whose
+                        # checkout of main fails when main is checked out in
+                        # another worktree
+                        git checkout "$ORIG_REF"
+                        git branch -D "$RELEASE_BRANCH"
+                        git push origin --delete "$RELEASE_BRANCH" 2>/dev/null \
+                            || echo "  (remote release branch already deleted)"
+                        echo "✓ Deleted release branch"
+
+                        # Update main in whichever checkout has it
+                        MAIN_WT=$(git worktree list --porcelain | awk '/^worktree /{wt=substr($0,10)} $0=="branch refs/heads/main"{print wt; exit}')
+                        if [ -n "$MAIN_WT" ]; then
+                            git -C "$MAIN_WT" pull origin main
+                            echo "✓ Updated main at $MAIN_WT"
+                        else
+                            git checkout main
+                            git pull origin main
+                            echo "✓ Switched to main and pulled latest"
+                        fi
                     fi
                 fi
             else
