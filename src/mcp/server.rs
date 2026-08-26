@@ -61,8 +61,8 @@ impl TodoMcpServer {
     ) -> Result<Json<TodoListResponse>, String> {
         info!(date = ?params.0.date, project = ?params.0.project, "list_todos called");
 
-        let result = ops::list(params.0.project.as_deref(), params.0.date.as_deref())
-            .map_err(ops_err)?;
+        let result =
+            ops::list(params.0.project.as_deref(), params.0.date.as_deref()).map_err(ops_err)?;
 
         let response =
             TodoListResponse::new(result.date.format("%Y-%m-%d").to_string(), result.items);
@@ -157,13 +157,8 @@ impl TodoMcpServer {
             priority: None,
         };
 
-        let response = ops::update(
-            req.project.as_deref(),
-            req.date.as_deref(),
-            &req.id,
-            spec,
-        )
-        .map_err(ops_err)?;
+        let response = ops::update(req.project.as_deref(), req.date.as_deref(), &req.id, spec)
+            .map_err(ops_err)?;
 
         info!(id = %response.id, state = %response.state, "update_todo completed");
         Ok(Json(response))
@@ -180,8 +175,8 @@ impl TodoMcpServer {
         let req = params.0;
         info!(id = %req.id, date = ?req.date, project = ?req.project, "delete_todo called");
 
-        let removed = ops::delete(req.project.as_deref(), req.date.as_deref(), &req.id)
-            .map_err(ops_err)?;
+        let removed =
+            ops::delete(req.project.as_deref(), req.date.as_deref(), &req.id).map_err(ops_err)?;
         let deleted_count = removed.len();
 
         info!(deleted_count = deleted_count, "delete_todo completed");

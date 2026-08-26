@@ -22,31 +22,17 @@ use crate::storage::rollover::create_rolled_over_list_for_project;
 use crate::todo::{Priority, TodoItem, TodoList, TodoState};
 
 /// Every state a todo can hold, in the order they are documented to callers.
-pub const VALID_STATES: &str =
-    "' ' (pending), '*' (in progress), 'x' (done), '?' (question), '!' (important), '-' (cancelled)";
+pub const VALID_STATES: &str = "' ' (pending), '*' (in progress), 'x' (done), '?' (question), '!' (important), '-' (cancelled)";
 
 /// Failure kinds, carrying enough structure for the MCP layer to rebuild its
 /// error codes and suggestions without this module depending on them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpsError {
-    NotFound {
-        message: String,
-        suggestion: String,
-    },
-    InvalidInput {
-        message: String,
-        suggestion: String,
-    },
-    InvalidState {
-        message: String,
-    },
-    Validation {
-        message: String,
-        suggestion: String,
-    },
-    Storage {
-        message: String,
-    },
+    NotFound { message: String, suggestion: String },
+    InvalidInput { message: String, suggestion: String },
+    InvalidState { message: String },
+    Validation { message: String, suggestion: String },
+    Storage { message: String },
 }
 
 impl OpsError {
@@ -145,12 +131,10 @@ pub fn resolve_project(project: Option<&str>) -> Result<String, OpsError> {
 
 pub fn parse_date_arg(date: Option<&str>) -> Result<NaiveDate, OpsError> {
     match date {
-        Some(s) => {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| OpsError::InvalidInput {
-                message: format!("Invalid date format '{s}'"),
-                suggestion: "Use YYYY-MM-DD format".to_string(),
-            })
-        }
+        Some(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| OpsError::InvalidInput {
+            message: format!("Invalid date format '{s}'"),
+            suggestion: "Use YYYY-MM-DD format".to_string(),
+        }),
         None => Ok(Local::now().date_naive()),
     }
 }
@@ -288,7 +272,11 @@ pub fn update(
         .as_deref()
         .map(|d| parse_date_arg(Some(d)))
         .transpose()?;
-    let priority = spec.priority.as_deref().map(parse_priority_arg).transpose()?;
+    let priority = spec
+        .priority
+        .as_deref()
+        .map(parse_priority_arg)
+        .transpose()?;
     if let Some(ref c) = spec.content
         && c.trim().is_empty()
     {
@@ -695,9 +683,14 @@ mod tests {
             message: "bad".into(),
         }
         .into();
-        let suggestion = detail.suggestion.expect("invalid state carries a suggestion");
+        let suggestion = detail
+            .suggestion
+            .expect("invalid state carries a suggestion");
         for token in ["' '", "'*'", "'x'", "'?'", "'!'", "'-'"] {
-            assert!(suggestion.contains(token), "{token} missing from {suggestion}");
+            assert!(
+                suggestion.contains(token),
+                "{token} missing from {suggestion}"
+            );
         }
     }
 
