@@ -86,6 +86,11 @@ pub enum Action {
     EditWordRight,
     EditHome,
     EditEnd,
+    EditDeleteWord,
+    EditDeleteToStart,
+    EditDeleteToEnd,
+    EditDocStart,
+    EditDocEnd,
     EditIndent,
     EditOutdent,
 }
@@ -138,6 +143,11 @@ impl fmt::Display for Action {
             Action::EditWordRight => "edit_word_right",
             Action::EditHome => "edit_home",
             Action::EditEnd => "edit_end",
+            Action::EditDeleteWord => "edit_delete_word",
+            Action::EditDeleteToStart => "edit_delete_to_start",
+            Action::EditDeleteToEnd => "edit_delete_to_end",
+            Action::EditDocStart => "edit_doc_start",
+            Action::EditDocEnd => "edit_doc_end",
             Action::EditIndent => "edit_indent",
             Action::EditOutdent => "edit_outdent",
         };
@@ -195,6 +205,11 @@ impl FromStr for Action {
             "edit_word_right" => Ok(Action::EditWordRight),
             "edit_home" => Ok(Action::EditHome),
             "edit_end" => Ok(Action::EditEnd),
+            "edit_delete_word" => Ok(Action::EditDeleteWord),
+            "edit_delete_to_start" => Ok(Action::EditDeleteToStart),
+            "edit_delete_to_end" => Ok(Action::EditDeleteToEnd),
+            "edit_doc_start" => Ok(Action::EditDocStart),
+            "edit_doc_end" => Ok(Action::EditDocEnd),
             "edit_indent" => Ok(Action::EditIndent),
             "edit_outdent" => Ok(Action::EditOutdent),
             _ => Err(format!("Unknown action: {s}")),
@@ -661,6 +676,9 @@ fn format_key_binding(binding: &KeyBinding) -> String {
     if binding.modifiers.contains(KeyModifiers::ALT) {
         modifiers.push("Alt");
     }
+    if binding.modifiers.contains(KeyModifiers::SUPER) {
+        modifiers.push("Cmd");
+    }
     if binding.modifiers.contains(KeyModifiers::SHIFT) {
         modifiers.push("Shift");
     }
@@ -773,6 +791,21 @@ fn default_edit_bindings() -> HashMap<String, String> {
     m.insert("<End>".to_string(), "edit_end".to_string());
     m.insert("<C-a>".to_string(), "edit_home".to_string());
     m.insert("<C-e>".to_string(), "edit_end".to_string());
+    m.insert("<D-Left>".to_string(), "edit_home".to_string());
+    m.insert("<D-Right>".to_string(), "edit_end".to_string());
+    m.insert("<A-BS>".to_string(), "edit_delete_word".to_string());
+    m.insert("<C-w>".to_string(), "edit_delete_word".to_string());
+    m.insert("<D-BS>".to_string(), "edit_delete_to_start".to_string());
+    m.insert("<C-u>".to_string(), "edit_delete_to_start".to_string());
+    m.insert("<C-k>".to_string(), "edit_delete_to_end".to_string());
+    m.insert("<D-Up>".to_string(), "edit_doc_start".to_string());
+    m.insert("<D-Down>".to_string(), "edit_doc_end".to_string());
+    // Some terminals (e.g. Supacode) report Cmd as the Control modifier
+    m.insert("<C-BS>".to_string(), "edit_delete_to_start".to_string());
+    m.insert("<C-Left>".to_string(), "edit_home".to_string());
+    m.insert("<C-Right>".to_string(), "edit_end".to_string());
+    m.insert("<C-Up>".to_string(), "edit_doc_start".to_string());
+    m.insert("<C-Down>".to_string(), "edit_doc_end".to_string());
     m.insert("<Tab>".to_string(), "edit_indent".to_string());
     m.insert("<BackTab>".to_string(), "edit_outdent".to_string());
 
@@ -870,6 +903,87 @@ mod tests {
         let event = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
         let result = cache.lookup_navigate(&event, None);
         assert_eq!(result, KeyLookupResult::Action(Action::MoveDown));
+    }
+
+    #[test]
+    fn test_default_edit_word_and_line_bindings() {
+        let cache = KeybindingCache::default();
+
+        let cases = [
+            (
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::ALT),
+                Action::EditDeleteWord,
+            ),
+            (
+                KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+                Action::EditDeleteWord,
+            ),
+            (
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::SUPER),
+                Action::EditDeleteToStart,
+            ),
+            (
+                KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL),
+                Action::EditDeleteToStart,
+            ),
+            (
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL),
+                Action::EditDeleteToEnd,
+            ),
+            (
+                KeyEvent::new(KeyCode::Left, KeyModifiers::SUPER),
+                Action::EditHome,
+            ),
+            (
+                KeyEvent::new(KeyCode::Right, KeyModifiers::SUPER),
+                Action::EditEnd,
+            ),
+            (
+                KeyEvent::new(KeyCode::Up, KeyModifiers::SUPER),
+                Action::EditDocStart,
+            ),
+            (
+                KeyEvent::new(KeyCode::Down, KeyModifiers::SUPER),
+                Action::EditDocEnd,
+            ),
+            (
+                KeyEvent::new(KeyCode::Left, KeyModifiers::ALT),
+                Action::EditWordLeft,
+            ),
+            (
+                KeyEvent::new(KeyCode::Right, KeyModifiers::ALT),
+                Action::EditWordRight,
+            ),
+            // Cmd-as-Control translations (e.g. Supacode's terminal)
+            (
+                KeyEvent::new(KeyCode::Backspace, KeyModifiers::CONTROL),
+                Action::EditDeleteToStart,
+            ),
+            (
+                KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL),
+                Action::EditHome,
+            ),
+            (
+                KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL),
+                Action::EditEnd,
+            ),
+            (
+                KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL),
+                Action::EditDocStart,
+            ),
+            (
+                KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL),
+                Action::EditDocEnd,
+            ),
+        ];
+
+        for (event, expected) in cases {
+            assert_eq!(
+                cache.get_edit_action(&event),
+                Some(expected),
+                "expected {expected:?} for {event:?}"
+            );
+        }
     }
 
     #[test]

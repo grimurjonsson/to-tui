@@ -185,6 +185,11 @@ async fn run_app(
                 if let Some(Ok(event)) = maybe_event {
                     match event {
                         Event::Key(key) if key.kind == KeyEventKind::Press => {
+                            tracing::trace!(
+                                "key press: code={:?} modifiers={:?}",
+                                key.code,
+                                key.modifiers
+                            );
                             // Dismiss plugin error popup on any key press
                             if state.show_plugin_error_popup {
                                 state.dismiss_plugin_error_popup();

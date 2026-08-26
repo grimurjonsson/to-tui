@@ -1323,11 +1323,23 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
                 state.edit_cursor_pos =
                     next_word_boundary(&state.edit_buffer, state.edit_cursor_pos);
             }
-            Action::EditHome => {
+            Action::EditHome | Action::EditDocStart => {
                 state.edit_cursor_pos = 0;
             }
-            Action::EditEnd => {
+            Action::EditEnd | Action::EditDocEnd => {
                 state.edit_cursor_pos = state.edit_buffer.len();
+            }
+            Action::EditDeleteWord => {
+                let boundary = prev_word_boundary(&state.edit_buffer, state.edit_cursor_pos);
+                state.edit_buffer.drain(boundary..state.edit_cursor_pos);
+                state.edit_cursor_pos = boundary;
+            }
+            Action::EditDeleteToStart => {
+                state.edit_buffer.drain(..state.edit_cursor_pos);
+                state.edit_cursor_pos = 0;
+            }
+            Action::EditDeleteToEnd => {
+                state.edit_buffer.truncate(state.edit_cursor_pos);
             }
             Action::EditIndent => {
                 if state.is_creating_new_item {
@@ -2878,62 +2890,130 @@ fn handle_move_to_project_mode(key: KeyEvent, state: &mut AppState) -> Result<()
 }
 
 fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
-    match key.code {
-        KeyCode::Esc => {
-            // Save description
-            state.save_undo();
-            let joined = state.desc_buffer.join("\n");
-            let description = if joined.trim().is_empty() {
-                None
-            } else {
-                Some(joined)
-            };
-            if let Some(item) = state.selected_item_mut() {
-                item.description = description;
-                item.modified_at = chrono::Utc::now();
-                item.collapsed = false;
+    // Ctrl+C cancel stays hardcoded so a rebind can't remove the escape hatch
+    if matches!(key.code, KeyCode::Char('c')) && key.modifiers.contains(KeyModifiers::CONTROL) {
+        let original = state.desc_original.take();
+        if let Some(item) = state.selected_item_mut() {
+            item.description = original;
+        }
+        state.mode = Mode::Navigate;
+        return Ok(());
+    }
+
+    if let Some(action) = state.keybindings.get_edit_action(&key) {
+        match action {
+            Action::EditCancel => {
+                // Save description
+                state.save_undo();
+                let joined = state.desc_buffer.join("\n");
+                let description = if joined.trim().is_empty() {
+                    None
+                } else {
+                    Some(joined)
+                };
+                if let Some(item) = state.selected_item_mut() {
+                    item.description = description;
+                    item.modified_at = chrono::Utc::now();
+                    item.collapsed = false;
+                }
+                state.unsaved_changes = true;
+                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+                state.unsaved_changes = false;
+                state.last_save_time = Some(std::time::Instant::now());
+                state.mode = Mode::Navigate;
             }
-            state.unsaved_changes = true;
-            save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
-            state.unsaved_changes = false;
-            state.last_save_time = Some(std::time::Instant::now());
-            state.mode = Mode::Navigate;
-        }
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Cancel — restore original
-            let original = state.desc_original.take();
-            if let Some(item) = state.selected_item_mut() {
-                item.description = original;
+            Action::EditConfirm => {
+                // Split line at cursor
+                let current_line = state.desc_buffer[state.desc_cursor_row].clone();
+                let (before, after) = current_line.split_at(state.desc_cursor_col);
+                state.desc_buffer[state.desc_cursor_row] = before.to_string();
+                state
+                    .desc_buffer
+                    .insert(state.desc_cursor_row + 1, after.to_string());
+                state.desc_cursor_row += 1;
+                state.desc_cursor_col = 0;
             }
-            state.mode = Mode::Navigate;
-        }
-        KeyCode::Enter => {
-            // Split line at cursor
-            let current_line = state.desc_buffer[state.desc_cursor_row].clone();
-            let (before, after) = current_line.split_at(state.desc_cursor_col);
-            state.desc_buffer[state.desc_cursor_row] = before.to_string();
-            state
-                .desc_buffer
-                .insert(state.desc_cursor_row + 1, after.to_string());
-            state.desc_cursor_row += 1;
-            state.desc_cursor_col = 0;
-        }
-        KeyCode::Backspace => {
-            if state.desc_cursor_col > 0 {
-                let prev = prev_char_boundary(
+            Action::EditBackspace => {
+                if state.desc_cursor_col > 0 {
+                    let prev = prev_char_boundary(
+                        &state.desc_buffer[state.desc_cursor_row],
+                        state.desc_cursor_col,
+                    );
+                    state.desc_buffer[state.desc_cursor_row].drain(prev..state.desc_cursor_col);
+                    state.desc_cursor_col = prev;
+                } else if state.desc_cursor_row > 0 {
+                    // Merge with previous line
+                    let current_line = state.desc_buffer.remove(state.desc_cursor_row);
+                    state.desc_cursor_row -= 1;
+                    state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
+                    state.desc_buffer[state.desc_cursor_row].push_str(&current_line);
+                }
+            }
+            Action::EditDeleteWord => {
+                let boundary = prev_word_boundary(
                     &state.desc_buffer[state.desc_cursor_row],
                     state.desc_cursor_col,
                 );
-                state.desc_buffer[state.desc_cursor_row].drain(prev..state.desc_cursor_col);
-                state.desc_cursor_col = prev;
-            } else if state.desc_cursor_row > 0 {
-                // Merge with previous line
-                let current_line = state.desc_buffer.remove(state.desc_cursor_row);
-                state.desc_cursor_row -= 1;
-                state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
-                state.desc_buffer[state.desc_cursor_row].push_str(&current_line);
+                state.desc_buffer[state.desc_cursor_row].drain(boundary..state.desc_cursor_col);
+                state.desc_cursor_col = boundary;
             }
+            Action::EditDeleteToStart => {
+                state.desc_buffer[state.desc_cursor_row].drain(..state.desc_cursor_col);
+                state.desc_cursor_col = 0;
+            }
+            Action::EditDeleteToEnd => {
+                let col = state.desc_cursor_col;
+                state.desc_buffer[state.desc_cursor_row].truncate(col);
+            }
+            Action::EditLeft => {
+                if state.desc_cursor_col > 0 {
+                    state.desc_cursor_col = prev_char_boundary(
+                        &state.desc_buffer[state.desc_cursor_row],
+                        state.desc_cursor_col,
+                    );
+                }
+            }
+            Action::EditRight => {
+                let line_len = state.desc_buffer[state.desc_cursor_row].len();
+                if state.desc_cursor_col < line_len {
+                    state.desc_cursor_col = next_char_boundary(
+                        &state.desc_buffer[state.desc_cursor_row],
+                        state.desc_cursor_col,
+                    );
+                }
+            }
+            Action::EditWordLeft => {
+                state.desc_cursor_col = prev_word_boundary(
+                    &state.desc_buffer[state.desc_cursor_row],
+                    state.desc_cursor_col,
+                );
+            }
+            Action::EditWordRight => {
+                state.desc_cursor_col = next_word_boundary(
+                    &state.desc_buffer[state.desc_cursor_row],
+                    state.desc_cursor_col,
+                );
+            }
+            Action::EditHome => {
+                state.desc_cursor_col = 0;
+            }
+            Action::EditEnd => {
+                state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
+            }
+            Action::EditDocStart => {
+                state.desc_cursor_row = 0;
+                state.desc_cursor_col = 0;
+            }
+            Action::EditDocEnd => {
+                state.desc_cursor_row = state.desc_buffer.len() - 1;
+                state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
+            }
+            _ => {}
         }
+        return Ok(());
+    }
+
+    match key.code {
         KeyCode::Delete => {
             let line_len = state.desc_buffer[state.desc_cursor_row].len();
             if state.desc_cursor_col < line_len {
@@ -2946,23 +3026,6 @@ fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<(
                 // Merge next line into current
                 let next_line = state.desc_buffer.remove(state.desc_cursor_row + 1);
                 state.desc_buffer[state.desc_cursor_row].push_str(&next_line);
-            }
-        }
-        KeyCode::Left => {
-            if state.desc_cursor_col > 0 {
-                state.desc_cursor_col = prev_char_boundary(
-                    &state.desc_buffer[state.desc_cursor_row],
-                    state.desc_cursor_col,
-                );
-            }
-        }
-        KeyCode::Right => {
-            let line_len = state.desc_buffer[state.desc_cursor_row].len();
-            if state.desc_cursor_col < line_len {
-                state.desc_cursor_col = next_char_boundary(
-                    &state.desc_buffer[state.desc_cursor_row],
-                    state.desc_cursor_col,
-                );
             }
         }
         KeyCode::Up => {
@@ -2993,13 +3056,11 @@ fn handle_edit_description_mode(key: KeyEvent, state: &mut AppState) -> Result<(
                 }
             }
         }
-        KeyCode::Home => {
-            state.desc_cursor_col = 0;
-        }
-        KeyCode::End => {
-            state.desc_cursor_col = state.desc_buffer[state.desc_cursor_row].len();
-        }
-        KeyCode::Char(c) => {
+        KeyCode::Char(c)
+            if !key
+                .modifiers
+                .intersects(KeyModifiers::CONTROL | KeyModifiers::SUPER) =>
+        {
             state.desc_buffer[state.desc_cursor_row].insert(state.desc_cursor_col, c);
             state.desc_cursor_col += c.len_utf8();
         }

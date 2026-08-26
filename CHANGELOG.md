@@ -5,6 +5,13 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.25] - 2026-08-26
+Adds terminal-style word and line editing keybindings for faster text editing, and collapsed todos now show an indicator when they have a description.
+
+### Added
+- terminal-style word and line editing keybindings
+- show description indicator on collapsed todos
+
 ## [0.5.24] - 2026-08-20
 Todos are now project-aware based on your current folder: to-tui automatically selects the right project depending on the directory you launch it from. Also fixes the release process when working from git worktrees (internal tooling, no user impact).
 

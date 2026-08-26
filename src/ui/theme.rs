@@ -14,6 +14,7 @@ pub struct Theme {
     pub priority_p0: Color,
     pub priority_p1: Color,
     pub priority_p2: Color,
+    pub description_indicator: Color,
 }
 
 impl Theme {
@@ -30,6 +31,7 @@ impl Theme {
             priority_p0: Color::Rgb(255, 100, 100), // Red for critical
             priority_p1: Color::Rgb(255, 200, 100), // Yellow/orange for high
             priority_p2: Color::Rgb(100, 150, 255), // Blue for medium
+            description_indicator: Color::Rgb(180, 150, 255), // Soft lavender
         }
     }
 
@@ -46,6 +48,7 @@ impl Theme {
             priority_p0: Color::Rgb(255, 100, 100),
             priority_p1: Color::Rgb(255, 200, 100),
             priority_p2: Color::Rgb(100, 150, 255),
+            description_indicator: Color::Rgb(180, 150, 255), // Soft lavender
         }
     }
 
@@ -62,6 +65,7 @@ impl Theme {
             priority_p0: Color::Rgb(200, 50, 50), // Darker red for light theme
             priority_p1: Color::Rgb(180, 130, 0), // Darker yellow/brown for light theme
             priority_p2: Color::Rgb(50, 100, 200), // Darker blue for light theme
+            description_indicator: Color::Rgb(130, 90, 220), // Darker lavender for light theme
         }
     }
 
