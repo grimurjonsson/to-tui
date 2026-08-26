@@ -156,16 +156,30 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
             let should_truncate = item.collapsed && has_description;
 
             if should_truncate {
+                let description_indicator = "≡ ";
                 let content_with_due = format!("{}{}", item.content, due_date_str);
-                let indicator_width = collapse_indicator.width();
+                let indicator_width = collapse_indicator.width() + description_indicator.width();
                 let available_for_content = content_max_width.saturating_sub(indicator_width);
                 let truncated_content =
                     truncate_with_ellipsis(&content_with_due, available_for_content);
                 let display_text = format!("{truncated_content}{collapse_indicator}");
 
+                // The list's REVERSED highlight swaps fg/bg per span, so the
+                // indicator's grey fg would become a grey bg on the cursor row;
+                // fall back to the line's base style there.
+                let is_cursor_row = state.list_state.selected() == Some(list_item_index);
+                let description_indicator_style = if is_in_selection || is_cursor_row {
+                    base_style
+                } else {
+                    Style::default().fg(state.theme.description_indicator)
+                };
+
                 // Pad to full width for proper highlight
-                let current_width =
-                    prefix_width + badge_width + checkbox_width + display_text.width();
+                let current_width = prefix_width
+                    + badge_width
+                    + checkbox_width
+                    + display_text.width()
+                    + description_indicator.width();
                 let padding = " ".repeat(available_width.saturating_sub(current_width));
 
                 let mut spans = vec![Span::styled(prefix.clone(), base_style)];
@@ -180,6 +194,10 @@ pub fn render(f: &mut Frame, state: &mut AppState, area: Rect) {
                 }
 
                 spans.push(Span::styled(checkbox_with_space.clone(), base_style));
+                spans.push(Span::styled(
+                    description_indicator,
+                    description_indicator_style,
+                ));
                 spans.push(Span::styled(display_text, text_style));
                 spans.push(Span::styled(padding, base_style));
 
