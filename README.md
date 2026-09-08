@@ -14,6 +14,7 @@ A terminal-based todo list manager with daily rolling lists, hierarchical tasks,
 - **Daily Rolling Lists** - Automatic rollover of incomplete tasks to the next day
 - **Hierarchical Todos** - Nest tasks under parent items with Tab/Shift+Tab
 - **Multiple States** - `[ ]` pending, `[*]` in progress (animated spinner), `[x]` done, `[?]` question, `[!]` important
+- **Web workspace** - Responsive local editor with cross-process live updates (`totui web --open`)
 - **REST API** - HTTP server for external integrations
 - **MCP Server** - Model Context Protocol support for LLM tools (Claude, etc.)
 - **SQLite Archive** - Historical todos stored in a searchable database
@@ -122,6 +123,15 @@ Or check in Claude Code:
 /mcp
 ```
 
+For Codex CLI:
+
+```bash
+codex mcp add totui-mcp -- /usr/local/bin/totui-mcp
+codex mcp list
+```
+
+From a checkout, `just configure-mcp-codex` does the same against the freshly built binary, and `just install-codex-skills` symlinks the bundled skills into `~/.codex/skills`.
+
 For other LLM tools, add to your MCP configuration file:
 
 ```json
@@ -221,3 +231,14 @@ Contributions are welcome! Here's how to get started:
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
+
+## Local web interface
+
+Run `totui web --open` (or `cargo run --bin totui -- web --open`) to use the
+responsive task workspace at <http://127.0.0.1:48372>. The Rust binary bundles the
+frontend; no Node runtime is required. `totui serve start` also serves the web UI.
+Both commands now bind to loopback by default; `TOTUI_BIND` overrides the interface.
+
+See [Web startup, development, synchronization, and verification](docs/web.md) for
+isolated data setup, browser tests, concurrency behavior, measured latency, and
+future HTTPS/OAuth hosting notes.

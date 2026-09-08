@@ -9,59 +9,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::project::Project;
-use crate::todo::{TodoItem, TodoState};
-
-#[derive(Debug, Serialize)]
-pub struct TodoResponse {
-    pub id: Uuid,
-    pub content: String,
-    pub state: String,
-    pub indent_level: usize,
-    pub parent_id: Option<Uuid>,
-    pub due_date: Option<NaiveDate>,
-    pub description: Option<String>,
-}
-
-impl From<&TodoItem> for TodoResponse {
-    fn from(item: &TodoItem) -> Self {
-        Self {
-            id: item.id,
-            content: item.content.clone(),
-            state: item.state.to_char().to_string(),
-            indent_level: item.indent_level,
-            parent_id: item.parent_id,
-            due_date: item.due_date,
-            description: item.description.clone(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct TodoListResponse {
-    pub date: NaiveDate,
-    pub items: Vec<TodoResponse>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CreateTodoRequest {
-    pub content: String,
-    pub parent_id: Option<Uuid>,
-    pub due_date: Option<NaiveDate>,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct UpdateTodoRequest {
-    pub content: Option<String>,
-    pub state: Option<String>,
-    pub due_date: Option<NaiveDate>,
-    pub description: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct DateQuery {
     pub date: Option<NaiveDate>,
     pub project: Option<String>,
+    pub revision: Option<i64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -105,16 +58,9 @@ impl ErrorResponse {
         )
             .into_response()
     }
-
-    pub fn not_found(message: impl Into<String>) -> Response<Body> {
-        (StatusCode::NOT_FOUND, Json(Self::new(message))).into_response()
-    }
-
-    pub fn bad_request(message: impl Into<String>) -> Response<Body> {
-        (StatusCode::BAD_REQUEST, Json(Self::new(message))).into_response()
-    }
 }
 
-pub fn parse_state(s: &str) -> Option<TodoState> {
-    TodoState::parse(s)
+pub fn todo_response(item: &crate::mcp::schemas::TodoItemResponse) -> serde_json::Value {
+    serde_json::json!({"id":item.id,"content":item.content,"state":item.state,"state_description":item.state_description,
+        "indent_level":item.indent_level,"parent_id":item.parent_id,"due_date":item.due_date,"description":item.description,"priority":item.priority})
 }

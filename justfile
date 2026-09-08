@@ -8,6 +8,26 @@ build:
 dev:
     cargo run --bin totui
 
+# Run the development web server. Options:
+#   --open         Open the selected project in your browser.
+#   --verbose      Log mutation payloads (including task text) and operation errors.
+#   --detach       Run in the background; logs: target/dev-web/server.log.
+#   --restart      Stop this checkout's detached instance before starting.
+#   --port PORT    Choose the HTTP port (default: 48372).
+#   --help         Show all development web options and examples.
+# Web dev: --open (browser), --verbose (payload logs), --detach (background), --restart (replace existing), --port PORT (default 48372), --help (details).
+[positional-arguments]
+dev-web *args:
+    @python3 scripts/dev-web.py start "$@"
+
+# Show the development web process and log location.
+dev-web-status:
+    @python3 scripts/dev-web.py status
+
+# Stop only the detached web process started by this checkout.
+dev-web-stop:
+    @python3 scripts/dev-web.py stop
+
 install-with-curl:
     curl -fsSL https://raw.githubusercontent.com/grimurjonsson/to-tui/main/scripts/install.sh | bash
 
@@ -337,6 +357,93 @@ remove-mcp-opencode:
     else
         echo "totui-mcp not found in OpenCode config"
     fi
+
+# Add totui-mcp to Codex CLI config (~/.codex/config.toml)
+configure-mcp-codex:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if ! command -v codex &> /dev/null; then
+        echo "❌ 'codex' is not installed or not on PATH"
+        echo ""
+        echo "Install Codex CLI first: npm install -g @openai/codex  (or brew install codex)"
+        exit 1
+    fi
+
+    # Prefer the installed binary: `just install` keeps it current and it survives
+    # `cargo clean`. Fall back to a fresh release build from this checkout.
+    if command -v totui-mcp &> /dev/null; then
+        BINARY_PATH="$(command -v totui-mcp)"
+        echo "Using installed binary: $BINARY_PATH (run 'just install' to update it)"
+    else
+        echo "No installed totui-mcp on PATH; building from this checkout instead"
+        echo "(run 'just install' and re-run this target to switch to the installed binary)"
+        cargo build --release --bin totui-mcp
+        BINARY_PATH="$(pwd)/target/release/totui-mcp"
+    fi
+
+    # `codex mcp add` writes an [mcp_servers.totui-mcp] entry into ~/.codex/config.toml.
+    # Re-adding an existing name fails, so drop any previous entry first.
+    if codex mcp get totui-mcp &> /dev/null; then
+        codex mcp remove totui-mcp > /dev/null
+    fi
+    codex mcp add totui-mcp -- "$BINARY_PATH"
+
+    echo "✓ Added totui-mcp to Codex config"
+    echo ""
+    echo "MCP server configured:"
+    echo "  Binary: $BINARY_PATH"
+    echo ""
+    echo "Verify with: codex mcp list"
+    echo "Restart Codex to load the new MCP server."
+
+# Remove totui-mcp from Codex CLI config
+remove-mcp-codex:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    if ! command -v codex &> /dev/null; then
+        echo "❌ 'codex' is not installed or not on PATH"
+        exit 1
+    fi
+
+    if codex mcp get totui-mcp &> /dev/null; then
+        codex mcp remove totui-mcp
+        echo "✓ Removed totui-mcp from Codex config"
+    else
+        echo "totui-mcp not found in Codex config"
+    fi
+
+# Symlink the todo-mcp and totui skills into ~/.codex/skills
+install-codex-skills:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
+    mkdir -p "$SKILLS_DIR"
+
+    for SKILL in todo-mcp totui; do
+        SOURCE_DIR="$(pwd)/skills/$SKILL"
+        LINK="$SKILLS_DIR/$SKILL"
+
+        if [ ! -d "$SOURCE_DIR" ]; then
+            echo "❌ Source skill directory not found: $SOURCE_DIR"
+            exit 1
+        fi
+
+        if [ -L "$LINK" ]; then
+            rm "$LINK"
+        elif [ -e "$LINK" ]; then
+            echo "❌ $LINK exists and is not a symlink; remove it first"
+            exit 1
+        fi
+
+        ln -s "$SOURCE_DIR" "$LINK"
+        echo "✓ Linked $LINK -> $SOURCE_DIR"
+    done
+
+    echo ""
+    echo "Restart Codex to pick up the skills."
 
 # Install totui-mcp pi extension (registers MCP tools in pi agent)
 setup-pi-extension:

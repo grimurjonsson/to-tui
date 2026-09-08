@@ -1,5 +1,5 @@
 use super::database;
-use super::markdown::{parse_todo_list, serialize_todo_list_clean};
+use super::markdown::parse_todo_list;
 use crate::todo::TodoList;
 use crate::utils::paths::{ensure_project_directories_exist, get_daily_file_path_for_project};
 use anyhow::{Context, Result};
@@ -13,8 +13,7 @@ pub fn load_todo_list_for_project(project_name: &str, date: NaiveDate) -> Result
     let file_path = get_daily_file_path_for_project(project_name, date)?;
 
     if database::has_todos_for_date_and_project(date, project_name)? {
-        let items = database::load_todos_for_date_and_project(date, project_name)?;
-        return Ok(TodoList::with_items(date, file_path, items));
+        return database::load_list_snapshot(date, project_name, file_path);
     }
 
     if file_path.exists() {
@@ -24,8 +23,11 @@ pub fn load_todo_list_for_project(project_name: &str, date: NaiveDate) -> Result
         let list = parse_todo_list(&content, date, file_path.clone())
             .with_context(|| "Failed to parse todo list")?;
 
-        if !list.items.is_empty() {
-            database::save_todo_list_for_project(&list, project_name)?;
+        if let Err(error) = database::save_todo_list_for_project(&list, project_name) {
+            if error.to_string().starts_with("Conflict:") {
+                return database::load_list_snapshot(date, project_name, file_path);
+            }
+            return Err(error);
         }
 
         return Ok(list);
@@ -40,21 +42,14 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
 
     database::save_todo_list_for_project(list, project_name)?;
 
-    let content = serialize_todo_list_clean(list);
-
-    let temp_path = list.file_path.with_extension("tmp");
-
-    fs::write(&temp_path, content)
-        .with_context(|| format!("Failed to write to temp file: {}", temp_path.display()))?;
-
-    fs::rename(&temp_path, &list.file_path).with_context(|| {
-        format!(
-            "Failed to rename temp file to: {}",
-            list.file_path.display()
-        )
-    })?;
-
+    export_committed_list(list, project_name);
     Ok(())
+}
+
+pub fn export_committed_list(list: &TodoList, project: &str) {
+    if let Err(error) = database::export_current_list(list.date, project, &list.file_path) {
+        tracing::warn!(%error, %project, date = %list.date, "Task changes committed; markdown export will be retried on the next save");
+    }
 }
 
 pub fn file_exists_for_project(project_name: &str, date: NaiveDate) -> Result<bool> {
@@ -79,17 +74,7 @@ pub fn load_todos_for_viewing_in_project(project_name: &str, date: NaiveDate) ->
         return load_todo_list_for_project(project_name, date);
     }
 
-    let items = database::load_archived_todos_for_date_and_project(date, project_name)?;
-    if !items.is_empty() {
-        return Ok(TodoList::with_items(date, file_path, items));
-    }
-
-    if database::has_todos_for_date_and_project(date, project_name)? {
-        let items = database::load_todos_for_date_and_project(date, project_name)?;
-        return Ok(TodoList::with_items(date, file_path, items));
-    }
-
-    Ok(TodoList::new(date, file_path))
+    database::load_history_snapshot(date, project_name, file_path)
 }
 
 #[cfg(test)]

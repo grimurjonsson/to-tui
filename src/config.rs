@@ -259,8 +259,10 @@ mod tests {
 
     #[test]
     fn test_auto_rollover_serialises_snake_case() {
-        let mut config = Config::default();
-        config.auto_rollover = AutoRolloverPref::AutoYes;
+        let config = Config {
+            auto_rollover: AutoRolloverPref::AutoYes,
+            ..Config::default()
+        };
         let toml_str = toml::to_string(&config).unwrap();
         assert!(
             toml_str.contains("auto_rollover = \"auto_yes\""),

@@ -335,6 +335,7 @@ mod tests {
     fn create_test_list() -> TodoList {
         let date = Local::now().date_naive();
         let mut list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: PathBuf::from("/tmp/test.md"),

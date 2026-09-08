@@ -55,6 +55,7 @@ timeoutlen = 1000
 "dd" = "delete"                 # Delete item (with children) - two-key sequence
 "y" = "yank"                    # Copy item to clipboard
 "u" = "undo"                    # Undo last action
+"<C-r>" = "redo"                # Redo last undone action
 
 # --- Indentation (single item) ---
 "<Tab>" = "indent"              # Indent item one level
@@ -136,6 +137,7 @@ timeoutlen = 1000
 "<Tab>" = "indent"              # Indent selected items
 "<BackTab>" = "outdent"         # Outdent selected items
 "u" = "undo"                    # Undo last action
+"<C-r>" = "redo"                # Redo last undone action
 
 # --- Exit Visual Mode ---
 "v" = "exit_visual"             # Exit visual mode

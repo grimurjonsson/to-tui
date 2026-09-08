@@ -14,11 +14,12 @@ use uuid::Uuid;
 
 use crate::mcp::schemas::TodoItemResponse;
 use crate::project::{DEFAULT_PROJECT_NAME, ProjectRegistry};
-use crate::storage::database::soft_delete_todos_for_project;
 use crate::storage::file::{
     file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project,
 };
-use crate::storage::rollover::create_rolled_over_list_for_project;
+use crate::storage::rollover::{
+    execute_rollover_for_project, find_rollover_candidates_for_project,
+};
 use crate::todo::{Priority, TodoItem, TodoList, TodoState};
 
 /// Every state a todo can hold, in the order they are documented to callers.
@@ -94,16 +95,39 @@ pub struct CreateSpec {
 #[serde(deny_unknown_fields)]
 pub struct UpdateSpec {
     #[serde(default)]
+    pub placement: Option<PlacementSpec>,
+    #[serde(default)]
+    pub expected_revision: Option<i64>,
+    #[serde(default)]
+    pub clear_due_date: bool,
+    #[serde(default)]
+    pub clear_priority: bool,
+    #[serde(default)]
     pub content: Option<String>,
     /// An empty string clears the description.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub description: Option<String>,
     #[serde(default)]
     pub state: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub due_date: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub priority: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlacementSpec {
+    pub parent_id: Option<String>,
+    pub before_id: Option<String>,
+}
+
+fn nullable_string<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    Ok(Some(
+        Option::<String>::deserialize(deserializer)?.unwrap_or_default(),
+    ))
 }
 
 /// A loaded list. `date` is the list's own date, which after a rollover is today
@@ -180,22 +204,16 @@ fn not_found_todo(id: &str, date: NaiveDate) -> OpsError {
 pub fn load_list(project: &str, date: NaiveDate) -> Result<TodoList, OpsError> {
     let today = Local::now().date_naive();
 
-    if date == today && !file_exists_for_project(project, date).map_err(OpsError::storage)? {
-        for days_back in 1..=30 {
-            let Some(check) = today.checked_sub_days(chrono::Days::new(days_back)) else {
-                break;
-            };
-            if file_exists_for_project(project, check).map_err(OpsError::storage)? {
-                let list = load_todo_list_for_project(project, check).map_err(OpsError::storage)?;
-                let incomplete = list.get_incomplete_items();
-                if !incomplete.is_empty() {
-                    let rolled = create_rolled_over_list_for_project(project, today, incomplete)
-                        .map_err(OpsError::storage)?;
-                    save_todo_list_for_project(&rolled, project).map_err(OpsError::storage)?;
-                    return Ok(rolled);
-                }
-                break;
-            }
+    if date == today
+        && let Some((source, items)) =
+            find_rollover_candidates_for_project(project).map_err(OpsError::storage)?
+    {
+        match execute_rollover_for_project(project, source, items) {
+            Ok(list) => return Ok(list),
+            Err(error)
+                if error.to_string().starts_with("Conflict:")
+                    && file_exists_for_project(project, today).map_err(OpsError::storage)? => {}
+            Err(error) => return Err(OpsError::storage(error)),
         }
     }
 
@@ -236,14 +254,16 @@ pub fn create(
 
     let mut item = TodoItem::new(spec.content, indent_level);
     item.parent_id = spec.parent_id.as_deref().map(parse_id).transpose()?;
-    item.description = spec.description;
+    item.description = spec
+        .description
+        .filter(|description| !description.is_empty());
     item.due_date = spec
         .due_date
         .as_deref()
         .map(|d| parse_date_arg(Some(d)))
         .transpose()?;
     if let Some(ref s) = spec.state {
-        item.state = parse_state_arg(s)?;
+        item.set_state(parse_state_arg(s)?);
     }
     if let Some(ref p) = spec.priority {
         item.priority = Some(parse_priority_arg(p)?);
@@ -270,11 +290,13 @@ pub fn update(
     let due_date = spec
         .due_date
         .as_deref()
+        .filter(|d| !d.is_empty())
         .map(|d| parse_date_arg(Some(d)))
         .transpose()?;
     let priority = spec
         .priority
         .as_deref()
+        .filter(|p| !p.is_empty())
         .map(parse_priority_arg)
         .transpose()?;
     if let Some(ref c) = spec.content
@@ -287,6 +309,7 @@ pub fn update(
     }
 
     let mut list = load_list(&project, date)?;
+    check_revision(&list, spec.expected_revision)?;
     let item = list
         .items
         .iter_mut()
@@ -297,7 +320,7 @@ pub fn update(
         item.content = c;
     }
     if let Some(s) = state {
-        item.state = s;
+        item.set_state(s);
     }
     if let Some(d) = due_date {
         item.due_date = Some(d);
@@ -309,7 +332,22 @@ pub fn update(
         item.description = if d.is_empty() { None } else { Some(d) };
     }
 
-    let response = TodoItemResponse::from(&*item);
+    if spec.clear_due_date || spec.due_date.as_deref() == Some("") {
+        item.due_date = None;
+    }
+    if spec.clear_priority || spec.priority.as_deref() == Some("") {
+        item.priority = None;
+    }
+    item.modified_at = chrono::Utc::now();
+    let mut response = TodoItemResponse::from(&*item);
+    if let Some(placement) = spec.placement {
+        response = move_in_list(
+            &mut list,
+            id,
+            placement.parent_id.as_deref(),
+            placement.before_id.as_deref(),
+        )?;
+    }
     save(&list, &project)?;
     Ok(response)
 }
@@ -373,11 +411,35 @@ pub fn move_item(
     id: &str,
     new_parent: Option<&str>,
 ) -> Result<TodoItemResponse, OpsError> {
+    move_item_at(project, date, id, new_parent, None, None)
+}
+
+pub fn move_item_at(
+    project: Option<&str>,
+    date: Option<&str>,
+    id: &str,
+    new_parent: Option<&str>,
+    before: Option<&str>,
+    expected_revision: Option<i64>,
+) -> Result<TodoItemResponse, OpsError> {
     let project = resolve_project(project)?;
     let date = parse_date_arg(date)?;
-    let uuid = parse_id(id)?;
     let mut list = load_list(&project, date)?;
 
+    check_revision(&list, expected_revision)?;
+    let response = move_in_list(&mut list, id, new_parent, before)?;
+    save(&list, &project)?;
+    Ok(response)
+}
+
+fn move_in_list(
+    list: &mut TodoList,
+    id: &str,
+    new_parent: Option<&str>,
+    before: Option<&str>,
+) -> Result<TodoItemResponse, OpsError> {
+    let uuid = parse_id(id)?;
+    let date = list.date;
     let idx = list
         .items
         .iter()
@@ -417,6 +479,22 @@ pub fn move_item(
         None => (0, list.items.len()),
     };
 
+    if let Some(before) = before {
+        let before_id = parse_id(before)?;
+        let target = list
+            .items
+            .iter()
+            .position(|i| i.id == before_id)
+            .ok_or_else(|| not_found_todo(before, date))?;
+        let parent_id = new_parent.map(parse_id).transpose()?;
+        if (start..end).contains(&target) || list.items[target].parent_id != parent_id {
+            return Err(OpsError::Validation {
+                message: "Choose a sibling outside the moved subtree".into(),
+                suggestion: "Select a different position".into(),
+            });
+        }
+        insert_at = target;
+    }
     let moved: Vec<TodoItem> = list.items.drain(start..end).collect();
 
     // Draining shifts everything after the removed slice left.
@@ -432,25 +510,29 @@ pub fn move_item(
     }
 
     list.recalculate_parent_ids();
-    let response = TodoItemResponse::from(&list.items[insert_at]);
-    save(&list, &project)?;
-    Ok(response)
+    Ok(TodoItemResponse::from(&list.items[insert_at]))
 }
 
-/// Delete a todo and every descendant. Returns the ids removed.
-///
-/// Dropping items from the list and saving is NOT enough: the save path upserts,
-/// so removed rows survive. The database soft-delete is what actually retires them.
 pub fn delete(
     project: Option<&str>,
     date: Option<&str>,
     id: &str,
+) -> Result<Vec<String>, OpsError> {
+    delete_at(project, date, id, None)
+}
+
+pub fn delete_at(
+    project: Option<&str>,
+    date: Option<&str>,
+    id: &str,
+    expected_revision: Option<i64>,
 ) -> Result<Vec<String>, OpsError> {
     let project = resolve_project(project)?;
     let date = parse_date_arg(date)?;
     let uuid = parse_id(id)?;
     let mut list = load_list(&project, date)?;
 
+    check_revision(&list, expected_revision)?;
     let idx = list
         .items
         .iter()
@@ -462,12 +544,17 @@ pub fn delete(
     let ids: Vec<Uuid> = list.items[start..end].iter().map(|i| i.id).collect();
     let removed: Vec<String> = ids.iter().map(|i| i.to_string()).collect();
 
-    soft_delete_todos_for_project(&ids, date, &project).map_err(OpsError::storage)?;
-
     list.items.drain(start..end);
     list.recalculate_parent_ids();
     save(&list, &project)?;
     Ok(removed)
+}
+
+pub fn check_revision(list: &TodoList, expected: Option<i64>) -> Result<(), OpsError> {
+    if expected.is_some_and(|revision| revision != list.revision.get()) {
+        return Err(OpsError::Storage { message: "Conflict: this list changed in another interface. Review the latest version and retry.".into() });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -55,6 +55,8 @@ just start-mcp-server           # Run MCP server (release)
 just start-mcp-server-debug     # Run MCP server (debug)
 just inspect-mcp                # Open MCP inspector
 just configure-mcp-opencode     # Add to OpenCode config
+just configure-mcp-codex        # Add to Codex CLI config (~/.codex/config.toml)
+just install-codex-skills       # Symlink the todo-mcp and totui skills into ~/.codex/skills
 ```
 
 ## Architecture
@@ -154,13 +156,13 @@ See `DB_DESIGN.md` for full schema details.
 ## MCP Server Integration
 
 The MCP server exposes tools for LLM interaction:
-- `list_todos`: Get todos for a date with formatted markdown output
-- `create_todo`: Add new todo (optionally nested under parent_id)
-- `update_todo`: Modify content, state, due_date, or description
+- `list_todos`: Get todos for a date with formatted markdown output; `hide_completed` omits done/cancelled items
+- `create_todo`: Add new todo (optionally nested under parent_id, optional priority P0/P1/P2)
+- `update_todo`: Modify content, state, priority, due_date, or description
 - `delete_todo`: Remove todo and all children
 - `mark_complete`: Toggle done/pending state
 
-Configure in Claude Desktop or OpenCode using `just configure-mcp-opencode`.
+Configure in OpenCode using `just configure-mcp-opencode`, or in Codex CLI using `just configure-mcp-codex` (plus `just install-codex-skills` for the skills).
 
 ## Plugin System
 

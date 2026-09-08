@@ -47,6 +47,7 @@ pub enum Action {
 
     // Undo
     Undo,
+    Redo,
 
     // UI
     ToggleHelp,
@@ -120,6 +121,7 @@ impl fmt::Display for Action {
             Action::Expand => "expand",
             Action::CollapseOrParent => "collapse_or_parent",
             Action::Undo => "undo",
+            Action::Redo => "redo",
             Action::ToggleHelp => "toggle_help",
             Action::CloseHelp => "close_help",
             Action::Quit => "quit",
@@ -182,6 +184,7 @@ impl FromStr for Action {
             "expand" => Ok(Action::Expand),
             "collapse_or_parent" => Ok(Action::CollapseOrParent),
             "undo" => Ok(Action::Undo),
+            "redo" => Ok(Action::Redo),
             "toggle_help" => Ok(Action::ToggleHelp),
             "close_help" => Ok(Action::CloseHelp),
             "quit" => Ok(Action::Quit),
@@ -757,6 +760,7 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert("<Left>".to_string(), "collapse_or_parent".to_string());
     m.insert("h".to_string(), "collapse_or_parent".to_string());
     m.insert("u".to_string(), "undo".to_string());
+    m.insert("<C-r>".to_string(), "redo".to_string());
     m.insert("?".to_string(), "toggle_help".to_string());
     m.insert("<Esc>".to_string(), "close_help".to_string());
     m.insert("q".to_string(), "quit".to_string());
@@ -822,6 +826,7 @@ fn default_visual_bindings() -> HashMap<String, String> {
     m.insert("<Tab>".to_string(), "indent".to_string());
     m.insert("<BackTab>".to_string(), "outdent".to_string());
     m.insert("u".to_string(), "undo".to_string());
+    m.insert("<C-r>".to_string(), "redo".to_string());
     m.insert("v".to_string(), "exit_visual".to_string());
     m.insert("<Esc>".to_string(), "exit_visual".to_string());
     m.insert("q".to_string(), "exit_visual".to_string());
@@ -1098,5 +1103,23 @@ pr = "<C-g>"
             config.plugins.get("github").unwrap().get("pr").unwrap(),
             "<C-g>"
         );
+    }
+
+    #[test]
+    fn test_redo_action_name_round_trip() {
+        assert_eq!(Action::Redo.to_string(), "redo");
+        assert_eq!(Action::from_str("redo").unwrap(), Action::Redo);
+    }
+
+    #[test]
+    fn test_default_redo_binding_is_ctrl_r() {
+        let cache = KeybindingCache::default();
+        let event = KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL);
+
+        assert_eq!(
+            cache.lookup_navigate(&event, None),
+            KeyLookupResult::Action(Action::Redo)
+        );
+        assert_eq!(cache.get_visual_action(&event), Some(Action::Redo));
     }
 }

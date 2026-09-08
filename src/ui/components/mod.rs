@@ -17,8 +17,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Wrap,
+        Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -303,6 +303,10 @@ fn render_help_overlay(f: &mut Frame, state: &mut AppState) {
     lines.push(Line::from(vec![
         help_binding(state, HelpBindingScope::Navigate, Action::Undo, key_style),
         Span::styled("Undo last action", desc_style),
+    ]));
+    lines.push(Line::from(vec![
+        help_binding(state, HelpBindingScope::Navigate, Action::Redo, key_style),
+        Span::styled("Redo last undone action", desc_style),
     ]));
     lines.push(Line::from(""));
 
@@ -961,70 +965,6 @@ fn split_word(word: &str, max_width: usize) -> Vec<String> {
     }
 
     chunks
-}
-
-#[cfg(test)]
-mod help_tests {
-    use super::*;
-
-    #[test]
-    fn help_max_scroll_counts_wrapped_lines() {
-        let lines = vec![Line::from(
-            "A long help description that wraps across several narrow terminal rows",
-        )];
-
-        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 3)).1, 0);
-        assert!(help_scroll_metrics(&lines, Rect::new(0, 0, 20, 3)).1 > 0);
-    }
-
-    #[test]
-    fn help_scroll_metrics_report_total_and_maximum() {
-        let lines = vec![
-            Line::from("first"),
-            Line::from("second"),
-            Line::from("third"),
-        ];
-
-        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 2)), (3, 1));
-    }
-
-    #[test]
-    fn help_entries_wrap_with_a_hanging_indent() {
-        let key = "    Alt+Shift+↑     ";
-        let lines = wrap_help_lines(
-            vec![Line::from(vec![
-                Span::styled(key, Style::default().fg(Color::Yellow)),
-                Span::raw("Move item up with all of its children"),
-            ])],
-            30,
-        );
-
-        assert!(lines.len() > 1);
-        assert_eq!(lines[0].spans[0].content, key);
-        assert!(
-            lines[1].spans[0]
-                .content
-                .starts_with(&" ".repeat(UnicodeWidthStr::width(key)))
-        );
-    }
-
-    #[test]
-    fn styled_help_entries_preserve_their_hanging_indent() {
-        let lines = wrap_help_lines(
-            vec![Line::from(vec![
-                Span::raw("    "),
-                Span::raw("In visual: "),
-                Span::styled("j/k", Style::default().fg(Color::Yellow)),
-                Span::raw(" extend selection, "),
-                Span::styled("Tab/S-Tab", Style::default().fg(Color::Yellow)),
-                Span::raw(" indent/outdent"),
-            ])],
-            20,
-        );
-
-        assert!(lines.len() > 1);
-        assert!(lines.iter().all(|line| line.spans[0].content == "    "));
-    }
 }
 
 pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -1763,20 +1703,21 @@ fn render_plugin_downloading(
 
     let title = format!(" Updating {} ", plugin_name);
 
-    let mut lines: Vec<Line> = vec![];
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw("  Version: "),
-        Span::styled(current_version, Style::default().fg(Color::Yellow)),
-        Span::raw(" → "),
-        Span::styled(
-            latest_version,
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-    lines.push(Line::from(""));
+    let lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  Version: "),
+            Span::styled(current_version, Style::default().fg(Color::Yellow)),
+            Span::raw(" → "),
+            Span::styled(
+                latest_version,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ];
 
     let content = Paragraph::new(lines)
         .block(
@@ -2315,25 +2256,41 @@ fn render_project_selecting(
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Projects (Enter to switch, Esc to cancel) ")
-                .style(Style::default().bg(state.theme.background)),
-        )
-        .style(Style::default().fg(state.theme.foreground));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Projects (Enter to switch, Esc to cancel) ")
+        .style(Style::default().bg(state.theme.background));
+    let inner = block.inner(area);
+    let [list_area, footer_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let list = List::new(items).style(Style::default().fg(state.theme.foreground));
+    let mut list_state = ListState::default().with_selected(Some(selected_index));
 
     f.render_widget(Clear, area);
-    f.render_widget(list, area);
+    f.render_widget(block, area);
+    f.render_stateful_widget(list, list_area, &mut list_state);
 
-    // Render footer with options
-    let footer_area = Rect {
-        x: area.x + 1,
-        y: area.y + area.height - 2,
-        width: area.width - 2,
-        height: 1,
-    };
+    let visible_rows = list_area.height as usize;
+    if visible_rows > 0 && projects.len() > visible_rows {
+        let offset = list_state.offset();
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some(if offset > 0 { "▲" } else { "│" }))
+            .end_symbol(Some(if offset + visible_rows < projects.len() {
+                "▼"
+            } else {
+                "│"
+            }))
+            .style(Style::default().fg(state.theme.foreground));
+        let mut scrollbar_state =
+            ScrollbarState::new(projects.len() - visible_rows + 1).position(offset);
+        let scrollbar_area = Rect::new(
+            area.right().saturating_sub(1),
+            list_area.y,
+            1,
+            list_area.height,
+        );
+        f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
 
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -2719,4 +2676,114 @@ pub fn render_plugin_error_popup(f: &mut Frame, state: &AppState) {
         .style(Style::default().bg(state.theme.background));
 
     f.render_widget(paragraph, popup_area);
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    #[test]
+    fn help_max_scroll_counts_wrapped_lines() {
+        let lines = vec![Line::from(
+            "A long help description that wraps across several narrow terminal rows",
+        )];
+
+        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 3)).1, 0);
+        assert!(help_scroll_metrics(&lines, Rect::new(0, 0, 20, 3)).1 > 0);
+    }
+
+    #[test]
+    fn help_scroll_metrics_report_total_and_maximum() {
+        let lines = vec![
+            Line::from("first"),
+            Line::from("second"),
+            Line::from("third"),
+        ];
+
+        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 2)), (3, 1));
+    }
+
+    #[test]
+    fn help_entries_wrap_with_a_hanging_indent() {
+        let key = "    Alt+Shift+↑     ";
+        let lines = wrap_help_lines(
+            vec![Line::from(vec![
+                Span::styled(key, Style::default().fg(Color::Yellow)),
+                Span::raw("Move item up with all of its children"),
+            ])],
+            30,
+        );
+
+        assert!(lines.len() > 1);
+        assert_eq!(lines[0].spans[0].content, key);
+        assert!(
+            lines[1].spans[0]
+                .content
+                .starts_with(&" ".repeat(UnicodeWidthStr::width(key)))
+        );
+    }
+
+    #[test]
+    fn styled_help_entries_preserve_their_hanging_indent() {
+        let lines = wrap_help_lines(
+            vec![Line::from(vec![
+                Span::raw("    "),
+                Span::raw("In visual: "),
+                Span::styled("j/k", Style::default().fg(Color::Yellow)),
+                Span::raw(" extend selection, "),
+                Span::styled("Tab/S-Tab", Style::default().fg(Color::Yellow)),
+                Span::raw(" indent/outdent"),
+            ])],
+            20,
+        );
+
+        assert!(lines.len() > 1);
+        assert!(lines.iter().all(|line| line.spans[0].content == "    "));
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+    use crate::keybindings::KeybindingCache;
+    use crate::plugin::{PluginActionRegistry, PluginLoader};
+    use crate::project::Project;
+    use crate::todo::TodoList;
+    use crate::ui::theme::Theme;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn test_project_selection_stays_visible_in_small_dialog() {
+        let projects: Vec<_> = (0..30)
+            .map(|i| Project::new(format!("Project {i:02}")))
+            .collect();
+        let state = AppState::new(
+            TodoList::new(Local::now().date_naive(), std::path::PathBuf::new()),
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        for selected in (0..30).chain((0..30).rev()) {
+            terminal
+                .draw(|frame| render_project_selecting(frame, &state, &projects, selected))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let visible: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            assert!(
+                visible.contains(&projects[selected].name),
+                "Selection {selected} disappeared"
+            );
+            assert!(visible.contains("[n]ew"));
+            assert_eq!(visible.contains("▲"), selected >= 5);
+            assert_eq!(visible.contains("▼"), selected < projects.len() - 1);
+        }
+    }
 }

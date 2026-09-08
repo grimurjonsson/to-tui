@@ -5,6 +5,13 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-09-08
+You've hit your session limit · resets 5:50pm (Atlantic/Reykjavik)
+
+### Added
+- Add web project management and fix TUI saves and scrolling
+- add a live local web workspace with shared concurrency protection
+
 ## [0.5.25] - 2026-08-26
 Adds terminal-style word and line editing keybindings for faster text editing, and collapsed todos now show an indicator when they have a description.
 

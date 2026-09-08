@@ -4,7 +4,6 @@ pub mod theme;
 use crate::app::{AppState, event::handle_key_event, event::handle_mouse_event};
 use crate::storage::UiCache;
 use crate::utils::cursor::set_mouse_cursor_default;
-use crate::utils::paths::get_database_path;
 use anyhow::Result;
 use crossterm::{
     event::{
@@ -15,7 +14,6 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::StreamExt;
-use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, backend::CrosstermBackend, layout::Position, style::Modifier};
 use std::io::{self, Write};
 use std::time::Duration;
@@ -60,57 +58,25 @@ pub fn run_tui(mut state: AppState) -> Result<AppState> {
     // Initialize plugin notification channel
     let plugin_rx = crate::plugin::loader::init_plugin_notifier();
 
-    // Set up database watcher with tokio channel
-    let (db_tx, db_rx) = mpsc::unbounded_channel();
-    let _watcher = setup_database_watcher(db_tx);
-
     // Create single-threaded runtime for the UI event loop
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
 
-    let result = rt.block_on(run_app(&mut terminal, &mut state, db_rx, plugin_rx));
+    let result = rt.block_on(run_app(&mut terminal, &mut state, plugin_rx));
     terminal.show_cursor()?;
 
     result?;
     Ok(state)
 }
 
-fn setup_database_watcher(tx: mpsc::UnboundedSender<()>) -> Option<RecommendedWatcher> {
-    let db_path = match get_database_path() {
-        Ok(path) => path,
-        Err(_) => return None,
-    };
-
-    let watcher = RecommendedWatcher::new(
-        move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res
-                && event.kind.is_modify()
-            {
-                let _ = tx.send(());
-            }
-        },
-        Config::default(),
-    );
-
-    match watcher {
-        Ok(mut w) => {
-            if w.watch(&db_path, RecursiveMode::NonRecursive).is_ok() {
-                Some(w)
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    }
-}
-
 async fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     state: &mut AppState,
-    mut db_rx: mpsc::UnboundedReceiver<()>,
     mut plugin_rx: mpsc::UnboundedReceiver<()>,
 ) -> Result<()> {
+    let observer = crate::storage::database::get_connection()?;
+    let mut data_version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;
     let mut reader = EventStream::new();
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
 
@@ -193,12 +159,14 @@ async fn run_app(
                             // Dismiss plugin error popup on any key press
                             if state.show_plugin_error_popup {
                                 state.dismiss_plugin_error_popup();
-                            } else {
-                                handle_key_event(key, state)?;
+                            } else if let Err(error) = handle_key_event(key, state) {
+                                state.set_status_message(format!("{error} F5 saves a recovery copy and reloads."));
                             }
                         }
                         Event::Mouse(mouse) => {
-                            handle_mouse_event(mouse, state)?;
+                            if let Err(error) = handle_mouse_event(mouse, state) {
+                                state.set_status_message(format!("{error} F5 saves a recovery copy and reloads."));
+                            }
                         }
                         Event::Resize(_, _) => {
                             state.clear_mouse_selection();
@@ -214,15 +182,16 @@ async fn run_app(
                 state.fire_on_load_event();
             }
 
-            // Database file changed externally
-            _ = db_rx.recv() => {
-                tracing::debug!("UI loop: Database file changed, reloading");
-                let _ = state.reload_from_database();
-            }
-
             // Periodic tick for animations (spinner, status messages)
             _ = tick_interval.tick() => {
                 // Don't log ticks - too noisy
+                let version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+                if version != data_version && !state.unsaved_changes && state.mode == crate::app::mode::Mode::Navigate {
+                    match state.reload_from_database() {
+                        Ok(()) => data_version = version,
+                        Err(error) => state.set_status_message(format!("Refresh failed: {error}")),
+                    }
+                }
                 state.tick_spinner();
                 state.check_midnight_rollover();
             }

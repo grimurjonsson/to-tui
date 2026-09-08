@@ -4,6 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn get_to_tui_dir() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("TOTUI_DATA_DIR") {
+        return Ok(PathBuf::from(path));
+    }
     let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
     Ok(home.join(".to-tui"))
 }

@@ -436,7 +436,7 @@ mod tests {
         assert_eq!(defaults.len(), 2); // Only fields with defaults
         assert_eq!(defaults.get("timeout"), Some(&ConfigValue::Integer(30)));
         assert_eq!(defaults.get("debug"), Some(&ConfigValue::Boolean(false)));
-        assert!(defaults.get("api_key").is_none()); // Required field has no default
+        assert!(!defaults.contains_key("api_key")); // Required field has no default
     }
 
     #[test]

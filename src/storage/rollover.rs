@@ -1,7 +1,5 @@
-use super::database::{active_todo_dates_before, archive_todos_for_date_and_project};
-use super::file::{
-    file_exists_for_project, load_todo_list_for_project, save_todo_list_for_project,
-};
+use super::database::{active_todo_dates_before, rollover_snapshot};
+use super::file::{file_exists_for_project, load_todo_list_for_project};
 use crate::todo::TodoList;
 use crate::utils::paths::{get_dailies_dir_for_project, get_daily_file_path_for_project};
 use anyhow::{Context, Result};
@@ -90,9 +88,14 @@ pub fn execute_rollover_for_project(
     items: Vec<crate::todo::TodoItem>,
 ) -> Result<TodoList> {
     let today = Local::now().date_naive();
-    archive_todos_for_date_and_project(source_date, project_name)?;
+    let source = load_todo_list_for_project(project_name, source_date)?;
+    anyhow::ensure!(
+        source.get_incomplete_items() == items,
+        "Conflict: rollover source changed. Retry rollover."
+    );
     let list = create_rolled_over_list_for_project(project_name, today, items)?;
-    save_todo_list_for_project(&list, project_name)?;
+    rollover_snapshot(&source, &list, project_name)?;
+    super::file::export_committed_list(&list, project_name);
     Ok(list)
 }
 
