@@ -1187,3 +1187,33 @@ Path(os.environ['TOTUI_DATA_DIR'], 'projects', 'Renamed').exists(),
 `),
   ).toEqual([0, 0, 0, 0, false, false]);
 });
+
+test("an account switch reloads before using another user's response", async ({
+  page,
+}) => {
+  cli("create", "--content", "Account switch task");
+  await page.goto(base);
+  await expect(page.locator(".task-title")).toHaveText("Account switch task");
+  await page.locator(".task-title").click();
+  await page
+    .getByRole("textbox", { name: "Description", exact: true })
+    .fill("Unsaved private draft");
+  await page.route(
+    "**/api/snapshot?*",
+    async (route) => {
+      await route.fulfill({
+        status: 409,
+        headers: { "X-Totui-User": "another-account" },
+        body: "Account changed",
+      });
+    },
+    { times: 1 },
+  );
+  await Promise.all([
+    page.waitForEvent("domcontentloaded"),
+    page.getByRole("button", { name: "Refresh tasks" }).click(),
+  ]);
+  await expect(page.locator(".task-title")).toHaveText("Account switch task");
+  await expect(page.locator("#editor")).toBeHidden();
+  await expect(page.getByText("Unsaved private draft")).toHaveCount(0);
+});

@@ -21,24 +21,19 @@
 //! └── todos.db
 //! ```
 
-use anyhow::{Context, Result};
-use std::fs;
-use std::path::PathBuf;
-use tracing::{debug, info};
-
 use crate::project::{DEFAULT_PROJECT_NAME, ProjectRegistry};
 use crate::storage::database;
-use crate::utils::paths::{
-    get_dailies_dir_for_project, get_legacy_dailies_dir, get_projects_dir, get_to_tui_dir,
-};
+use crate::utils::paths::{get_dailies_dir_for_project, get_legacy_dailies_dir, get_to_tui_dir};
+use anyhow::{Context, Result};
+use tracing::{debug, info};
+
+use std::fs;
+use std::path::PathBuf;
 
 /// Check if the installation is v1 (legacy) layout
 pub fn is_v1_layout() -> Result<bool> {
     let legacy_dailies = get_legacy_dailies_dir()?;
-    let projects_dir = get_projects_dir()?;
-
-    // V1 layout: has legacy dailies directory, no projects directory
-    Ok(legacy_dailies.exists() && !projects_dir.exists())
+    Ok(legacy_dailies.exists())
 }
 
 /// Check if this is a fresh install (no data directory at all)
@@ -60,9 +55,6 @@ pub fn migrate_v1_to_v2() -> Result<()> {
     // Step 2: Move dailies from ~/.to-tui/dailies/ to ~/.to-tui/projects/default/dailies/
     migrate_dailies_directory()?;
 
-    // Step 3: Update database entries with project='default'
-    update_database_project_column()?;
-
     info!("Migration from v1 to v2 completed successfully");
     Ok(())
 }
@@ -70,6 +62,7 @@ pub fn migrate_v1_to_v2() -> Result<()> {
 /// Initialize for fresh install - just create the default project
 pub fn initialize_fresh_install() -> Result<()> {
     info!("Initializing fresh install");
+    fs::create_dir_all(get_to_tui_dir()?)?;
 
     let mut registry = ProjectRegistry::load()?;
     registry.ensure_default_project()?;
@@ -142,33 +135,6 @@ fn migrate_dailies_directory() -> Result<()> {
     Ok(())
 }
 
-/// Update database entries to set project='default' where project is NULL or missing
-fn update_database_project_column() -> Result<()> {
-    database::init_database()?;
-    let conn = database::get_connection()?;
-
-    // Update todos table
-    let updated_todos = conn.execute(
-        "UPDATE todos SET project = ?1 WHERE project IS NULL OR project = ''",
-        [DEFAULT_PROJECT_NAME],
-    )?;
-
-    // Update archived_todos table
-    let updated_archived = conn.execute(
-        "UPDATE archived_todos SET project = ?1 WHERE project IS NULL OR project = ''",
-        [DEFAULT_PROJECT_NAME],
-    )?;
-
-    if updated_todos > 0 || updated_archived > 0 {
-        info!(
-            "Updated {} todos and {} archived todos with default project",
-            updated_todos, updated_archived
-        );
-    }
-
-    Ok(())
-}
-
 /// Check if a directory is empty
 fn is_dir_empty(path: &PathBuf) -> Result<bool> {
     let mut entries = fs::read_dir(path)?;
@@ -218,26 +184,162 @@ mod tests {
     }
 
     #[test]
-    fn test_v1_layout_detection() {
-        // This test validates the logic without actually modifying real paths
-        // The actual path functions use the real home dir, so we test the logic separately
+    fn test_v1_layout_detection_resumes_partial_migration() {
         let temp = TempDir::new().unwrap();
-        let legacy_dailies = temp.path().join("dailies");
-        let projects_dir = temp.path().join("projects");
+        crate::storage::context::with_root(temp.path().to_path_buf(), || {
+            assert!(!is_v1_layout().unwrap());
+            fs::create_dir_all(temp.path().join("dailies")).unwrap();
+            assert!(is_v1_layout().unwrap());
+            fs::create_dir_all(temp.path().join("projects")).unwrap();
+            assert!(is_v1_layout().unwrap());
+            fs::remove_dir(temp.path().join("dailies")).unwrap();
+            assert!(!is_v1_layout().unwrap());
+        });
+    }
+    fn create_legacy_database(root: &std::path::Path, project_column: bool) {
+        let conn = rusqlite::Connection::open(root.join("todos.db")).unwrap();
+        for (table, date_column) in [("todos", "date"), ("archived_todos", "original_date")] {
+            conn.execute_batch(&format!(
+                "CREATE TABLE {table} (
+                    id TEXT PRIMARY KEY, {date_column} TEXT NOT NULL,
+                    content TEXT NOT NULL, state TEXT NOT NULL,
+                    indent_level INTEGER NOT NULL, parent_id TEXT,
+                    due_date TEXT, description TEXT, position INTEGER NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                INSERT INTO {table} VALUES (
+                    '11111111-1111-4111-8111-111111111111', '2026-09-08',
+                    'Keep my task', '!', 0, NULL, '2026-09-09', 'Keep my notes',
+                    0, '2026-09-08T10:00:00Z', '2026-09-08T10:00:00Z'
+                );"
+            ))
+            .unwrap();
+            if project_column {
+                conn.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN project TEXT;"))
+                    .unwrap();
+            }
+        }
+        conn.execute_batch(
+            "ALTER TABLE archived_todos ADD COLUMN archived_at TEXT;
+             UPDATE archived_todos SET archived_at = '2026-09-08T11:00:00Z';",
+        )
+        .unwrap();
+    }
 
-        // Neither exists -> not v1
-        assert!(!legacy_dailies.exists() && !projects_dir.exists());
+    #[test]
+    fn test_startup_migrates_legacy_database_in_place_idempotently() {
+        for project_column in [false, true] {
+            let temp = TempDir::new().unwrap();
+            create_legacy_database(temp.path(), project_column);
+            fs::write(temp.path().join("config.toml"), "existing configuration").unwrap();
+            let legacy = temp.path().join("dailies");
+            let destination = temp.path().join("projects/default/dailies");
+            fs::create_dir_all(&legacy).unwrap();
+            fs::create_dir_all(&destination).unwrap();
+            fs::write(legacy.join("2026-09-08.md"), "legacy daily").unwrap();
+            fs::write(legacy.join("2026-09-07.md"), "legacy conflict").unwrap();
+            fs::write(destination.join("2026-09-07.md"), "existing daily").unwrap();
+            crate::storage::context::with_root(temp.path().to_path_buf(), || {
+                for _ in 0..2 {
+                    ensure_installation_ready().unwrap();
+                    let list = database::load_list_snapshot(
+                        chrono::NaiveDate::from_ymd_opt(2026, 9, 8).unwrap(),
+                        DEFAULT_PROJECT_NAME,
+                        destination.join("2026-09-08.md"),
+                    )
+                    .unwrap();
+                    assert_eq!(list.items.len(), 1);
+                    let item = &list.items[0];
+                    assert_eq!(item.id.to_string(), "11111111-1111-4111-8111-111111111111");
+                    assert_eq!(item.content, "Keep my task");
+                    assert_eq!(item.description.as_deref(), Some("Keep my notes"));
+                    assert_eq!(item.state, crate::todo::TodoState::Exclamation);
+                    let conn = database::get_connection().unwrap();
+                    let archived: (String, String, i64, String) = conn
+                        .query_row(
+                            "SELECT content, description, collapsed, project FROM archived_todos",
+                            [],
+                            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                        )
+                        .unwrap();
+                    assert_eq!(
+                        archived,
+                        (
+                            "Keep my task".into(),
+                            "Keep my notes".into(),
+                            0,
+                            "default".into()
+                        )
+                    );
+                    assert_eq!(
+                        conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))
+                            .unwrap(),
+                        "ok"
+                    );
+                    assert!(!temp.path().join("users.db").exists());
+                    assert!(!temp.path().join("users").exists());
+                }
+            });
+            assert_eq!(
+                fs::read_to_string(destination.join("2026-09-08.md")).unwrap(),
+                "legacy daily"
+            );
+            assert_eq!(
+                fs::read_to_string(destination.join("2026-09-07.md")).unwrap(),
+                "existing daily"
+            );
+            assert_eq!(
+                fs::read_to_string(legacy.join("2026-09-07.md")).unwrap(),
+                "legacy conflict"
+            );
+            assert_eq!(
+                fs::read_to_string(temp.path().join("config.toml")).unwrap(),
+                "existing configuration"
+            );
+        }
+    }
 
-        // Only legacy exists -> v1
-        fs::create_dir_all(&legacy_dailies).unwrap();
-        assert!(legacy_dailies.exists() && !projects_dir.exists());
+    #[test]
+    fn test_startup_initializes_missing_data_directory() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path().join("new");
+        crate::storage::context::with_root(root.clone(), || {
+            ensure_installation_ready().unwrap();
+            ensure_installation_ready().unwrap();
+        });
+        assert!(root.join("todos.db").exists());
+        assert!(root.join("projects/default/dailies").exists());
+    }
 
-        // Both exist -> not v1 (already migrated)
-        fs::create_dir_all(&projects_dir).unwrap();
-        assert!(legacy_dailies.exists() && projects_dir.exists());
-
-        // Only projects exists -> v2
-        fs::remove_dir_all(&legacy_dailies).unwrap();
-        assert!(!legacy_dailies.exists() && projects_dir.exists());
+    #[test]
+    fn test_failed_database_migration_rolls_back_and_can_retry() {
+        let temp = TempDir::new().unwrap();
+        create_legacy_database(temp.path(), false);
+        let conn = rusqlite::Connection::open(temp.path().join("todos.db")).unwrap();
+        conn.execute_batch("CREATE TABLE todo_metadata (id TEXT PRIMARY KEY, todo_id TEXT,
+                plugin_name TEXT, data TEXT, external_id TEXT, created_at TEXT, updated_at TEXT);
+            INSERT INTO todo_metadata (id, plugin_name, external_id) VALUES ('a', 'plugin', 'duplicate'), ('b', 'plugin', 'duplicate');").unwrap();
+        crate::storage::context::with_root(temp.path().to_path_buf(), || {
+            assert!(database::init_database().is_err());
+        });
+        assert_eq!(
+            conn.query_row(
+                "SELECT count(*) FROM pragma_table_info('todos') WHERE name = 'project'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        conn.execute("DELETE FROM todo_metadata WHERE id = 'b'", [])
+            .unwrap();
+        crate::storage::context::with_root(temp.path().to_path_buf(), || {
+            ensure_installation_ready().unwrap();
+        });
+        assert_eq!(
+            conn.query_row("SELECT content FROM todos", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "Keep my task"
+        );
     }
 }

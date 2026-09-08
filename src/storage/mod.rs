@@ -1,3 +1,4 @@
+pub(crate) mod context;
 pub mod database;
 pub mod file;
 pub mod markdown;

@@ -14,6 +14,11 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Install and manage the Linux systemd server
+    Server {
+        #[command(subcommand)]
+        command: ServerCommand,
+    },
     /// Run or manage the local web workspace
     Web(WebOptions),
     Add {
@@ -37,6 +42,9 @@ pub enum Commands {
         /// Port to run the server on
         #[arg(short, long, global = true, default_value_t = DEFAULT_API_PORT)]
         port: u16,
+        /// Require OAuth authentication and isolate each user's data
+        #[arg(long, global = true)]
+        auth: bool,
     },
     /// Generate todos from external sources using plugins
     Generate {
@@ -69,6 +77,56 @@ pub enum Commands {
         #[command(subcommand)]
         command: HookCommand,
     },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum ServerCommand {
+    /// Install the server and enable startup on boot (requires root)
+    #[command(alias = "wizard")]
+    Install(ServerInstallOptions),
+    /// Run the server in the foreground
+    Run {
+        #[arg(long, default_value_t = DEFAULT_API_PORT, value_parser = clap::value_parser!(u16).range(1024..))]
+        port: u16,
+        /// Require OAuth authentication and isolate each user's data
+        #[arg(long)]
+        auth: bool,
+    },
+    /// Show the systemd service status
+    Status,
+    /// Show server logs from the journal
+    Logs {
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Start the installed service
+    Start,
+    /// Stop the installed service
+    Stop,
+    /// Restart the installed service
+    Restart,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ServerInstallOptions {
+    /// Require OAuth authentication and isolate each user's data
+    #[arg(long)]
+    pub auth: bool,
+    /// Local port for the existing reverse proxy
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1024..))]
+    pub port: Option<u16>,
+    /// IANA timezone for daily lists, for example Europe/Oslo (default: UTC)
+    #[arg(long)]
+    pub timezone: Option<String>,
+    /// Use supplied options and defaults without interactive prompts
+    #[arg(short, long)]
+    pub yes: bool,
+    /// Print the installation and service unit without changing the machine
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Replace a previously installed to-tui service and binary; preserve data
+    #[arg(long)]
+    pub replace: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -257,6 +315,9 @@ pub enum ServeCommand {
 
 #[derive(clap::Args, Debug, Clone)]
 pub struct WebOptions {
+    /// Require OAuth authentication and isolate each user's data
+    #[arg(long, global = true)]
+    pub auth: bool,
     #[command(subcommand)]
     pub command: Option<WebCommand>,
     #[arg(short, long, global = true, default_value_t = DEFAULT_API_PORT)]

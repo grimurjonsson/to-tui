@@ -4,6 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn get_to_tui_dir() -> Result<PathBuf> {
+    if let Some(root) = crate::storage::context::data_root() {
+        return Ok(root);
+    }
     if let Some(path) = std::env::var_os("TOTUI_DATA_DIR") {
         return Ok(PathBuf::from(path));
     }

@@ -1,6 +1,7 @@
 use to_tui::api;
 mod app;
 mod cli;
+mod server;
 mod ui;
 mod web_process;
 
@@ -24,6 +25,7 @@ use plugin::{PluginActionRegistry, PluginLoader, PluginManager};
 use project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry};
 use std::env;
 use std::fs;
+use std::future::IntoFuture;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::panic;
@@ -188,6 +190,9 @@ fn main() -> Result<()> {
     install_crash_handler();
 
     let cli = Cli::parse();
+    if let Some(Commands::Server { command }) = &cli.command {
+        return server::run(command.clone());
+    }
     if let Some(Commands::Web(options)) = &cli.command {
         return web_process::run(options.clone());
     }
@@ -197,6 +202,7 @@ fn main() -> Result<()> {
     let mut config = Config::load()?;
 
     match cli.command {
+        Some(Commands::Server { command }) => server::run(command)?,
         Some(Commands::Add { task }) => {
             handle_add(task)?;
         }
@@ -209,8 +215,12 @@ fn main() -> Result<()> {
         Some(Commands::Web(options)) => {
             web_process::run(options)?;
         }
-        Some(Commands::Serve { command, port }) => {
-            handle_serve_command(command, port)?;
+        Some(Commands::Serve {
+            command,
+            port,
+            auth,
+        }) => {
+            handle_serve_command(command, port, auth)?;
         }
         Some(Commands::Generate {
             generator,
@@ -364,28 +374,32 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_serve_command(command: Option<ServeCommand>, port: u16) -> Result<()> {
+fn handle_serve_command(command: Option<ServeCommand>, port: u16, auth: bool) -> Result<()> {
     match command.unwrap_or(ServeCommand::Start { daemon: false }) {
         ServeCommand::Start { daemon } => {
             if daemon {
-                run_server_foreground(port, false, false)
+                run_server_foreground(port, false, false, auth)
             } else {
-                handle_serve_start(port)
+                handle_serve_start(port, auth)
             }
         }
         ServeCommand::Stop => handle_serve_stop(),
-        ServeCommand::Restart => handle_serve_restart(port),
+        ServeCommand::Restart => handle_serve_restart(port, auth),
         ServeCommand::Status => handle_serve_status(port),
     }
 }
 
-fn handle_serve_start(port: u16) -> Result<()> {
+fn handle_serve_start(port: u16, auth: bool) -> Result<()> {
     if is_server_running(port) {
+        anyhow::ensure!(
+            !auth,
+            "Server is already running; use serve restart --auth to enable authentication"
+        );
         println!("Server is already running on port {port}");
         return Ok(());
     }
 
-    start_server_background(port)?;
+    start_server_background(port, auth)?;
     println!("Server started on port {port}");
     Ok(())
 }
@@ -404,10 +418,11 @@ fn handle_serve_stop() -> Result<()> {
     Ok(())
 }
 
-fn handle_serve_restart(port: u16) -> Result<()> {
+fn handle_serve_restart(port: u16, auth: bool) -> Result<()> {
+    let auth = auth || web_process::authentication_enabled()?;
     let _ = handle_serve_stop();
     std::thread::sleep(Duration::from_millis(500));
-    handle_serve_start(port)
+    handle_serve_start(port, auth)
 }
 
 fn handle_serve_status(port: u16) -> Result<()> {
@@ -454,11 +469,15 @@ fn is_server_running(port: u16) -> bool {
     }
 }
 
-fn start_server_background(port: u16) -> Result<()> {
+fn start_server_background(port: u16, auth: bool) -> Result<()> {
     let current_exe = env::current_exe()?;
 
-    let child = Command::new(&current_exe)
-        .args(["serve", "start", "--port", &port.to_string(), "--daemon"])
+    let mut command = Command::new(&current_exe);
+    command.args(["serve", "start", "--port", &port.to_string(), "--daemon"]);
+    if auth {
+        command.arg("--auth");
+    }
+    let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -496,7 +515,7 @@ fn ensure_server_running(port: u16) -> Result<()> {
 #[cfg(not(unix))]
 fn ensure_server_running(port: u16) -> Result<()> {
     if !is_server_running(port) {
-        start_server_background(port)?;
+        start_server_background(port, false)?;
     }
     Ok(())
 }
@@ -570,9 +589,16 @@ fn workspace_url(addr: std::net::SocketAddr, project: &str) -> Result<reqwest::U
 }
 
 #[tokio::main]
-async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> Result<()> {
+async fn run_server_foreground(
+    port: u16,
+    open_browser: bool,
+    verbose: bool,
+    auth: bool,
+) -> Result<()> {
     fs::create_dir_all(utils::paths::get_to_tui_dir()?)?;
-    ensure_installation_ready()?;
+    if !auth {
+        ensure_installation_ready()?;
+    }
     let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "info,tower_http=debug".into());
     if verbose {
@@ -580,14 +606,26 @@ async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> 
     }
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    let project = get_current_project(&mut Config::load()?)?;
-    let app = api::create_router()?.layer(axum::Extension(api::web::StartupProject(
-        project.name.clone(),
-    )));
+    let (app, project_name) = if auth {
+        let auth_url =
+            std::env::var("TOTUI_AUTH_URL").unwrap_or_else(|_| api::auth::DEFAULT_AUTH_URL.into());
+        (
+            api::create_authenticated_router(&auth_url)?,
+            DEFAULT_PROJECT_NAME.to_owned(),
+        )
+    } else {
+        let project = get_current_project(&mut Config::load()?)?;
+        (
+            api::create_router()?.layer(axum::Extension(api::web::StartupProject(
+                project.name.clone(),
+            ))),
+            project.name,
+        )
+    };
     let host = std::env::var("TOTUI_BIND").unwrap_or_else(|_| "127.0.0.1".into());
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
     let addr = listener.local_addr()?;
-    let url = workspace_url(addr, &project.name)?;
+    let url = workspace_url(addr, &project_name)?;
     tracing::info!("Workspace available at {url}");
     if open_browser {
         open::that(url.as_str())?;
@@ -595,9 +633,44 @@ async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> 
     if let Some(path) = std::env::var_os("TOTUI_WEB_READY_FILE") {
         fs::write(path, url.as_str())?;
     }
-    axum::serve(listener, app).await?;
+    let (shutdown, stopped) = tokio::sync::oneshot::channel();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = stopped.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => result?,
+        _ = server_shutdown() => {
+            let _ = shutdown.send(());
+            if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut server).await {
+                result?;
+            }
+        }
+    }
 
     Ok(())
+}
+
+async fn server_shutdown() {
+    #[cfg(unix)]
+    {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = terminate.recv() => {},
+                    _ = tokio::signal::ctrl_c() => {},
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, "Could not register SIGTERM handler");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn handle_add(task: String) -> Result<()> {

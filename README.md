@@ -237,6 +237,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Local web interface
 
+For a persistent Linux VPS service, use `totui server install` (or
+`totui server wizard`). It installs a native systemd service with persistent
+SQLite storage, boot startup, failure recovery, and journal logs. See the
+[Linux server installation guide](docs/server.md) for setup behind an existing
+authenticated reverse proxy, per-user workspaces with `--auth`, upgrades, and backups.
+
 Run `totui web --open` (or `cargo run --bin totui -- web --open`) to use the
 responsive task workspace at <http://127.0.0.1:48372>. The Rust binary bundles the
 frontend; no Node runtime is required. `totui serve start` also serves the web UI.

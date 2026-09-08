@@ -105,8 +105,47 @@ pub fn get_connection() -> Result<Connection> {
     Ok(conn)
 }
 
+fn add_missing_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+        params![table, column],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )
+        .with_context(|| format!("Failed to migrate {table}.{column}"))?;
+    }
+    Ok(())
+}
+
+fn migrate_todo_columns(conn: &Connection, table: &str) -> Result<()> {
+    for (column, definition) in [
+        ("collapsed", "INTEGER NOT NULL DEFAULT 0"),
+        ("completed_at", "TEXT"),
+        ("deleted_at", "TEXT"),
+        ("priority", "TEXT"),
+        ("project", "TEXT NOT NULL DEFAULT 'default'"),
+    ] {
+        add_missing_column(conn, table, column, definition)?;
+    }
+    conn.execute(
+        &format!("UPDATE {table} SET project = ?1 WHERE project IS NULL OR project = ''"),
+        [DEFAULT_PROJECT_NAME],
+    )?;
+    Ok(())
+}
+
 pub fn init_database() -> Result<()> {
-    let conn = get_connection()?;
+    let mut connection = get_connection()?;
+    let conn = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS todos (
@@ -130,27 +169,7 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN collapsed INTEGER NOT NULL DEFAULT 0",
-        [],
-    )
-    .ok();
-
-    conn.execute("ALTER TABLE todos ADD COLUMN completed_at TEXT", [])
-        .ok();
-
-    conn.execute("ALTER TABLE todos ADD COLUMN deleted_at TEXT", [])
-        .ok();
-
-    conn.execute("ALTER TABLE todos ADD COLUMN priority TEXT", [])
-        .ok();
-
-    // Add project column for existing databases
-    conn.execute(
-        "ALTER TABLE todos ADD COLUMN project TEXT NOT NULL DEFAULT 'default'",
-        [],
-    )
-    .ok();
+    migrate_todo_columns(&conn, "todos")?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todos_date ON todos(date)",
@@ -200,24 +219,7 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
-    conn.execute(
-        "ALTER TABLE archived_todos ADD COLUMN completed_at TEXT",
-        [],
-    )
-    .ok();
-
-    conn.execute("ALTER TABLE archived_todos ADD COLUMN deleted_at TEXT", [])
-        .ok();
-
-    conn.execute("ALTER TABLE archived_todos ADD COLUMN priority TEXT", [])
-        .ok();
-
-    // Add project column for existing databases
-    conn.execute(
-        "ALTER TABLE archived_todos ADD COLUMN project TEXT NOT NULL DEFAULT 'default'",
-        [],
-    )
-    .ok();
+    migrate_todo_columns(&conn, "archived_todos")?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_archived_todos_project ON archived_todos(project)",
@@ -254,9 +256,7 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
-    // Migration: add external_id column for existing databases
-    conn.execute("ALTER TABLE todo_metadata ADD COLUMN external_id TEXT", [])
-        .ok();
+    add_missing_column(&conn, "todo_metadata", "external_id", "TEXT")?;
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_todo_metadata_todo ON todo_metadata(todo_id)",
@@ -313,6 +313,7 @@ pub fn init_database() -> Result<()> {
           INSERT INTO list_revisions VALUES(OLD.project, OLD.date, 1)
           ON CONFLICT(project,date) DO UPDATE SET revision=revision+1; END;")?;
 
+    conn.commit()?;
     Ok(())
 }
 
