@@ -102,9 +102,26 @@ API endpoints:
 - `DELETE /api/todos/:id` - Delete a todo
 - `POST /api/todos/:id/complete` - Toggle completion
 
-### MCP Server (for LLMs)
+### Skills and CLI/API (for LLMs)
 
-The MCP server allows AI assistants like Claude to manage your todos.
+The bundled skills use `totui todo` and the selected server API. Run from your
+project folder:
+
+```bash
+totui todo context
+totui todo list
+totui todo create --content "Review the change"
+```
+
+`context` reports the backend and folder-selected project. Skills announce that
+destination before creating todos and confirm it afterward. Pin a destination with
+`--remote home` and `--project NAME`; use `--local` only for intentional local work.
+The CLI keeps JSON on stdout and prints mutation destinations on stderr.
+
+### Legacy MCP server (local data only)
+
+The standalone MCP server manages local todos. It does not follow a selected remote
+backend; use the skills/CLI path above for remote workspaces.
 
 Add totui-mcp to your Claude Code configuration:
 
@@ -242,6 +259,11 @@ For a persistent Linux VPS service, use `totui server install` (or
 SQLite storage, boot startup, failure recovery, and journal logs. See the
 [Linux server installation guide](docs/server.md) for setup behind an existing
 authenticated reverse proxy, per-user workspaces with `--auth`, upgrades, and backups.
+
+To open a remote workspace in the TUI, upgrade both installations, then run
+`totui remote add home https://totui.gimmi.is`, `totui remote login home`, and
+`totui remote use home`. See [remote client setup](docs/server.md#connect-a-desktop-client)
+for browser sign-in and switching back to local storage.
 
 Run `totui web --open` (or `cargo run --bin totui -- web --open`) to use the
 responsive task workspace at <http://127.0.0.1:48372>. The Rust binary bundles the
