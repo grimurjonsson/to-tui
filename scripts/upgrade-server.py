@@ -45,10 +45,31 @@ def binary_version(binary):
     return run(binary, "--version", capture=True).strip().split()[-1]
 
 
+def check_privileges():
+    if os.geteuid() == 0:
+        return
+    if not shutil.which("sudo"):
+        raise RuntimeError("sudo is required to upgrade the server as a non-root user.")
+    try:
+        run("sudo", "-n", "true")
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            "Sudo access is not available without a password. Use sudo -v to authenticate "
+            "first, or ask an administrator to configure passwordless sudo. "
+            "This command will not prompt for or bypass your password."
+        ) from error
+
+
+def run_privileged(*args, capture=False):
+    prefix = () if os.geteuid() == 0 else ("sudo", "-n")
+    return run(*prefix, *args, capture=capture)
+
+
 def preflight():
     if platform.system() != "Linux":
         raise RuntimeError("Run this command on the Linux VPS hosting totui.")
-    for command in ("curl", "systemctl", "tar", "sudo"):
+    check_privileges()
+    for command in ("curl", "systemctl", "tar"):
         if not shutil.which(command):
             raise RuntimeError(f"Required command not found: {command}")
     architecture = platform.machine()
@@ -115,21 +136,21 @@ def download(directory, version, asset):
 
 
 def upgrade(binary):
-    run("sudo", "-v")
-    run("sudo", "test", "-d", "/var/lib/totui")
+    check_privileges()
+    run_privileged("test", "-d", "/var/lib/totui")
     run("systemctl", "is-active", "--quiet", SERVICE)
-    backup = run("sudo", "mktemp", "-d", "/root/totui-backup.XXXXXXXX", capture=True).strip()
+    backup = run_privileged("mktemp", "-d", "/root/totui-backup.XXXXXXXX", capture=True).strip()
     print(f"Backup directory: {backup}", flush=True)
     print(f"Backups are kept until you delete them manually: sudo rm -rf -- {shlex.quote(backup)}", flush=True)
-    run("sudo", "cp", "--preserve=mode,timestamps", BINARY, f"{backup}/totui")
-    run("sudo", "cp", "--preserve=mode,timestamps", UNIT, f"{backup}/totui.service")
+    run_privileged("cp", "--preserve=mode,timestamps", BINARY, f"{backup}/totui")
+    run_privileged("cp", "--preserve=mode,timestamps", UNIT, f"{backup}/totui.service")
     print("Stopping the server to back up all databases and state in /var/lib/totui.", flush=True)
-    run("sudo", "systemctl", "stop", SERVICE)
+    run_privileged("systemctl", "stop", SERVICE)
     try:
-        run("sudo", "tar", "--dereference", "-C", "/var/lib", "-czf", f"{backup}/data.tar.gz", "totui")
+        run_privileged("tar", "--dereference", "-C", "/var/lib", "-czf", f"{backup}/data.tar.gz", "totui")
     except (Exception, KeyboardInterrupt):
         print("Backup interrupted or failed; restarting the unchanged server.", file=sys.stderr)
-        run("sudo", "systemctl", "start", SERVICE)
+        run_privileged("systemctl", "start", SERVICE)
         raise
     print(
         f"Database and state backup saved: {backup}/data.tar.gz "
@@ -137,7 +158,7 @@ def upgrade(binary):
         flush=True,
     )
     try:
-        run("sudo", binary, "server", "install", "--replace", "--yes")
+        run_privileged(binary, "server", "install", "--replace", "--yes")
         run("systemctl", "is-active", "--quiet", SERVICE)
         print(f"Server updated to {binary_version(BINARY)}. Backups retained in: {backup}")
         print(f"To delete this backup manually: sudo rm -rf -- {shlex.quote(backup)}")

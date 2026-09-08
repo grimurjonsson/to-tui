@@ -286,8 +286,15 @@ From a checkout on the VPS, update to the latest stable GitHub release with:
 just upgrade-server-with-curl
 ```
 
-The command requires Python 3, curl, sudo, tar, and an installed, enabled, running
-managed service. It checks the Linux architecture and installed version, then
+Run this as your normal user; only backup and installation commands use sudo.
+The command checks noninteractive sudo access at startup and again before making
+changes. It never prompts for a sudo password: cached credentials or passwordless
+sudo are required. If needed, authenticate separately with `sudo -v`; if you have
+forgotten your password, an administrator must restore access or configure sudo.
+Running as root does not require sudo.
+
+The command requires Python 3, curl, tar, sudo when run as a non-root user, and an
+installed, enabled, running managed service. It checks the Linux architecture and installed version, then
 prompts with the new and installed versions in color. Enter `y` to proceed;
 Enter alone cancels. An equal or newer installed version is left alone.
 The release asset must have finished uploading and provide a SHA-256 digest.
