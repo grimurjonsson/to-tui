@@ -165,6 +165,7 @@ pub struct AppState {
     pub insert_above: bool,
     pub pending_indent_level: usize,
     pub undo_stack: Vec<(TodoList, usize)>,
+    pub redo_stack: Vec<(TodoList, usize)>,
     pub selection_anchor: Option<usize>,
     pub viewing_date: NaiveDate,
     pub today: NaiveDate,
@@ -296,6 +297,7 @@ impl AppState {
             insert_above: false,
             pending_indent_level: 0,
             undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
             selection_anchor: None,
             viewing_date,
             today,
@@ -655,6 +657,7 @@ impl AppState {
         self.viewing_date = date;
         self.cursor_position = 0;
         self.undo_stack.clear();
+        self.redo_stack.clear();
         self.unsaved_changes = false;
         self.mode = Mode::Navigate;
         self.edit_buffer.clear();
@@ -705,10 +708,12 @@ impl AppState {
 
         self.undo_stack
             .push((self.todo_list.clone(), self.cursor_position));
+        self.redo_stack.clear();
     }
 
     pub fn undo(&mut self) -> bool {
         if let Some((list, cursor)) = self.undo_stack.pop() {
+            list.revision.set(self.todo_list.revision.get());
             let old_ids: Vec<String> = self
                 .todo_list
                 .items
@@ -728,12 +733,40 @@ impl AppState {
                 "undo: restoring previous state"
             );
 
-            self.todo_list = list;
+            self.redo_stack.push((
+                std::mem::replace(&mut self.todo_list, list),
+                self.cursor_position,
+            ));
             self.cursor_position = cursor;
             self.unsaved_changes = true;
             true
         } else {
             debug!("undo: stack empty, nothing to undo");
+            false
+        }
+    }
+
+    pub fn redo(&mut self) -> bool {
+        if let Some((list, cursor)) = self.redo_stack.pop() {
+            list.revision.set(self.todo_list.revision.get());
+            debug!(
+                redo_depth_after = self.redo_stack.len(),
+                old_item_count = self.todo_list.items.len(),
+                new_item_count = list.items.len(),
+                old_cursor = self.cursor_position,
+                new_cursor = cursor,
+                "redo: reapplying undone state"
+            );
+
+            self.undo_stack.push((
+                std::mem::replace(&mut self.todo_list, list),
+                self.cursor_position,
+            ));
+            self.cursor_position = cursor;
+            self.unsaved_changes = true;
+            true
+        } else {
+            debug!("redo: stack empty, nothing to redo");
             false
         }
     }
@@ -928,7 +961,7 @@ impl AppState {
     /// Used when external changes are detected (e.g., from API server).
     pub fn reload_from_database(&mut self) -> Result<()> {
         // Skip reload if we have unsaved changes - don't overwrite in-memory modifications
-        if self.unsaved_changes {
+        if self.unsaved_changes || self.mode != Mode::Navigate {
             tracing::debug!(
                 project = %self.current_project.name,
                 "Skipping database reload - unsaved changes present"
@@ -938,7 +971,18 @@ impl AppState {
 
         let date = self.todo_list.date;
         let new_list = load_todo_list_for_project(&self.current_project.name, date)?;
+        if new_list.revision.get() == self.todo_list.revision.get() {
+            return Ok(());
+        }
+        let selected_id = self.selected_item().map(|item| item.id);
+        self.undo_stack.clear();
+        self.redo_stack.clear();
         self.todo_list = new_list;
+        if let Some(index) =
+            selected_id.and_then(|id| self.todo_list.items.iter().position(|item| item.id == id))
+        {
+            self.cursor_position = index;
+        }
         self.clamp_cursor();
         self.unsaved_changes = false;
         Ok(())
@@ -1144,11 +1188,11 @@ impl AppState {
     pub fn check_version_update(&mut self) {
         if let Ok(result) = self.version_check_rx.try_recv() {
             // Handle app update
-            if let Some(app_update) = result.app_update {
-                if app_update.is_newer {
-                    let new_version = app_update.latest_version.clone();
-                    self.new_version_available = Some(new_version.clone());
-                }
+            if let Some(app_update) = result.app_update
+                && app_update.is_newer
+            {
+                let new_version = app_update.latest_version.clone();
+                self.new_version_available = Some(new_version.clone());
             }
 
             // Handle plugin updates
@@ -1574,8 +1618,7 @@ impl AppState {
 
         // Apply the target state to all items in range
         for i in start..end {
-            self.todo_list.items[i].state = target_state;
-            self.todo_list.items[i].modified_at = chrono::Utc::now();
+            self.todo_list.items[i].set_state(target_state);
         }
 
         self.unsaved_changes = true;
@@ -1931,6 +1974,7 @@ impl AppState {
         self.today = today;
         self.cursor_position = 0;
         self.undo_stack.clear();
+        self.redo_stack.clear();
         self.sync_list_state();
 
         // Show rollover modal if candidates were found
@@ -2006,7 +2050,7 @@ impl AppState {
 
     /// Execute the move: extract item+subtree from current list, add to destination
     pub fn execute_move_to_project(&mut self, dest_project: &Project) -> Result<usize> {
-        use crate::storage::file::{load_todo_list_for_project, save_todo_list_for_project};
+        use crate::storage::file::load_todo_list_for_project;
 
         let item_index = match &self.move_to_project_state {
             Some(MoveToProjectSubState::Selecting { item_index, .. }) => *item_index,
@@ -2038,12 +2082,25 @@ impl AppState {
         dest_list.items.append(&mut normalized_items);
         dest_list.recalculate_parent_ids();
 
-        // Save destination list
-        save_todo_list_for_project(&dest_list, &dest_project.name)?;
-
-        // Remove from source list
-        self.save_undo();
-        self.todo_list.remove_item_range(start, end)?;
+        let mut source = self.todo_list.clone();
+        source.remove_item_range(start, end)?;
+        crate::storage::database::save_lists_atomically(&[
+            (&source, &self.current_project.name),
+            (&dest_list, &dest_project.name),
+        ])?;
+        self.todo_list = source;
+        self.undo_stack.clear();
+        self.redo_stack.clear();
+        crate::storage::database::export_current_list(
+            dest_list.date,
+            &dest_project.name,
+            &dest_list.file_path,
+        )?;
+        crate::storage::database::export_current_list(
+            self.todo_list.date,
+            &self.current_project.name,
+            &self.todo_list.file_path,
+        )?;
         self.clamp_cursor();
         self.unsaved_changes = true;
 
@@ -2331,6 +2388,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2358,6 +2416,7 @@ mod tests {
         use crate::ui::theme::Theme;
 
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2548,6 +2607,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2576,18 +2636,15 @@ mod tests {
         state.dismiss_upgrade_session();
 
         // Verify state after dismissal
-        assert_eq!(state.session_dismissed_upgrade, true);
-        assert_eq!(state.show_upgrade_prompt, false);
+        assert!(state.session_dismissed_upgrade);
+        assert!(!state.show_upgrade_prompt);
         assert_eq!(state.mode, Mode::Navigate);
 
         // Simulate another check - should NOT auto-show because session dismissed
         state.mode = Mode::Navigate;
         let should_show = !state.session_dismissed_upgrade
             && state.skipped_version.as_ref() != state.new_version_available.as_ref();
-        assert_eq!(
-            should_show, false,
-            "Should not auto-show after session dismiss"
-        );
+        assert!(!should_show, "Should not auto-show after session dismiss");
     }
 
     #[test]
@@ -2600,6 +2657,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let mut todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2646,6 +2704,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let mut todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2699,6 +2758,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let mut todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2745,6 +2805,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2794,6 +2855,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2829,6 +2891,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -2876,6 +2939,7 @@ mod tests {
 
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),
@@ -3041,5 +3105,113 @@ mod tests {
         // Strips multiple border chars from edges
         assert_eq!(strip_outer_borders("││content││"), "content");
         assert_eq!(strip_outer_borders("│content│█"), "content");
+    }
+
+    fn make_redo_test_state() -> AppState {
+        use crate::keybindings::KeybindingCache;
+        use crate::plugin::{PluginActionRegistry, PluginLoader};
+        use crate::todo::TodoList;
+        use crate::ui::theme::Theme;
+        use chrono::Local;
+
+        let date = Local::now().date_naive();
+        let mut todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
+            date,
+            items: vec![],
+            file_path: std::path::PathBuf::from("/tmp/test.md"),
+        };
+        todo_list.add_item_with_indent("First".to_string(), 0);
+        todo_list.add_item_with_indent("Second".to_string(), 0);
+
+        AppState::new(
+            todo_list,
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
+        )
+    }
+
+    #[test]
+    fn test_redo_restores_undone_change() {
+        use crate::todo::TodoState;
+
+        let mut state = make_redo_test_state();
+        state.cursor_position = 0;
+
+        state.toggle_current_item_state();
+        assert_eq!(state.todo_list.items[0].state, TodoState::Checked);
+
+        assert!(state.undo());
+        assert_eq!(state.todo_list.items[0].state, TodoState::Empty);
+
+        assert!(state.redo());
+        assert_eq!(state.todo_list.items[0].state, TodoState::Checked);
+        assert!(state.unsaved_changes);
+    }
+
+    #[test]
+    fn test_redo_with_nothing_undone_returns_false() {
+        let mut state = make_redo_test_state();
+        assert!(!state.redo());
+    }
+
+    #[test]
+    fn test_new_edit_clears_redo_history() {
+        use crate::todo::TodoState;
+
+        let mut state = make_redo_test_state();
+        state.cursor_position = 0;
+
+        state.toggle_current_item_state();
+        assert!(state.undo());
+
+        // A fresh edit after undo makes the undone change unreachable
+        state.cursor_position = 1;
+        state.toggle_current_item_state();
+
+        assert!(!state.redo());
+        assert_eq!(state.todo_list.items[0].state, TodoState::Empty);
+        assert_eq!(state.todo_list.items[1].state, TodoState::Checked);
+    }
+
+    #[test]
+    fn test_undo_after_redo_reverts_again() {
+        use crate::todo::TodoState;
+
+        let mut state = make_redo_test_state();
+        state.cursor_position = 0;
+
+        state.toggle_current_item_state();
+        assert!(state.undo());
+        assert!(state.redo());
+        assert_eq!(state.todo_list.items[0].state, TodoState::Checked);
+
+        assert!(state.undo());
+        assert_eq!(state.todo_list.items[0].state, TodoState::Empty);
+    }
+
+    #[test]
+    fn test_redo_restores_cursor_to_where_undo_was_pressed() {
+        let mut state = make_redo_test_state();
+        state.cursor_position = 1;
+
+        state.toggle_current_item_state();
+        state.cursor_position = 0;
+
+        // Undo jumps back to where the edit happened
+        assert!(state.undo());
+        assert_eq!(state.cursor_position, 1);
+
+        // Redo puts everything back as if undo had never been pressed
+        assert!(state.redo());
+        assert_eq!(state.cursor_position, 0);
     }
 }

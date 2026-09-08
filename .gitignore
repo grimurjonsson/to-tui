@@ -8,3 +8,6 @@ pi-extension/totui-mcp/node_modules/
 # Local planning docs
 DB_DESIGN.md
 IMPLEMENTATION_PLAN.md
+web/node_modules/
+web/test-results/
+web/playwright-report/

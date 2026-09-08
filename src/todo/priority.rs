@@ -135,7 +135,7 @@ mod tests {
     fn test_copy_clone() {
         let p = Priority::P0;
         let p_copy = p;
-        let p_clone = p.clone();
+        let p_clone = p;
         assert_eq!(p, p_copy);
         assert_eq!(p, p_clone);
     }

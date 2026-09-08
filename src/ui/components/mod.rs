@@ -304,6 +304,10 @@ fn render_help_overlay(f: &mut Frame, state: &mut AppState) {
         help_binding(state, HelpBindingScope::Navigate, Action::Undo, key_style),
         Span::styled("Undo last action", desc_style),
     ]));
+    lines.push(Line::from(vec![
+        help_binding(state, HelpBindingScope::Navigate, Action::Redo, key_style),
+        Span::styled("Redo last undone action", desc_style),
+    ]));
     lines.push(Line::from(""));
 
     // Indentation section
@@ -961,70 +965,6 @@ fn split_word(word: &str, max_width: usize) -> Vec<String> {
     }
 
     chunks
-}
-
-#[cfg(test)]
-mod help_tests {
-    use super::*;
-
-    #[test]
-    fn help_max_scroll_counts_wrapped_lines() {
-        let lines = vec![Line::from(
-            "A long help description that wraps across several narrow terminal rows",
-        )];
-
-        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 3)).1, 0);
-        assert!(help_scroll_metrics(&lines, Rect::new(0, 0, 20, 3)).1 > 0);
-    }
-
-    #[test]
-    fn help_scroll_metrics_report_total_and_maximum() {
-        let lines = vec![
-            Line::from("first"),
-            Line::from("second"),
-            Line::from("third"),
-        ];
-
-        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 2)), (3, 1));
-    }
-
-    #[test]
-    fn help_entries_wrap_with_a_hanging_indent() {
-        let key = "    Alt+Shift+↑     ";
-        let lines = wrap_help_lines(
-            vec![Line::from(vec![
-                Span::styled(key, Style::default().fg(Color::Yellow)),
-                Span::raw("Move item up with all of its children"),
-            ])],
-            30,
-        );
-
-        assert!(lines.len() > 1);
-        assert_eq!(lines[0].spans[0].content, key);
-        assert!(
-            lines[1].spans[0]
-                .content
-                .starts_with(&" ".repeat(UnicodeWidthStr::width(key)))
-        );
-    }
-
-    #[test]
-    fn styled_help_entries_preserve_their_hanging_indent() {
-        let lines = wrap_help_lines(
-            vec![Line::from(vec![
-                Span::raw("    "),
-                Span::raw("In visual: "),
-                Span::styled("j/k", Style::default().fg(Color::Yellow)),
-                Span::raw(" extend selection, "),
-                Span::styled("Tab/S-Tab", Style::default().fg(Color::Yellow)),
-                Span::raw(" indent/outdent"),
-            ])],
-            20,
-        );
-
-        assert!(lines.len() > 1);
-        assert!(lines.iter().all(|line| line.spans[0].content == "    "));
-    }
 }
 
 pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
@@ -1763,20 +1703,21 @@ fn render_plugin_downloading(
 
     let title = format!(" Updating {} ", plugin_name);
 
-    let mut lines: Vec<Line> = vec![];
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::raw("  Version: "),
-        Span::styled(current_version, Style::default().fg(Color::Yellow)),
-        Span::raw(" → "),
-        Span::styled(
-            latest_version,
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]));
-    lines.push(Line::from(""));
+    let lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("  Version: "),
+            Span::styled(current_version, Style::default().fg(Color::Yellow)),
+            Span::raw(" → "),
+            Span::styled(
+                latest_version,
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(""),
+    ];
 
     let content = Paragraph::new(lines)
         .block(
@@ -2719,4 +2660,68 @@ pub fn render_plugin_error_popup(f: &mut Frame, state: &AppState) {
         .style(Style::default().bg(state.theme.background));
 
     f.render_widget(paragraph, popup_area);
+}
+
+#[cfg(test)]
+mod help_tests {
+    use super::*;
+
+    #[test]
+    fn help_max_scroll_counts_wrapped_lines() {
+        let lines = vec![Line::from(
+            "A long help description that wraps across several narrow terminal rows",
+        )];
+
+        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 3)).1, 0);
+        assert!(help_scroll_metrics(&lines, Rect::new(0, 0, 20, 3)).1 > 0);
+    }
+
+    #[test]
+    fn help_scroll_metrics_report_total_and_maximum() {
+        let lines = vec![
+            Line::from("first"),
+            Line::from("second"),
+            Line::from("third"),
+        ];
+
+        assert_eq!(help_scroll_metrics(&lines, Rect::new(0, 0, 80, 2)), (3, 1));
+    }
+
+    #[test]
+    fn help_entries_wrap_with_a_hanging_indent() {
+        let key = "    Alt+Shift+↑     ";
+        let lines = wrap_help_lines(
+            vec![Line::from(vec![
+                Span::styled(key, Style::default().fg(Color::Yellow)),
+                Span::raw("Move item up with all of its children"),
+            ])],
+            30,
+        );
+
+        assert!(lines.len() > 1);
+        assert_eq!(lines[0].spans[0].content, key);
+        assert!(
+            lines[1].spans[0]
+                .content
+                .starts_with(&" ".repeat(UnicodeWidthStr::width(key)))
+        );
+    }
+
+    #[test]
+    fn styled_help_entries_preserve_their_hanging_indent() {
+        let lines = wrap_help_lines(
+            vec![Line::from(vec![
+                Span::raw("    "),
+                Span::raw("In visual: "),
+                Span::styled("j/k", Style::default().fg(Color::Yellow)),
+                Span::raw(" extend selection, "),
+                Span::styled("Tab/S-Tab", Style::default().fg(Color::Yellow)),
+                Span::raw(" indent/outdent"),
+            ])],
+            20,
+        );
+
+        assert!(lines.len() > 1);
+        assert!(lines.iter().all(|line| line.spans[0].content == "    "));
+    }
 }

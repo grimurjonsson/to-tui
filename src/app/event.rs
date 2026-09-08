@@ -12,10 +12,7 @@ use crate::plugin::{
 };
 use crate::project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry, current_folder_key};
 use crate::storage::file::save_todo_list_for_project;
-use crate::storage::{
-    execute_rollover_for_project, find_rollover_candidates_for_project,
-    soft_delete_todos_for_project,
-};
+use crate::storage::{execute_rollover_for_project, find_rollover_candidates_for_project};
 use crate::utils::cursor::{set_mouse_cursor_default, set_mouse_cursor_pointer};
 use crate::utils::paths::{get_dailies_dir_for_project, get_logs_dir, get_project_dir};
 use crate::utils::unicode::{
@@ -39,6 +36,21 @@ use totui_plugin_interface::{
 const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    if key.code == KeyCode::F(5) && key.modifiers.is_empty() {
+        let path = crate::utils::paths::get_to_tui_dir()?
+            .join(format!("recovery-{}.md", uuid::Uuid::new_v4()));
+        let content = format!(
+            "{}\n\nUnsaved editor input:\n{}",
+            crate::storage::markdown::serialize_todo_list_clean(&state.todo_list),
+            state.edit_buffer
+        );
+        std::fs::write(&path, content)?;
+        state.unsaved_changes = false;
+        state.mode = Mode::Navigate;
+        state.reload_from_database()?;
+        state.set_status_message(format!("Reloaded. Recovery copy: {}", path.display()));
+        return Ok(());
+    }
     // Handle Ctrl+C / Cmd+C for copying mouse text selection
     if matches!(key.code, KeyCode::Char('c'))
         && (key.modifiers.contains(KeyModifiers::CONTROL)
@@ -584,6 +596,7 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             | Action::MoveItemDown
             | Action::ToggleCollapse
             | Action::Undo
+            | Action::Redo
             | Action::CyclePriority
             | Action::SortByPriority
             | Action::MoveToProject
@@ -759,6 +772,12 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
                 state.last_save_time = Some(std::time::Instant::now());
             }
         }
+        Action::Redo => {
+            if state.redo() {
+                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+                state.last_save_time = Some(std::time::Instant::now());
+            }
+        }
         Action::ToggleHelp => {
             state.show_help = !state.show_help;
         }
@@ -899,6 +918,12 @@ fn execute_visual_action(action: Action, state: &mut AppState) -> Result<()> {
         }
         Action::Undo => {
             if state.undo() {
+                save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+                state.last_save_time = Some(std::time::Instant::now());
+            }
+        }
+        Action::Redo => {
+            if state.redo() {
                 save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
                 state.last_save_time = Some(std::time::Instant::now());
             }
@@ -1228,9 +1253,7 @@ fn handle_plugin_upgrade_mode(
                 }
             }
         }
-        PluginUpgradeSubState::Complete {
-            remaining_updates, ..
-        } => {
+        PluginUpgradeSubState::Complete { .. } => {
             match key.code {
                 KeyCode::Enter => {
                     // Continue to next plugin or exit
@@ -1238,11 +1261,7 @@ fn handle_plugin_upgrade_mode(
                 }
                 KeyCode::Esc => {
                     // Exit plugin upgrade flow
-                    if remaining_updates.is_empty() {
-                        state.exit_plugin_upgrades();
-                    } else {
-                        state.exit_plugin_upgrades();
-                    }
+                    state.exit_plugin_upgrades();
                 }
                 _ => {}
             }
@@ -1421,7 +1440,6 @@ fn delete_current_item(state: &mut AppState) -> Result<()> {
         return Ok(());
     }
 
-    let date = state.todo_list.date;
     let (start, end) = state
         .todo_list
         .get_item_range(state.cursor_position)
@@ -1434,12 +1452,6 @@ fn delete_current_item(state: &mut AppState) -> Result<()> {
         state.fire_event(event);
     }
 
-    let ids: Vec<_> = state.todo_list.items[start..end]
-        .iter()
-        .map(|item| item.id)
-        .collect();
-
-    soft_delete_todos_for_project(&ids, date, &state.current_project.name)?;
     state.todo_list.remove_item_range(start, end)?;
     state.clamp_cursor();
     Ok(())
@@ -3168,6 +3180,7 @@ mod rollover_tests {
     fn make_state_in_rollover_mode() -> AppState {
         let date = Local::now().date_naive();
         let todo_list = TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![],
             file_path: std::path::PathBuf::from("/tmp/test.md"),

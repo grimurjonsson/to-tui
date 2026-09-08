@@ -101,6 +101,7 @@ pub fn get_connection() -> Result<Connection> {
     let db_path = get_db_path()?;
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open database at {db_path:?}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     Ok(conn)
 }
 
@@ -295,14 +296,33 @@ pub fn init_database() -> Result<()> {
         [],
     )?;
 
+    conn.execute_batch("CREATE TABLE IF NOT EXISTS list_revisions (
+        project TEXT NOT NULL, date TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(project, date));
+        INSERT OR IGNORE INTO list_revisions SELECT project, date, 1 FROM todos GROUP BY project, date;
+        INSERT OR IGNORE INTO list_revisions SELECT project, original_date, 1 FROM archived_todos GROUP BY project, original_date;
+        CREATE TRIGGER IF NOT EXISTS todos_revision_insert AFTER INSERT ON todos BEGIN
+          INSERT INTO list_revisions VALUES(NEW.project, NEW.date, 1)
+          ON CONFLICT(project,date) DO UPDATE SET revision=revision+1; END;
+        CREATE TRIGGER IF NOT EXISTS todos_revision_update AFTER UPDATE ON todos BEGIN
+          INSERT INTO list_revisions VALUES(OLD.project, OLD.date, 1)
+          ON CONFLICT(project,date) DO UPDATE SET revision=revision+1;
+          INSERT INTO list_revisions VALUES(NEW.project, NEW.date, 1)
+          ON CONFLICT(project,date) DO UPDATE SET revision=revision+1; END;
+        CREATE TRIGGER IF NOT EXISTS todos_revision_delete AFTER DELETE ON todos BEGIN
+          INSERT INTO list_revisions VALUES(OLD.project, OLD.date, 1)
+          ON CONFLICT(project,date) DO UPDATE SET revision=revision+1; END;")?;
+
     Ok(())
 }
 
-pub fn load_todos_for_date_and_project(
-    date: NaiveDate,
-    project_name: &str,
-) -> Result<Vec<TodoItem>> {
+#[cfg(test)]
+fn load_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Result<Vec<TodoItem>> {
     let conn = get_connection()?;
+    load_items_on(&conn, date, project_name)
+}
+
+fn load_items_on(conn: &Connection, date: NaiveDate, project_name: &str) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
@@ -322,46 +342,37 @@ pub fn load_todos_for_date_and_project(
     Ok(result)
 }
 
-pub fn soft_delete_todos_for_project(
-    ids: &[Uuid],
-    date: NaiveDate,
-    project_name: &str,
-) -> Result<()> {
-    if ids.is_empty() {
-        debug!(project = %project_name, date = %date, "soft_delete called with empty ids list");
-        return Ok(());
-    }
+pub fn list_revision(conn: &Connection, date: NaiveDate, project: &str) -> Result<i64> {
+    Ok(conn.query_row(
+        "SELECT COALESCE((SELECT revision FROM list_revisions WHERE project=?1 AND date=?2),0)",
+        params![project, date.to_string()],
+        |row| row.get(0),
+    )?)
+}
 
-    debug!(
-        project = %project_name,
-        date = %date,
-        count = ids.len(),
-        ids = ?ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-        "soft_delete_todos_for_project: marking items as deleted"
-    );
-
-    let conn = get_connection()?;
-    let date_str = date.format("%Y-%m-%d").to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-
-    for id in ids {
-        let id_str = id.to_string();
-        trace!(id = %id_str, "Setting deleted_at on todo");
-        conn.execute(
-            "UPDATE todos SET deleted_at = ?1, updated_at = ?1 WHERE id = ?2 AND date = ?3 AND project = ?4",
-            params![now, id_str, date_str, project_name],
-        )?;
-    }
-
-    // Clean up metadata for soft-deleted todos
-    cleanup_orphaned_metadata()?;
-
-    debug!(count = ids.len(), "soft_delete completed");
-    Ok(())
+pub fn load_list_snapshot(date: NaiveDate, project: &str, path: PathBuf) -> Result<TodoList> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction()?;
+    let list = TodoList::with_items(date, path, load_items_on(&tx, date, project)?);
+    list.revision.set(list_revision(&tx, date, project)?);
+    tx.commit()?;
+    Ok(list)
 }
 
 pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result<()> {
-    let conn = get_connection()?;
+    let mut connection = get_connection()?;
+    let conn = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let revision = save_list_on(&conn, list, project_name)?;
+    conn.commit()?;
+    list.revision.set(revision);
+    Ok(())
+}
+
+fn save_list_on(conn: &Connection, list: &TodoList, project_name: &str) -> Result<i64> {
+    anyhow::ensure!(
+        list_revision(conn, list.date, project_name)? == list.revision.get(),
+        "Conflict: this list changed in another interface. Reload and reapply your changes."
+    );
     let date_str = list.date.format("%Y-%m-%d").to_string();
 
     debug!(
@@ -453,14 +464,16 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
     // Delete items that are no longer in the list (but weren't soft-deleted).
     // These are items that were removed from the in-memory list but not via soft_delete.
     // Build a NOT IN clause for items being saved.
+    let deleted_at = Utc::now().to_rfc3339();
     if !item_ids.is_empty() {
         let placeholders: String = item_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let sql = format!(
-            "DELETE FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL AND id NOT IN ({})",
+            "UPDATE todos SET deleted_at = ?3, updated_at = ?3 WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL AND id NOT IN ({})",
             placeholders
         );
 
-        let mut delete_params: Vec<&dyn rusqlite::ToSql> = vec![&date_str, &project_name];
+        let mut delete_params: Vec<&dyn rusqlite::ToSql> =
+            vec![&date_str, &project_name, &deleted_at];
         for id in &item_ids {
             delete_params.push(id);
         }
@@ -474,6 +487,14 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
         }
     }
 
+    if item_ids.is_empty() {
+        conn.execute("UPDATE todos SET deleted_at = ?3, updated_at = ?3 WHERE date=?1 AND project=?2 AND deleted_at IS NULL", params![date_str, project_name, deleted_at])?;
+    }
+    conn.execute("INSERT INTO list_revisions VALUES(?1,?2,1) ON CONFLICT(project,date) DO UPDATE SET revision=revision+1", params![project_name,date_str])?;
+    conn.execute("DELETE FROM todo_metadata WHERE todo_id NOT IN (SELECT id FROM todos WHERE deleted_at IS NULL)", [])?;
+    let revision = list_revision(conn, list.date, project_name)?;
+    drop(stmt);
+
     debug!(
         project = %project_name,
         date = %date_str,
@@ -483,6 +504,49 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
         "save_todo_list_for_project: completed successfully"
     );
 
+    Ok(revision)
+}
+
+pub fn save_lists_atomically(lists: &[(&TodoList, &str)]) -> Result<()> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let revisions = lists
+        .iter()
+        .map(|(list, project)| save_list_on(&tx, list, project))
+        .collect::<Result<Vec<_>>>()?;
+    tx.commit()?;
+    for ((list, _), revision) in lists.iter().zip(revisions) {
+        list.revision.set(revision);
+    }
+    Ok(())
+}
+
+pub fn rollover_snapshot(source: &TodoList, destination: &TodoList, project: &str) -> Result<()> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    anyhow::ensure!(
+        list_revision(&tx, source.date, project)? == source.revision.get(),
+        "Conflict: rollover source changed. Retry rollover."
+    );
+    let revision = save_list_on(&tx, destination, project)?;
+    archive_on(&tx, source.date, project)?;
+    tx.commit()?;
+    destination.revision.set(revision);
+    Ok(())
+}
+
+pub fn export_current_list(date: NaiveDate, project: &str, path: &std::path::Path) -> Result<()> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let list = TodoList::with_items(date, path.to_path_buf(), load_items_on(&tx, date, project)?);
+    let content = super::markdown::serialize_todo_list_clean(&list);
+    let mut temp =
+        tempfile::NamedTempFile::new_in(path.parent().context("Missing export directory")?)?;
+    use std::io::Write;
+    temp.write_all(content.as_bytes())?;
+    temp.persist(path)
+        .map_err(|e| anyhow::anyhow!("Failed to export markdown: {e}"))?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -491,7 +555,7 @@ pub fn has_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Re
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM todos WHERE date = ?1 AND project = ?2 AND deleted_at IS NULL",
+        "SELECT COUNT(*) FROM list_revisions WHERE date = ?1 AND project = ?2",
         params![&date_str, project_name],
         |row| row.get(0),
     )?;
@@ -523,12 +587,19 @@ pub fn active_todo_dates_before(date: NaiveDate, project_name: &str) -> Result<V
 }
 
 pub fn archive_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Result<usize> {
-    let conn = get_connection()?;
+    let mut conn = get_connection()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let count = archive_on(&tx, date, project_name)?;
+    tx.commit()?;
+    Ok(count)
+}
+
+fn archive_on(conn: &Connection, date: NaiveDate, project_name: &str) -> Result<usize> {
     let date_str = date.format("%Y-%m-%d").to_string();
     let now = chrono::Utc::now().to_rfc3339();
 
     let count = conn.execute(
-        "INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project)
+        "INSERT OR REPLACE INTO archived_todos (id, original_date, archived_at, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project)
          SELECT id, date, ?1, content, state, indent_level, parent_id, due_date, description, priority, collapsed, position, created_at, updated_at, completed_at, deleted_at, project
          FROM todos WHERE date = ?2 AND project = ?3",
         params![now, date_str, project_name],
@@ -540,28 +611,24 @@ pub fn archive_todos_for_date_and_project(date: NaiveDate, project_name: &str) -
     )?;
 
     // Clean up orphaned metadata for deleted todos
-    cleanup_orphaned_metadata()?;
+    conn.execute("DELETE FROM todo_metadata WHERE todo_id NOT IN (SELECT id FROM todos WHERE deleted_at IS NULL)", [])?;
 
     Ok(count)
 }
 
-/// Clean up orphaned metadata entries.
-///
-/// Deletes todo_metadata rows where the referenced todo_id either:
-/// - No longer exists in the todos table (hard deleted)
-/// - Is soft-deleted (has deleted_at set)
-///
-/// This prevents UNIQUE constraint violations when plugins try to
-/// recreate todos with the same external_id.
-pub fn cleanup_orphaned_metadata() -> Result<()> {
-    let conn = get_connection()?;
-
-    conn.execute(
-        "DELETE FROM todo_metadata WHERE todo_id NOT IN (SELECT id FROM todos WHERE deleted_at IS NULL)",
-        [],
-    )?;
-
-    Ok(())
+pub fn load_history_snapshot(date: NaiveDate, project: &str, path: PathBuf) -> Result<TodoList> {
+    let mut conn = get_connection()?;
+    let tx = conn.transaction()?;
+    let archived = load_archived_on(&tx, date, project)?;
+    let items = if archived.is_empty() {
+        load_items_on(&tx, date, project)?
+    } else {
+        archived
+    };
+    let list = TodoList::with_items(date, path, items);
+    list.revision.set(list_revision(&tx, date, project)?);
+    tx.commit()?;
+    Ok(list)
 }
 
 pub fn load_archived_todos_for_date_and_project(
@@ -569,6 +636,14 @@ pub fn load_archived_todos_for_date_and_project(
     project_name: &str,
 ) -> Result<Vec<TodoItem>> {
     let conn = get_connection()?;
+    load_archived_on(&conn, date, project_name)
+}
+
+fn load_archived_on(
+    conn: &Connection,
+    date: NaiveDate,
+    project_name: &str,
+) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
@@ -1443,7 +1518,7 @@ mod tests {
             crate::storage::metadata::get_todo_id_by_external_id("test-plugin", "ext-123").unwrap();
         assert_eq!(found, Some(todo_id));
 
-        // Archive the todo (which triggers cleanup_orphaned_metadata)
+        // Archive and metadata cleanup commit together.
         archive_todos_for_date_and_project(date, DEFAULT_PROJECT_NAME).unwrap();
 
         // Metadata should be cleaned up
@@ -1491,7 +1566,8 @@ mod tests {
         let undo_state = list.clone();
 
         // Soft delete B (the middle item)
-        soft_delete_todos_for_project(&[b_id], date, DEFAULT_PROJECT_NAME).unwrap();
+        list.items.retain(|item| item.id != b_id);
+        save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
 
         // Verify B is soft-deleted in DB
         let conn = get_connection().unwrap();
@@ -1512,6 +1588,7 @@ mod tests {
         save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
 
         // Simulate undo: restore the previous state (A, B, C)
+        undo_state.revision.set(list.revision.get());
         list = undo_state;
         assert_eq!(list.items.len(), 3);
 
@@ -1566,7 +1643,8 @@ mod tests {
         save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
 
         // Soft delete B
-        soft_delete_todos_for_project(&[b_id], date, DEFAULT_PROJECT_NAME).unwrap();
+        list.items.retain(|item| item.id != b_id);
+        save_todo_list_for_project(&list, DEFAULT_PROJECT_NAME).unwrap();
 
         // Remove B from in-memory list
         list.items.retain(|item| item.id != b_id);

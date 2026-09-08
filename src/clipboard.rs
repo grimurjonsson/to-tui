@@ -83,10 +83,10 @@ fn save_to_yank_file(text: &str) -> Option<PathBuf> {
 /// Paste from clipboard with fallback to internal buffer
 pub fn paste_from_clipboard() -> Result<String> {
     // Try system clipboard first
-    if let Ok(mut clipboard) = Clipboard::new() {
-        if let Ok(text) = clipboard.get_text() {
-            return Ok(text);
-        }
+    if let Ok(mut clipboard) = Clipboard::new()
+        && let Ok(text) = clipboard.get_text()
+    {
+        return Ok(text);
     }
 
     // Fallback: internal buffer

@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="totui-project" content="__TOTUI_PROJECT__" />
+    <title>totui · Tasks</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="./"><span class="brand-mark">[✓]</span> totui</a
+      ><span class="local-label">YOUR LOCAL WORKSPACE</span>
+      <div class="top-actions">
+        <span id="connection" role="status">Connecting…</span
+        ><button id="refresh" aria-label="Refresh tasks">↻</button
+        ><button id="theme" aria-label="Switch color theme">◐</button>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <h2>Projects</h2>
+        <nav id="projects" aria-label="Projects"></nav>
+        <div class="sidebar-note">
+          One list. Every interface.<br /><span
+            >Changes appear here as you work.</span
+          >
+        </div>
+      </aside>
+      <main>
+        <div class="mobile-project">
+          <label for="project-picker">Project</label
+          ><select id="project-picker"></select>
+        </div>
+        <div class="list-heading">
+          <div>
+            <div id="project-label" class="eyebrow">WORKSPACE</div>
+            <h1 id="heading">Today</h1>
+            <p id="summary">Loading your tasks…</p>
+          </div>
+          <button id="add" class="primary" disabled>+ New task</button>
+        </div>
+        <div class="toolbar">
+          <button id="today" class="selected">Today</button
+          ><label class="date-label"
+            >Browse date
+            <input
+              id="date"
+              type="date"
+              aria-label="Browse historical date" /></label
+          ><label class="check-label"
+            ><input id="hide-completed" type="checkbox" /> Hide completed</label
+          >
+        </div>
+        <div class="branch-actions" aria-label="Branch visibility">
+          <button id="expand-all" disabled>Expand all</button>
+          <button id="collapse-all" disabled>Collapse all</button>
+        </div>
+        <div id="notice" role="status" hidden></div>
+        <div id="error" role="alert" hidden></div>
+        <div id="list" aria-label="Tasks"></div>
+        <div id="root-drop" hidden>Drop at root level · after all tasks</div>
+        <div id="empty" class="empty" hidden>
+          <span class="empty-mark">[ ]</span>
+          <h2>A little room to think.</h2>
+          <p>No tasks here yet. Add something you want to move forward.</p>
+          <button id="empty-add" disabled>+ Create a task</button>
+        </div>
+      </main>
+      <aside id="details" class="details" aria-label="Task details" hidden>
+        <section id="editor" hidden>
+          <div class="editor-heading">
+            <span class="eyebrow" id="editor-title">TASK DETAILS</span
+            ><button id="close-editor" aria-label="Close task editor">✕</button>
+          </div>
+          <div id="task-actions" class="hierarchy-actions">
+            <h2>Organize task</h2>
+            <div class="branch-actions">
+              <button id="add-child">+ Add child task</button>
+              <button id="move-root">Move to root</button>
+            </div>
+            <div class="field-grid">
+              <label>Move under<select id="parent"></select></label>
+              <label>Position<select id="before"></select></label>
+            </div>
+            <button id="move">Move task &amp; descendants</button>
+            <p class="hint">
+              Choose Root level to unnest, or another task to nest. Children
+              move with their parent.
+            </p>
+          </div>
+          <form id="task-form">
+            <label
+              >Task<input
+                name="content"
+                id="content"
+                required
+                autocomplete="off"
+                placeholder="What needs doing?" /></label
+            ><label
+              >Description<textarea
+                name="description"
+                id="description"
+                rows="7"
+                placeholder="Notes, context, the next step…"
+              ></textarea>
+            </label>
+            <div class="field-grid">
+              <label
+                >State<select id="state" name="state">
+                  <option value=" ">⬜ Pending</option>
+                  <option value="*">🔄 In progress</option>
+                  <option value="x">✅ Done</option>
+                  <option value="?">❔ Question</option>
+                  <option value="!">❗ Important</option>
+                  <option value="-">🚫 Cancelled</option>
+                </select></label
+              ><label
+                >Priority<select id="priority" name="priority">
+                  <option value="">No priority</option>
+                  <option>P0</option>
+                  <option>P1</option>
+                  <option>P2</option>
+                </select></label
+              >
+            </div>
+            <label
+              >Due date<input
+                id="due-date"
+                name="due_date"
+                type="date" /></label
+            ><button type="button" id="clear-date" class="text-button">
+              Clear due date
+            </button>
+            <div id="draft-status" role="status"></div>
+            <div id="editor-error" role="alert" hidden></div>
+            <div id="conflict" hidden>
+              <strong>The list changed while you were editing.</strong>
+              <p id="latest"></p>
+              <button type="button" id="rebase">
+                Keep my draft and retry against latest</button
+              ><button type="button" id="recreate" hidden>
+                Restore draft as a new task</button
+              ><button type="button" id="discard">Use latest task</button>
+            </div>
+            <div class="save-bar">
+              <button id="save" class="primary" type="submit">Save task</button
+              ><span id="save-status" role="status"></span>
+            </div>
+          </form>
+          <div id="delete-actions">
+            <hr />
+            <button id="delete" class="danger">
+              Delete task &amp; descendants
+            </button>
+            <p class="hint">
+              Deleting a task also deletes every child below it.
+            </p>
+          </div>
+        </section>
+      </aside>
+    </div>
+    <div id="state-menu" role="menu" aria-label="Task state" hidden></div>
+    <div id="drag-result" role="status" hidden></div>
+    <div id="drag-feedback" role="status" aria-live="polite" hidden></div>
+    <dialog id="delete-dialog">
+      <h2>Delete this branch?</h2>
+      <p id="delete-message"></p>
+      <div class="dialog-actions">
+        <button id="cancel-delete">Keep tasks</button
+        ><button id="confirm-delete" class="danger">Delete branch</button>
+      </div>
+    </dialog>
+  </body>
+</html>

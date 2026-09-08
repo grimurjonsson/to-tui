@@ -6,11 +6,33 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use uuid::Uuid;
 
+#[derive(Debug, Default)]
+pub struct ListRevision(std::sync::atomic::AtomicI64);
+
+impl Clone for ListRevision {
+    fn clone(&self) -> Self {
+        Self::new(self.get())
+    }
+}
+
+impl ListRevision {
+    pub fn new(value: i64) -> Self {
+        Self(std::sync::atomic::AtomicI64::new(value))
+    }
+    pub fn get(&self) -> i64 {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub fn set(&self, value: i64) {
+        self.0.store(value, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TodoList {
     pub date: NaiveDate,
     pub items: Vec<TodoItem>,
     pub file_path: PathBuf,
+    pub revision: ListRevision,
 }
 
 impl TodoList {
@@ -19,6 +41,7 @@ impl TodoList {
             date,
             items: Vec::new(),
             file_path,
+            revision: ListRevision::new(0),
         }
     }
 
@@ -27,6 +50,7 @@ impl TodoList {
             date,
             items,
             file_path,
+            revision: ListRevision::new(0),
         }
     }
 

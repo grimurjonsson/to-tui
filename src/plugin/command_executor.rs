@@ -175,7 +175,7 @@ impl CommandExecutor {
         let mut item = TodoItem::new(content.to_string(), indent_level as usize);
 
         // Set state
-        item.state = convert_ffi_state(state);
+        item.set_state(convert_ffi_state(state));
 
         // Set priority if provided
         if let Some(p) = priority {
@@ -242,7 +242,7 @@ impl CommandExecutor {
         }
 
         if let Some(s) = state {
-            item.state = convert_ffi_state(s);
+            item.set_state(convert_ffi_state(s));
         }
 
         if let Some(p) = priority {
@@ -426,6 +426,7 @@ mod tests {
     fn create_test_list() -> TodoList {
         let date = Local::now().date_naive();
         TodoList {
+            revision: crate::todo::list::ListRevision::new(0),
             date,
             items: vec![TodoItem::new("Existing".to_string(), 0)],
             file_path: PathBuf::from("/tmp/test.md"),

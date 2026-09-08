@@ -3,7 +3,7 @@ use super::state::TodoState;
 use chrono::{DateTime, NaiveDate, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TodoItem {
     pub id: Uuid,
     pub content: String,
@@ -43,11 +43,7 @@ impl TodoItem {
     #[cfg(test)]
     pub fn with_state(content: String, state: TodoState, indent_level: usize) -> Self {
         let now = Utc::now();
-        let completed_at = if state == TodoState::Checked {
-            Some(now)
-        } else {
-            None
-        };
+        let completed_at = if state.is_complete() { Some(now) } else { None };
         Self {
             id: Uuid::new_v4(),
             content,
@@ -77,11 +73,7 @@ impl TodoItem {
         collapsed: bool,
     ) -> Self {
         let now = Utc::now();
-        let completed_at = if state == TodoState::Checked {
-            Some(now)
-        } else {
-            None
-        };
+        let completed_at = if state.is_complete() { Some(now) } else { None };
         Self {
             id: Uuid::new_v4(),
             content,
@@ -97,6 +89,12 @@ impl TodoItem {
             completed_at,
             deleted_at: None,
         }
+    }
+
+    pub fn set_state(&mut self, state: TodoState) {
+        let was_complete = self.state.is_complete();
+        self.state = state;
+        self.update_completed_at(was_complete);
     }
 
     pub fn toggle_state(&mut self) {

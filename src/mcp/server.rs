@@ -53,7 +53,7 @@ fn format_error(detail: McpErrorDetail) -> String {
 impl TodoMcpServer {
     #[tool(
         name = "list_todos",
-        description = "List all todos for a specific date and project. Defaults to today and 'default' project. Automatically rolls over incomplete todos from previous days if today's list is empty. Response includes a 'formatted' field - display it directly as markdown to the user."
+        description = "List todos for a specific date and project. Defaults to today and 'default' project. Automatically rolls over incomplete todos from previous days if today's list is empty. Set hide_completed=true to omit done and cancelled items. Each item carries its state, priority (P0/P1/P2, if set), due date and description. Response includes a 'formatted' field - display it directly as markdown to the user."
     )]
     async fn list_todos(
         &self,
@@ -64,8 +64,11 @@ impl TodoMcpServer {
         let result =
             ops::list(params.0.project.as_deref(), params.0.date.as_deref()).map_err(ops_err)?;
 
-        let response =
-            TodoListResponse::new(result.date.format("%Y-%m-%d").to_string(), result.items);
+        let response = TodoListResponse::new(
+            result.date.format("%Y-%m-%d").to_string(),
+            result.items,
+            params.0.hide_completed.unwrap_or(false),
+        );
 
         info!(count = response.item_count, "list_todos returning items");
         Ok(Json(response))
@@ -100,7 +103,7 @@ impl TodoMcpServer {
 
     #[tool(
         name = "create_todo",
-        description = "Create a new todo item in a project. Optionally nest under a parent todo by providing parent_id."
+        description = "Create a new todo item in a project. Optionally nest under a parent todo by providing parent_id, and set a priority (P0/P1/P2). New items start pending; use update_todo to set '*' (in progress) when you begin working on one."
     )]
     async fn create_todo(
         &self,
@@ -121,7 +124,7 @@ impl TodoMcpServer {
             state: None,
             due_date: req.due_date,
             parent_id: req.parent_id,
-            priority: None,
+            priority: req.priority,
         };
 
         let response =
@@ -133,7 +136,7 @@ impl TodoMcpServer {
 
     #[tool(
         name = "update_todo",
-        description = "Update an existing todo's content, state, due date, or description. State values: ' ' (empty/pending), '*' (in progress), 'x' (done), '?' (question), '!' (important)"
+        description = "Update an existing todo's content, state, priority, due date, or description. State values: ' ' (pending), '*' (in progress), 'x' (done), '?' (question), '!' (important), '-' (cancelled). While working on an item set it to '*'; when finished set it to 'x'. Priority values: 'P0' (critical), 'P1' (high), 'P2' (medium)."
     )]
     async fn update_todo(
         &self,
@@ -150,11 +153,15 @@ impl TodoMcpServer {
         );
 
         let spec = ops::UpdateSpec {
+            placement: None,
+            expected_revision: None,
+            clear_due_date: req.clear_due_date,
+            clear_priority: req.clear_priority,
             content: req.content,
             description: req.description,
             state: req.state,
             due_date: req.due_date,
-            priority: None,
+            priority: req.priority,
         };
 
         let response = ops::update(req.project.as_deref(), req.date.as_deref(), &req.id, spec)
@@ -212,12 +219,18 @@ impl rmcp::ServerHandler for TodoMcpServer {
             instructions: Some(
                 "Todo list management server.\n\n\
                 TOOLS:\n\
-                - list_todos: List todos. Response has 'formatted' field - display it directly as markdown.\n\
-                - create_todo: Create new todo. Can nest under parent via parent_id.\n\
-                - update_todo: Update content/state/due_date. States: ' '=pending, 'x'=done, '?'=question, '!'=important\n\
+                - list_todos: List todos. Response has 'formatted' field - display it directly as markdown. Pass hide_completed=true to omit done/cancelled items.\n\
+                - create_todo: Create new todo. Can nest under parent via parent_id; optional priority P0/P1/P2.\n\
+                - update_todo: Update content/state/priority/due_date/description.\n\
                 - delete_todo: Delete todo and children.\n\
                 - mark_complete: Toggle done/pending.\n\
                 - list_projects: List all available projects.\n\n\
+                STATES: ' '=pending, '*'=in progress, 'x'=done, '?'=question, '!'=important, '-'=cancelled.\n\
+                PRIORITIES: P0=critical, P1=high, P2=medium (optional; shown as [P0] etc. in 'formatted').\n\n\
+                WORKING ON ITEMS:\n\
+                - When you start working on an item, set its state to '*' (in progress) so the user sees it live in the TUI.\n\
+                - When you finish it, set it to 'x' (done). Use '?' when blocked on a user decision, '!' to flag attention, '-' to cancel.\n\
+                - Keep exactly one item in progress at a time.\n\n\
                 DISPLAY GUIDELINES:\n\
                 - For list_todos: Display the 'formatted' field directly as markdown. Do NOT create tables.\n\
                 - For single items: Show as '[ ] content' or '[x] content' format.\n\

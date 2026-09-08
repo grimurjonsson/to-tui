@@ -466,6 +466,7 @@ mod tests {
             parent_id: None,
             due_date: None,
             description: None,
+            priority: None,
         }
     }
 

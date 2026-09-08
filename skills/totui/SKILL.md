@@ -6,7 +6,7 @@ description: Mirror in-progress work into the totui MCP todo list so the user ca
 <objective>
 Give the user a live, readable view of work in flight. Before starting a multi-step task, write its scope into totui as a nested tree; as the work proceeds, keep exactly one leaf marked in-progress and flip finished leaves to done.
 
-This is a **broadcast channel, not a scratchpad**. The internal todo list (TaskCreate/TaskUpdate) stays the working record; totui carries a stable, human-readable projection of it.
+This is a **broadcast channel, not a scratchpad**. Whatever internal task list your host provides (Claude Code's TaskCreate/TaskUpdate, Codex's plan tool, or your own notes) stays the working record; totui carries a stable, human-readable projection of it.
 </objective>
 
 <quick_start>
@@ -15,30 +15,35 @@ Default project is `default`. Only pass `project` when the user names a differen
 Three calls cover almost everything:
 
 ```
-list_todos     { project }
-create_todo    { content, description?, parent_id?, project }
-update_todo    { id, state?, content?, description?, project }
+list_todos     { project, hide_completed? }
+create_todo    { content, description?, parent_id?, priority?, project }
+update_todo    { id, state?, priority?, content?, description?, project }
 ```
 
-Those are **bare** names. The callable name carries a prefix that depends on how
-the server was installed — `mcp__plugin_<marketplace>_<server>__` when installed
-as this plugin, `mcp__<server>__` when wired directly in `.mcp.json`. Match the
-tool in your available tools whose name *ends with* the bare name; never hardcode
-a prefix. If none is present, the to-tui MCP server is not connected — say so
-rather than guessing.
+`hide_completed: true` trims a long list to what is still open (the header keeps
+the full done/total count). `priority` is `P0` (critical), `P1` (high) or `P2`
+(medium); it shows in the TUI and in `formatted` as a `[P0]` badge.
+
+Those are **bare** names. The callable name carries a prefix that depends on the
+agent host and on how the server was installed — Claude Code uses
+`mcp__plugin_<marketplace>_<server>__` for a plugin install or `mcp__<server>__`
+for a server in `.mcp.json`; Codex uses `mcp__<server>__` (or `<server>__`);
+other hosts have their own. Match the tool in your available tools whose name
+*ends with* the bare name; never hardcode a prefix. If none is present, the
+to-tui MCP server is not connected — say so rather than guessing.
 
 Opening move for a new task:
 
-1. `list_todos` — find the `Claude Code` root (create it if absent) and look
-   under it for a tree this work belongs to.
-2. Create the tree under `Claude Code` → one child per milestone.
+1. `list_todos` — find your agent root (see the rooting rules below; create it
+   if absent) and look under it for a tree this work belongs to.
+2. Create the tree under the agent root → one child per milestone.
 3. Set the first leaf to `*` and its ancestors to `*`.
 4. Work. After each milestone: that leaf → `x`, next leaf → `*`.
 5. At the end: all leaves `x`, ancestors `x`.
 </quick_start>
 
 <states>
-The `state` field takes a single character. The `update_todo` **parameter** description omits `*` — that is a documentation bug in the server, not a missing feature. `*` works and reports back as `state_description: "in_progress"`.
+The `state` field takes a single character. These are all six; there are no others.
 
 | State | Meaning | Use for |
 |---|---|---|
@@ -50,6 +55,10 @@ The `state` field takes a single character. The `update_todo` **parameter** desc
 | `-` | cancelled | Dropped from scope — keeps the record without implying it was done |
 
 `create_todo` has no `state` parameter — items are always born pending. To start something in progress, create it then `update_todo` it to `*`.
+
+**Working an item means marking it.** Set a leaf to `*` the moment you begin it and to `x` the moment it is finished and verified. Never leave the leaf you are working on as pending, and never mark it done ahead of the evidence.
+
+Priority is separate from state. Use `priority` (`P0`/`P1`/`P2`) on a leaf when the user has told you what matters most, or when a blocker needs to jump the queue; otherwise leave it unset.
 
 **Exactly one leaf carries `*` at a time.** That is the whole point: the user glances at the TUI and sees where you are. Two in-progress leaves means the signal is lost.
 
@@ -87,20 +96,32 @@ Put the *why* and the identifiers in `description`, not in `content`. Content sh
 </granularity>
 
 <rooting>
-**Everything you create goes under a single top-level item named exactly
-`Claude Code`.** Top-level items outside it are the user's own lists — never add
-to them, and never create a new top-level item beside them. That one rule is what
-keeps their board theirs, and it is also what the Stop hook uses to decide which
-trees are yours to watch.
+**Everything you create goes under a single top-level item named after your
+agent host — the agent root.** Top-level items outside it are the user's own
+lists — never add to them, and never create a new top-level item beside them.
+That one rule is what keeps their board theirs.
 
-1. `list_todos` and find the `Claude Code` item. Create it if absent.
+| Host | Agent root (exact text) |
+|---|---|
+| Claude Code | `Claude Code` |
+| Codex | `Codex` |
+| Anything else | The host's common name, e.g. `OpenCode`, `pi` |
+
+The `Claude Code` label is a contract, not a suggestion: to-tui ships a Claude
+Code Stop hook that watches the trees under exactly that item to keep them honest
+when a session ends. Other hosts have no hook, so their root is purely a label
+that tells the user which agent made the tree.
+
+1. `list_todos` and find your agent root. Create it if absent.
 2. Under it, look for an existing tree this work belongs to — a ticket key, a
    project, a feature name. When one matches, nest the new milestones there.
-3. No match → create a new tree under `Claude Code`, named in the user's own terms.
-4. Ambiguous match → ask, using AskUserQuestion. Do not guess between two
-   plausible trees; a tree grafted in the wrong place is worse than one extra tree.
+3. No match → create a new tree under the agent root, named in the user's own terms.
+4. Ambiguous match → ask the user (with your host's question tool if it has one,
+   such as Claude Code's AskUserQuestion; otherwise in plain text). Do not guess
+   between two plausible trees; a tree grafted in the wrong place is worse than
+   one extra tree.
 
-So the shape is `Claude Code` → task → milestones. Your milestones sit one level
+So the shape is agent root → task → milestones. Your milestones sit one level
 deeper than they otherwise would, which makes the 3-level guidance in the sizing
 notes above a real constraint: prefer more trees over deeper nesting.
 </rooting>
@@ -160,7 +181,7 @@ If a verification step is itself a leaf ("Run full suite"), it cannot be `x` unt
 - **`delete_todo` on anything you did not just create.** It cascades to children.
 - **Tracking trivial work.** A two-step task tracked in totui is noise; the user asked for scope visibility, not a receipt.
 - **Passing `project` on every call out of habit.** It defaults to `default`; pass it only when the user named another.
-- **Creating a top-level item.** Everything you make belongs under `Claude Code`.
+- **Creating a top-level item.** Everything you make belongs under your agent root.
 - **Leaving a tree all-pending after finishing.** Worse than not tracking, because it reads as work that never happened.
 </anti_patterns>
 

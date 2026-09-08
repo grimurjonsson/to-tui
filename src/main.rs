@@ -1,4 +1,4 @@
-mod api;
+use to_tui::api;
 mod app;
 mod cli;
 mod ui;
@@ -147,18 +147,17 @@ fn init_file_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
 
     // Roll previous log file if it's from a different day
     let log_file_path = logs_dir.join("totui.log");
-    if log_file_path.exists() {
-        if let Ok(metadata) = fs::metadata(&log_file_path) {
-            if let Ok(modified) = metadata.modified() {
-                let modified_date = chrono::DateTime::<Local>::from(modified)
-                    .format("%Y-%m-%d")
-                    .to_string();
-                let today = Local::now().format("%Y-%m-%d").to_string();
-                if modified_date != today {
-                    let rolled_name = logs_dir.join(format!("totui.log.{}", modified_date));
-                    let _ = fs::rename(&log_file_path, rolled_name);
-                }
-            }
+    if log_file_path.exists()
+        && let Ok(metadata) = fs::metadata(&log_file_path)
+        && let Ok(modified) = metadata.modified()
+    {
+        let modified_date = chrono::DateTime::<Local>::from(modified)
+            .format("%Y-%m-%d")
+            .to_string();
+        let today = Local::now().format("%Y-%m-%d").to_string();
+        if modified_date != today {
+            let rolled_name = logs_dir.join(format!("totui.log.{}", modified_date));
+            let _ = fs::rename(&log_file_path, rolled_name);
         }
     }
 
@@ -202,6 +201,13 @@ fn main() -> Result<()> {
         }
         Some(Commands::ImportArchive) => {
             handle_import_archive()?;
+        }
+        Some(Commands::Web {
+            port,
+            open,
+            verbose,
+        }) => {
+            run_server_foreground(port, open, verbose)?;
         }
         Some(Commands::Serve { command, port }) => {
             handle_serve_command(command, port)?;
@@ -362,7 +368,7 @@ fn handle_serve_command(command: Option<ServeCommand>, port: u16) -> Result<()> 
     match command.unwrap_or(ServeCommand::Start { daemon: false }) {
         ServeCommand::Start { daemon } => {
             if daemon {
-                run_server_foreground(port)
+                run_server_foreground(port, false, false)
             } else {
                 handle_serve_start(port)
             }
@@ -528,21 +534,44 @@ fn kill_process(pid: u32) -> Result<()> {
     Ok(())
 }
 
+fn workspace_url(addr: std::net::SocketAddr, project: &str) -> Result<reqwest::Url> {
+    let host = if addr.ip().is_unspecified() {
+        if addr.is_ipv6() {
+            "[::1]".to_owned()
+        } else {
+            "127.0.0.1".to_owned()
+        }
+    } else if addr.is_ipv6() {
+        format!("[{}]", addr.ip())
+    } else {
+        addr.ip().to_string()
+    };
+    let mut url = reqwest::Url::parse(&format!("http://{host}:{}/", addr.port()))?;
+    url.query_pairs_mut().append_pair("project", project);
+    Ok(url)
+}
+
 #[tokio::main]
-async fn run_server_foreground(port: u16) -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,tower_http=debug".into()),
-        )
-        .init();
+async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> Result<()> {
+    let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| "info,tower_http=debug".into());
+    if verbose {
+        filter = filter.add_directive("to_tui::api=debug".parse()?);
+    }
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    let app = api::create_router();
-    let addr = format!("0.0.0.0:{port}");
-
-    tracing::info!("Starting server on {}", addr);
-
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    let project = get_current_project(&mut Config::load()?)?;
+    let app = api::create_router()?.layer(axum::Extension(api::web::StartupProject(
+        project.name.clone(),
+    )));
+    let host = std::env::var("TOTUI_BIND").unwrap_or_else(|_| "127.0.0.1".into());
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
+    let addr = listener.local_addr()?;
+    let url = workspace_url(addr, &project.name)?;
+    tracing::info!("Workspace available at {url}");
+    if open_browser {
+        open::that(url.as_str())?;
+    }
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -1022,6 +1051,10 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                 Some(raw) => serde_json::from_str(&read_json_arg(&raw)?)
                     .map_err(|e| anyhow!("Invalid --json: {e}"))?,
                 None => ops::UpdateSpec {
+                    placement: None,
+                    expected_revision: None,
+                    clear_due_date: false,
+                    clear_priority: false,
                     content,
                     description,
                     state,
@@ -1350,5 +1383,35 @@ fn handle_plugin_config(name: &str, init: bool) -> Result<()> {
 
         println!();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod web_startup_tests {
+    use super::workspace_url;
+
+    #[test]
+    fn test_workspace_url_encodes_selected_project() {
+        let url = workspace_url("127.0.0.1:48372".parse().unwrap(), "Notes & ideas #1").unwrap();
+        assert_eq!(
+            url.query_pairs().collect::<Vec<_>>(),
+            vec![("project".into(), "Notes & ideas #1".into())]
+        );
+        assert!(url.fragment().is_none());
+    }
+
+    #[test]
+    fn test_workspace_url_uses_reachable_loopback_for_wildcard_bind() {
+        for (bind, expected) in [
+            ("0.0.0.0:48372", "http://127.0.0.1:48372/?project=default"),
+            ("[::]:48372", "http://[::1]:48372/?project=default"),
+        ] {
+            assert_eq!(
+                workspace_url(bind.parse().unwrap(), "default")
+                    .unwrap()
+                    .as_str(),
+                expected
+            );
+        }
     }
 }

@@ -14,6 +14,17 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Run the local web workspace
+    Web {
+        #[arg(short, long, default_value_t = DEFAULT_API_PORT)]
+        port: u16,
+        /// Open the workspace in your browser
+        #[arg(long)]
+        open: bool,
+        /// Log parsed mutation payloads for debugging (includes task text)
+        #[arg(long)]
+        verbose: bool,
+    },
     Add {
         task: String,
     },
