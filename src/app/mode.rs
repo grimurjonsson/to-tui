@@ -13,6 +13,7 @@ pub enum Mode {
     ProjectSelect,
     MoveToProject,
     EditDescription,
+    Web,
 }
 
 impl fmt::Display for Mode {
@@ -28,6 +29,7 @@ impl fmt::Display for Mode {
             Mode::ProjectSelect => write!(f, "PROJECT"),
             Mode::MoveToProject => write!(f, "MOVE"),
             Mode::EditDescription => write!(f, "DESCRIBE"),
+            Mode::Web => write!(f, "WEB"),
         }
     }
 }

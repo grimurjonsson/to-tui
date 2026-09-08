@@ -2,6 +2,7 @@ use to_tui::api;
 mod app;
 mod cli;
 mod ui;
+mod web_process;
 
 use to_tui::clipboard;
 use to_tui::config;
@@ -186,10 +187,13 @@ fn main() -> Result<()> {
     // Install crash handler first thing
     install_crash_handler();
 
+    let cli = Cli::parse();
+    if let Some(Commands::Web(options)) = &cli.command {
+        return web_process::run(options.clone());
+    }
+
     // Ensure installation is properly set up (handles v1 -> v2 migration)
     ensure_installation_ready()?;
-
-    let cli = Cli::parse();
     let mut config = Config::load()?;
 
     match cli.command {
@@ -202,12 +206,8 @@ fn main() -> Result<()> {
         Some(Commands::ImportArchive) => {
             handle_import_archive()?;
         }
-        Some(Commands::Web {
-            port,
-            open,
-            verbose,
-        }) => {
-            run_server_foreground(port, open, verbose)?;
+        Some(Commands::Web(options)) => {
+            web_process::run(options)?;
         }
         Some(Commands::Serve { command, port }) => {
             handle_serve_command(command, port)?;
@@ -437,6 +437,8 @@ fn is_server_running(port: u16) -> bool {
     let addr = format!("127.0.0.1:{port}");
     match TcpStream::connect_timeout(&addr.parse().unwrap(), Duration::from_millis(500)) {
         Ok(mut stream) => {
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+            let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
             let request = format!(
                 "GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
             );
@@ -475,9 +477,25 @@ fn start_server_background(port: u16) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn ensure_server_running(port: u16) -> Result<()> {
+    if matches!(web_process::status(port)?, web_process::WebStatus::Stopped) {
+        let output = Command::new(env::current_exe()?)
+            .args(["web", "start", "--port", &port.to_string()])
+            .output()?;
+        if !output.status.success() {
+            tracing::warn!(
+                "Web startup failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
 fn ensure_server_running(port: u16) -> Result<()> {
     if !is_server_running(port) {
-        println!("Starting API server on port {port}...");
         start_server_background(port)?;
     }
     Ok(())
@@ -553,6 +571,8 @@ fn workspace_url(addr: std::net::SocketAddr, project: &str) -> Result<reqwest::U
 
 #[tokio::main]
 async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> Result<()> {
+    fs::create_dir_all(utils::paths::get_to_tui_dir()?)?;
+    ensure_installation_ready()?;
     let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "info,tower_http=debug".into());
     if verbose {
@@ -571,6 +591,9 @@ async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> 
     tracing::info!("Workspace available at {url}");
     if open_browser {
         open::that(url.as_str())?;
+    }
+    if let Some(path) = std::env::var_os("TOTUI_WEB_READY_FILE") {
+        fs::write(path, url.as_str())?;
     }
     axum::serve(listener, app).await?;
 

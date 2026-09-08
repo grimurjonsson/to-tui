@@ -80,6 +80,7 @@ timeoutlen = 1000
 
 # --- Modals ---
 "R" = "open_rollover_modal"     # Open rollover modal
+"w" = "open_web_manager"
 "P" = "open_plugin_menu"        # Open plugins menu
 "<C-p>" = "open_project_modal"  # Ctrl+p: open project switcher
 

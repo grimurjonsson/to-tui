@@ -79,7 +79,7 @@ install:
     cargo build --release
 
     INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
-    BINARIES=("totui" "totui-mcp")
+    BINARIES=("totui" "to-tui" "totui-mcp")
 
     # Check for existing installations in different locations
     check_existing_binary() {

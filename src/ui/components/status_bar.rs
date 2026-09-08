@@ -10,98 +10,155 @@ use ratatui::{
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FooterLink {
+    Web,
+    Github,
+    Upgrade,
+}
+
+fn content(state: &AppState) -> [String; 5] {
+    let readonly = if state.is_readonly() {
+        " [READONLY]"
+    } else {
+        ""
+    };
+    let unsaved = if state.unsaved_changes {
+        " [unsaved]"
+    } else {
+        ""
+    };
+    let day = if state.viewing_date == state.today {
+        "today"
+    } else {
+        "archived"
+    };
+    let project = if state.current_project.name != crate::project::DEFAULT_PROJECT_NAME {
+        format!("[{}] ", state.current_project.name)
+    } else {
+        String::new()
+    };
+    let info = match &state.status_message {
+        Some((message, time)) if time.elapsed().as_secs() <= 3 => format!(" {message} "),
+        _ => format!(
+            " {project}{} | {} ({day}) | {} items{readonly}{unsaved}",
+            state.mode,
+            state.viewing_date.format("%Y-%m-%d"),
+            state.todo_list.items.len()
+        ),
+    };
+    let hints = if state.is_readonly() {
+        " < prev  > next  T today "
+    } else {
+        " ? help  q quit "
+    };
+    let shortcut = state
+        .keybindings
+        .navigate_bindings_for(crate::keybindings::Action::OpenWebManager)
+        .filter(|bindings| !bindings.is_empty())
+        .map(|bindings| bindings.join(" / "))
+        .unwrap_or_else(|| "click".into());
+    let version = match &state.new_version_available {
+        Some(version) => format!(" v{VERSION} → v{version} "),
+        None => format!(" v{VERSION} "),
+    };
+    [
+        info,
+        hints.into(),
+        format!(" {shortcut} web-ui ({}) ", state.web.label()),
+        " 🔗 ".into(),
+        version,
+    ]
+}
+
+fn sections(area: Rect, content: &[String; 5]) -> [Rect; 5] {
+    use unicode_width::UnicodeWidthStr;
+
+    let mut widths = content
+        .each_ref()
+        .map(|text| text.width().min(u16::MAX as usize) as u16);
+    let available = area.width as usize;
+    if widths[1..]
+        .iter()
+        .map(|width| *width as usize)
+        .sum::<usize>()
+        > available
+    {
+        widths[4] = 0;
+    }
+    if widths[1..]
+        .iter()
+        .map(|width| *width as usize)
+        .sum::<usize>()
+        > available
+    {
+        widths[3] = 0;
+    }
+    widths[2] = widths[2].min(area.width);
+    widths[1] = widths[1].min(area.width.saturating_sub(widths[2] + widths[3] + widths[4]));
+    let reserved = widths[1..]
+        .iter()
+        .map(|width| *width as usize)
+        .sum::<usize>();
+    widths[0] = widths[0].min(available.saturating_sub(reserved) as u16);
+    let mut x = area.x;
+    std::array::from_fn(|index| {
+        if index == 3 {
+            x = area.right().saturating_sub(widths[3] + widths[4]);
+        }
+        let rect = Rect::new(x, area.y, widths[index], area.height);
+        x += widths[index];
+        rect
+    })
+}
+
+pub fn link_at(state: &AppState, row: usize, col: usize) -> Option<FooterLink> {
+    if state.show_help
+        || !matches!(state.mode, Mode::Navigate | Mode::Edit | Mode::Visual)
+        || row != state.terminal_height.saturating_sub(1) as usize
+    {
+        return None;
+    }
+    let area = Rect::new(0, row as u16, state.terminal_width, 1);
+    let regions = sections(area, &content(state));
+    let contains = |index: usize| {
+        let region = regions[index];
+        col >= region.x as usize && col < region.right() as usize
+    };
+    if state.mode == Mode::Navigate && contains(2) {
+        Some(FooterLink::Web)
+    } else if contains(3) {
+        Some(FooterLink::Github)
+    } else if state.new_version_available.is_some() && contains(4) {
+        Some(FooterLink::Upgrade)
+    } else {
+        None
+    }
+}
+
 pub fn render(f: &mut Frame, state: &AppState, area: Rect) {
     if state.mode == Mode::ConfirmDelete {
         render_confirm_delete(f, state, area);
         return;
     }
-
-    if let Some((message, time)) = &state.status_message
-        && time.elapsed().as_secs() <= 3
-    {
-        render_status_message(f, message, area);
-        return;
-    }
-
-    let mode_text = format!("{}", state.mode);
-    let readonly_indicator = if state.is_readonly() {
-        " [READONLY]"
-    } else {
-        ""
-    };
-    let save_indicator = if state.unsaved_changes {
-        " [unsaved]"
-    } else {
-        ""
-    };
-
-    let date_str = state.viewing_date.format("%Y-%m-%d").to_string();
-    let date_label = if state.viewing_date == state.today {
-        format!("{date_str} (today)")
-    } else {
-        format!("{date_str} (archived)")
-    };
-
-    let nav_hint = if state.is_readonly() {
-        "< prev  > next  T today"
-    } else {
-        "? help  q quit"
-    };
-    let github_link = "[github repo]";
-    let version_text = match &state.new_version_available {
-        Some(new_version) => format!("v{VERSION} → v{new_version}"),
-        None => format!("v{VERSION}"),
-    };
-
-    let project_prefix = if state.current_project.name != crate::project::DEFAULT_PROJECT_NAME {
-        format!("[{}] ", state.current_project.name)
-    } else {
-        String::new()
-    };
-
-    let left_content = format!(
-        " {}{} | {} | {} items{}{}",
-        project_prefix,
-        mode_text,
-        date_label,
-        state.todo_list.items.len(),
-        readonly_indicator,
-        save_indicator
-    );
-
-    // Format: "{left_content} {nav_hint} {padding} {github_link} {version_text} "
-    // Spaces: 4 spaces between segments + 1 trailing space
-    let padding = area.width.saturating_sub(
-        left_content.len() as u16
-            + nav_hint.len() as u16
-            + github_link.len() as u16
-            + version_text.len() as u16
-            + 5,
-    );
-
-    let base_style = Style::default()
+    let mut style = Style::default()
         .fg(state.theme.status_bar_fg)
         .bg(state.theme.status_bar_bg);
-
-    let readonly_style = if state.is_readonly() {
-        base_style.add_modifier(Modifier::BOLD)
-    } else {
-        base_style
-    };
-
-    let status_line = format!(
-        "{} {} {:>padding$} {} {} ",
-        left_content,
-        nav_hint,
-        "",
-        github_link,
-        version_text,
-        padding = padding as usize
-    );
-
-    let status = Paragraph::new(Line::from(vec![Span::styled(status_line, readonly_style)]));
-
-    f.render_widget(status, area);
+    if state.is_readonly() {
+        style = style.add_modifier(Modifier::BOLD);
+    }
+    f.render_widget(Paragraph::new("").style(style), area);
+    let content = content(state);
+    for (index, (text, region)) in content.iter().zip(sections(area, &content)).enumerate() {
+        if index == 3
+            && region.width >= 4
+            && let Some(icon) = &state.github_icon
+        {
+            f.render_widget(icon, Rect::new(region.x + 1, region.y, 2, 1));
+        } else {
+            f.render_widget(Paragraph::new(text.as_str()).style(style), region);
+        }
+    }
 }
 
 fn render_confirm_delete(f: &mut Frame, state: &AppState, area: Rect) {
@@ -124,22 +181,30 @@ fn render_confirm_delete(f: &mut Frame, state: &AppState, area: Rect) {
     f.render_widget(status, area);
 }
 
-fn render_status_message(f: &mut Frame, message: &str, area: Rect) {
-    let display_message = format!(" {message} ");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unicode_width::UnicodeWidthStr;
 
-    let style = Style::default()
-        .fg(ratatui::style::Color::White)
-        .bg(ratatui::style::Color::Rgb(0, 100, 0))
-        .add_modifier(Modifier::BOLD);
-
-    let padding = area.width.saturating_sub(display_message.len() as u16);
-    let status_line = format!(
-        "{}{:padding$}",
-        display_message,
-        "",
-        padding = padding as usize
-    );
-
-    let status = Paragraph::new(Line::from(vec![Span::styled(status_line, style)]));
-    f.render_widget(status, area);
+    #[test]
+    fn test_footer_layout_keeps_controls_visible_with_wide_characters() {
+        let content = [
+            " 工作 project ".into(),
+            " ? help  q quit ".into(),
+            " w web-ui (running) ".into(),
+            " 🔗 ".into(),
+            " v0.6.0-dev-long-version ".into(),
+        ];
+        for width in [40, 80, 100, 160] {
+            let regions = sections(Rect::new(0, 0, width, 1), &content);
+            assert_eq!(regions[2].width as usize, content[2].width());
+            for pair in regions.windows(2) {
+                assert!(pair[0].right() <= pair[1].x);
+            }
+            assert!(regions[4].right() <= width);
+            if regions[3].width > 0 {
+                assert_eq!(regions[3].width as usize, content[3].width());
+            }
+        }
+    }
 }

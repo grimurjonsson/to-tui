@@ -1,4 +1,5 @@
 pub mod components;
+pub mod github_icon;
 pub mod theme;
 
 use crate::app::{AppState, event::handle_key_event, event::handle_mouse_event};
@@ -21,11 +22,15 @@ use tokio::sync::mpsc;
 
 struct TerminalGuard {
     keyboard_enhancement: bool,
+    github_icon: Option<github_icon::GithubIcon>,
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let mut stdout = io::stdout();
+        if let Some(icon) = &self.github_icon {
+            let _ = icon.delete(&mut stdout);
+        }
         if self.keyboard_enhancement {
             let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         }
@@ -48,9 +53,12 @@ pub fn run_tui(mut state: AppState) -> Result<AppState> {
     )
     .is_ok();
 
-    let _guard = TerminalGuard {
+    let mut guard = TerminalGuard {
         keyboard_enhancement: supports_keyboard_enhancement,
+        github_icon: None,
     };
+    state.github_icon = github_icon::GithubIcon::detect();
+    guard.github_icon = state.github_icon.clone();
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -79,10 +87,12 @@ async fn run_app(
     let mut data_version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;
     let mut reader = EventStream::new();
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
+    let mut image_size = None;
 
     loop {
         // State maintenance
         state.clear_expired_status_message();
+        state.web.tick();
         state.check_plugin_result();
         state.check_marketplace_fetch();
         state.check_version_update();
@@ -106,7 +116,7 @@ async fn run_app(
                     for x in 0..area.width {
                         if let Some(cell) = buf.cell(Position::new(x, y)) {
                             let sym = cell.symbol();
-                            if sym.is_empty() {
+                            if sym.is_empty() || sym.contains('\u{10eeee}') {
                                 row_cells.push(" ".to_string());
                             } else {
                                 row_cells.push(sym.to_string());
@@ -141,6 +151,14 @@ async fn run_app(
                 }
             }
         })?;
+
+        let size = (state.terminal_width, state.terminal_height);
+        if image_size != Some(size) {
+            if let Some(icon) = &state.github_icon {
+                icon.upload(terminal.backend_mut())?;
+            }
+            image_size = Some(size);
+        }
 
         // Wait for ANY event source - immediate wakeup when any fires
         tokio::select! {

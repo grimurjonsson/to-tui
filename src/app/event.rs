@@ -132,6 +132,13 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
     }
 
     match state.mode {
+        Mode::Web => match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('w') => state.mode = Mode::Navigate,
+            KeyCode::Up => state.web.select_previous(),
+            KeyCode::Down => state.web.select_next(),
+            KeyCode::Enter => state.web.activate_selected(),
+            _ => {}
+        },
         Mode::Navigate => handle_navigate_mode(key, state)?,
         Mode::Visual => handle_visual_mode(key, state)?,
         Mode::Edit => handle_edit_mode(key, state)?,
@@ -147,6 +154,9 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
+    if state.mode == Mode::Web {
+        return Ok(());
+    }
     // Handle scroll events in help overlay
     if state.show_help {
         match mouse.kind {
@@ -233,31 +243,22 @@ pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()>
 /// Execute a left-click action at the given screen coordinates.
 /// Extracted from handle_mouse_event to support click-on-release (for drag detection).
 fn handle_left_click(state: &mut AppState, clicked_row: usize, clicked_col: usize) -> Result<()> {
-    // Check if click is on status bar (bottom row) - works in any mode
-    if clicked_row == state.terminal_height.saturating_sub(1) as usize {
-        let github_link = "[github repo] ";
-        let version_text = if let Some(ref new_version) = state.new_version_available {
-            let current_version = env!("CARGO_PKG_VERSION");
-            format!("v{} → v{}", current_version, new_version)
-        } else {
-            format!("v{}", env!("CARGO_PKG_VERSION"))
-        };
+    use crate::ui::components::status_bar::{FooterLink, link_at};
 
-        let version_start = state
-            .terminal_width
-            .saturating_sub(version_text.len() as u16) as usize;
-        let github_start = version_start.saturating_sub(github_link.len());
-        let github_end = version_start - 1;
-
-        if clicked_col >= github_start && clicked_col < github_end {
+    match link_at(state, clicked_row, clicked_col) {
+        Some(FooterLink::Web) => {
+            state.mode = Mode::Web;
+            return Ok(());
+        }
+        Some(FooterLink::Github) => {
             let _ = open::that(GITHUB_URL);
             return Ok(());
         }
-
-        if state.new_version_available.is_some() && clicked_col >= version_start {
+        Some(FooterLink::Upgrade) => {
             state.open_upgrade_modal();
             return Ok(());
         }
+        None => {}
     }
 
     // Item clicks only work in Navigate mode
@@ -320,41 +321,8 @@ fn handle_left_click(state: &mut AppState, clicked_row: usize, clicked_col: usiz
     Ok(())
 }
 
-/// Check if the mouse is over a clickable link in the status bar.
-/// Returns true if over the GitHub link or the upgrade version text (when available).
 fn is_mouse_over_status_bar_link(state: &AppState, row: usize, col: usize) -> bool {
-    // Check if on status bar (bottom row)
-    if row != state.terminal_height.saturating_sub(1) as usize {
-        return false;
-    }
-
-    let github_link = "[github repo]";
-    let github_link_with_space = "[github repo] ";
-    let version_text = if let Some(ref new_version) = state.new_version_available {
-        let current_version = env!("CARGO_PKG_VERSION");
-        format!("v{} → v{}", current_version, new_version)
-    } else {
-        format!("v{}", env!("CARGO_PKG_VERSION"))
-    };
-
-    // Layout: ... {github_link} {version_text} {trailing_space}
-    // version_text ends at terminal_width - 1 (trailing space)
-    let version_end = state.terminal_width.saturating_sub(1) as usize;
-    let version_start = version_end.saturating_sub(version_text.len());
-    let github_start = version_start.saturating_sub(github_link_with_space.len());
-    let github_end = github_start + github_link.len(); // exclude the trailing space
-
-    // Check if over GitHub link
-    if col >= github_start && col < github_end {
-        return true;
-    }
-
-    // Check if over version text (only clickable when upgrade is available)
-    if state.new_version_available.is_some() && col >= version_start && col < version_end {
-        return true;
-    }
-
-    false
+    crate::ui::components::status_bar::link_at(state, row, col).is_some()
 }
 
 enum ClickZone {
@@ -816,6 +784,9 @@ fn execute_navigate_action(action: Action, state: &mut AppState) -> Result<()> {
             } else {
                 state.set_status_message("No incomplete items to rollover".to_string());
             }
+        }
+        Action::OpenWebManager => {
+            state.mode = Mode::Web;
         }
         Action::OpenProjectModal => {
             state.open_project_modal();

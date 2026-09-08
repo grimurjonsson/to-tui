@@ -14,17 +14,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
-    /// Run the local web workspace
-    Web {
-        #[arg(short, long, default_value_t = DEFAULT_API_PORT)]
-        port: u16,
-        /// Open the workspace in your browser
-        #[arg(long)]
-        open: bool,
-        /// Log parsed mutation payloads for debugging (includes task text)
-        #[arg(long)]
-        verbose: bool,
-    },
+    /// Run or manage the local web workspace
+    Web(WebOptions),
     Add {
         task: String,
     },
@@ -262,4 +253,91 @@ pub enum ServeCommand {
     Restart,
     /// Check if the API server is running
     Status,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WebOptions {
+    #[command(subcommand)]
+    pub command: Option<WebCommand>,
+    #[arg(short, long, global = true, default_value_t = DEFAULT_API_PORT)]
+    pub port: u16,
+    /// Open the workspace in your browser
+    #[arg(long, global = true)]
+    pub open: bool,
+    /// Log mutation payloads, including task text
+    #[arg(long, global = true)]
+    pub verbose: bool,
+    /// Run in the background
+    #[arg(long, global = true, conflicts_with = "log")]
+    pub detach: bool,
+    /// Stop the managed web server before starting
+    #[arg(long, global = true, conflicts_with = "log")]
+    pub restart: bool,
+    /// Print the latest detached server log and exit
+    #[arg(long, global = true, conflicts_with_all = ["open", "verbose"])]
+    pub log: bool,
+}
+
+#[derive(Subcommand, Debug, Clone, Copy)]
+pub enum WebCommand {
+    /// Start the workspace in the background
+    Start,
+    /// Stop the managed web server
+    Stop,
+    /// Restart the workspace in the background
+    Restart,
+    /// Show the managed process, URL, and log location
+    Status,
+    /// Print the latest detached server log
+    #[command(alias = "log")]
+    Logs {
+        /// Keep streaming new log output until interrupted
+        #[arg(short, long)]
+        follow: bool,
+    },
+}
+
+#[cfg(test)]
+mod web_cli_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn test_cli_arguments_are_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_web_start_accepts_options_before_and_after_subcommand() {
+        for args in [
+            vec!["to-tui", "web", "--port", "3000", "start", "--verbose"],
+            vec!["to-tui", "web", "start", "--port", "3000", "--verbose"],
+        ] {
+            let Some(Commands::Web(options)) = Cli::try_parse_from(args).unwrap().command else {
+                panic!("Expected web command");
+            };
+            assert_eq!(options.port, 3000);
+            assert!(options.verbose);
+            assert!(matches!(options.command, Some(WebCommand::Start)));
+        }
+    }
+
+    #[test]
+    fn test_web_logs_follow() {
+        for flag in ["--follow", "-f"] {
+            let cli = Cli::try_parse_from(["totui", "web", "logs", flag]).unwrap();
+            assert!(matches!(
+                cli.command,
+                Some(Commands::Web(WebOptions {
+                    command: Some(WebCommand::Logs { follow: true }),
+                    ..
+                }))
+            ));
+        }
+    }
+
+    #[test]
+    fn test_web_log_rejects_start_flags() {
+        assert!(Cli::try_parse_from(["totui", "web", "--log", "--detach"]).is_err());
+    }
 }

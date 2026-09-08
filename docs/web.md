@@ -1,5 +1,63 @@
 # Local web workspace
 
+The installed CLI works from any directory as either `to-tui` or `totui`:
+
+```sh
+to-tui web --detach --open
+to-tui web --detach --restart
+to-tui web start --port 48379
+to-tui web restart --port 48379
+to-tui web status
+to-tui web --log
+totui web logs --follow | lux
+to-tui web stop
+```
+
+`web start` and `web restart` run in the background. Plain `web` stays in the
+foreground; `web --restart` replaces the managed instance and stays in the
+foreground unless `--detach` is also supplied. `--open`, `--verbose`, and `--port`
+work before or after start/restart. Restart uses the supplied options (or defaults).
+`--log` and `web logs` print the current log and exit. `web logs --follow` (or
+`-f`) prints existing content, streams new output, and follows server restarts
+until Ctrl+C. It waits if no log exists yet. Only log content goes to stdout,
+so you can pipe it into `lux`; status messages go to stderr. Detached starts replace
+`~/.to-tui/web/server.log` and wait for successful startup. Process state lives
+alongside the log; `TOTUI_DATA_DIR` overrides this data root. Management supports
+macOS/Linux and checks process identity before stopping a recorded process.
+These commands manage their detached instance and recognize the older `serve`
+daemon after checking its process identity and command. The checkout-specific
+development wrapper remains separate. Foreground servers use Ctrl+C.
+
+Install both executable names with `cargo install --path . --locked` from the
+checkout once; subsequent commands need neither the checkout nor Cargo/Python.
+Run `python3 scripts/test_web_cli.py` after building to verify the lifecycle with
+isolated data from outside the checkout.
+
+In the TUI, press **w** or click the **w web-ui** control in the footer to
+open the web server panel. Use **↑/↓** to select **Start**, **Stop**, **Restart**,
+or **Open in browser**, **Enter** to run the selected action, and **Esc** to close
+the panel. The indicator stays
+visible while editing and status refreshes every two seconds, including changes
+made through the CLI. Operations run in the background without blocking the TUI.
+The panel reuses the running server's port for subsequent starts/restarts.
+The shortcut is configurable as `open_web_manager` in the navigation keybindings.
+
+In Ghostty and Kitty, the footer repository link uses the bundled
+`assets/github.png` after the terminal acknowledges the Kitty graphics protocol. It occupies the same two text cells as
+the `🔗` fallback and keeps the same clickable area. The capability check is
+bounded to 250 ms; other or unresponsive terminals retain `🔗`. Windows,
+tmux, and screen currently use the fallback. The image uses Kitty Unicode
+placeholders so it follows footer movement and overlays; resizing retransmits
+it, and exiting deletes only this application's image.
+
+
+The TUI retains automatic startup, now through `web start` when no server is
+running. Stopping it keeps it stopped for the rest of the TUI session; reopening
+the TUI starts it again. Closing the TUI leaves the server running. Existing API
+daemons can be stopped or restarted in the panel; restart enables managed logs.
+Untracked foreground servers are identified as external and must be stopped in
+their own terminal. `python3 scripts/test_tui_web.py` exercises the panel in a PTY.
+
 Run `totui web --open` and use the printed local address (by default
 <http://127.0.0.1:48372>). `totui web --port 3000` chooses another port;
 Ctrl+C stops the foreground server. `totui serve start` serves the same workspace,

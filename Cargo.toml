@@ -16,6 +16,10 @@ name = "totui"
 path = "src/main.rs"
 
 [[bin]]
+name = "to-tui"
+path = "src/bin/to-tui.rs"
+
+[[bin]]
 name = "totui-mcp"
 path = "src/bin/totui-mcp.rs"
 
@@ -54,7 +58,11 @@ tar = "0.4"
 open = "5"
 totui-plugin-interface = { path = "crates/totui-plugin-interface" }
 abi_stable = "0.11"
+base64 = "0.22"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 serial_test = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
