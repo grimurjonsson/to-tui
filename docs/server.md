@@ -280,7 +280,29 @@ data into the state directory, preserving ownership and permissions, before
 starting it. A binary downgrade may require restoring its matching pre-upgrade
 data because startup migrations can change the schema.
 
-Update using the new binary:
+From a checkout on the VPS, update to the latest stable GitHub release with:
+
+```sh
+just upgrade-server-with-curl
+```
+
+The command requires Python 3, curl, sudo, tar, and an installed, enabled, running
+managed service. It checks the Linux architecture and installed version, then
+prompts with the new and installed versions in color. Enter `y` to proceed;
+Enter alone cancels. An equal or newer installed version is left alone.
+The release asset must have finished uploading and provide a SHA-256 digest.
+The command verifies the download and its version before stopping the service,
+backs up the data, installed binary, and unit under a unique `/root/totui-backup.*`
+directory, then invokes the replacement installer. `data.tar.gz` contains the
+entire `/var/lib/totui` tree, including `todos.db`, all per-user databases,
+`users.db` (accounts and token hashes), and any SQLite WAL files present. The
+service is stopped while this archive is created to keep the databases consistent.
+It prints the backup directory and the exact `sudo rm -rf -- /root/totui-backup.…`
+command for deleting that backup manually. Backups are never automatically removed;
+copy them off the VPS or delete them when no longer needed. A failed backup restarts the unchanged service. A failed
+upgrade reports the backup location and leaves rollback to the operator.
+
+Alternatively, update using a new binary you downloaded yourself:
 
 ```sh
 sudo /path/to/new/totui server install --replace --yes
