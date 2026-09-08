@@ -74,7 +74,23 @@ async function refresh(force = false) {
     if (generation !== state.generation || currentScope !== query().toString())
       return;
     if (projectsResult.status === "fulfilled") {
+      const previousProjects = state.projects;
       state.projects = projectsResult.value.projects;
+      for (const old of previousProjects) {
+        const renamed = state.projects.find((project) => project.id === old.id);
+        if (renamed && renamed.name !== old.name)
+          renameProjectDrafts(old.name, renamed.name);
+      }
+      if (!state.projects.some((project) => project.name === state.project)) {
+        const old = previousProjects.find(
+          (project) => project.name === state.project,
+        );
+        const renamed = state.projects.find(
+          (project) => project.id === old?.id,
+        );
+        switchProject(renamed?.name || "default");
+        return;
+      }
       renderProjects();
     }
     if (snapshotResult.status === "rejected") throw snapshotResult.reason;
@@ -153,6 +169,146 @@ function renderProjects() {
   }
   $("project-picker").value = state.project;
 }
+function renameProjectDrafts(oldName, newName) {
+  for (const [draftKey, draft] of [...state.drafts]) {
+    if (draft.project !== oldName) continue;
+    state.drafts.delete(draftKey);
+    draft.project = newName;
+    draft.scope = `${newName}/${draft.date}`;
+    state.drafts.set(`${newName}${draftKey.slice(oldName.length)}`, draft);
+  }
+}
+let projectEdit = null;
+function projectControls() {
+  const project = state.projects.find(
+    (project) => project.id === $("manage-project-picker").value,
+  );
+  const protectedProject = !project || project.name === "default";
+  $("rename-project").disabled = protectedProject;
+  $("delete-project").disabled = protectedProject;
+  $("project-protection").hidden = !protectedProject;
+}
+function showProjectManagement() {
+  projectEdit = null;
+  $("project-management").hidden = false;
+  $("project-form").hidden = true;
+  text($("project-dialog-title"), "Manage projects");
+  projectControls();
+}
+$("manage-projects").onclick = () => {
+  $("manage-project-picker").replaceChildren();
+  for (const project of state.projects) {
+    $("manage-project-picker").add(
+      new Option(
+        project.name,
+        project.id,
+        false,
+        project.name === state.project,
+      ),
+    );
+  }
+  showProjectManagement();
+  $("project-dialog").showModal();
+};
+$("close-projects").onclick = () => $("project-dialog").close();
+$("manage-project-picker").onchange = () => {
+  $("project-form").hidden = true;
+  projectControls();
+};
+function editProject(mode) {
+  const project = state.projects.find(
+    (project) => project.id === $("manage-project-picker").value,
+  );
+  projectEdit = { mode, project: mode === "create" ? null : project };
+  $("project-management").hidden = true;
+  text(
+    $("project-dialog-title"),
+    mode === "create"
+      ? "New project"
+      : mode === "rename"
+        ? `Rename “${project.name}”`
+        : `Delete “${project.name}”?`,
+  );
+  $("project-form").hidden = false;
+  $("project-name-label").hidden = mode === "delete";
+  $("project-name").disabled = mode === "delete";
+  $("project-name").value = mode === "rename" ? project.name : "";
+  message("project-error", "");
+  message(
+    "project-delete-message",
+    mode === "delete"
+      ? `Permanently delete “${project.name}” and all its tasks, history, and saved files? This cannot be undone.`
+      : "",
+  );
+  text(
+    $("save-project"),
+    mode === "delete"
+      ? "Delete project"
+      : mode === "rename"
+        ? "Save name"
+        : "Create project",
+  );
+  $("save-project").className = mode === "delete" ? "danger" : "primary";
+  if (mode === "delete") $("cancel-project-edit").focus();
+  else $("project-name").focus();
+}
+$("project-name").oninput = () => message("project-error", "");
+$("new-project").onclick = () => editProject("create");
+$("rename-project").onclick = () => editProject("rename");
+$("delete-project").onclick = () => editProject("delete");
+$("cancel-project-edit").onclick = () => {
+  showProjectManagement();
+  $("new-project").focus();
+};
+$("project-dialog").addEventListener("cancel", (event) => {
+  if (state.saving) event.preventDefault();
+});
+$("project-form").onsubmit = async (event) => {
+  event.preventDefault();
+  if (state.saving) return;
+  const { mode, project } = projectEdit;
+  state.saving = true;
+  const controls = [
+    ...$("project-dialog").querySelectorAll("button,input,select"),
+  ];
+  const disabled = controls.map((control) => control.disabled);
+  controls.forEach((control) => (control.disabled = true));
+  message("project-error", "");
+  try {
+    const result = await api(
+      mode === "create" ? "api/projects" : `api/projects/${project.id}`,
+      {
+        method:
+          mode === "create" ? "POST" : mode === "rename" ? "PATCH" : "DELETE",
+        ...(mode !== "delete"
+          ? { body: JSON.stringify({ name: $("project-name").value }) }
+          : {}),
+      },
+    );
+    if (mode === "rename") renameProjectDrafts(project.name, result.name);
+    if (mode === "delete") {
+      for (const [draftKey, draft] of state.drafts) {
+        if (draft.project === project.name) state.drafts.delete(draftKey);
+      }
+    }
+    $("project-dialog").close();
+    state.saving = false;
+    if (
+      mode === "create" ||
+      (mode === "rename" && state.project === project.name)
+    )
+      switchProject(result.name);
+    else if (mode === "delete" && state.project === project.name)
+      switchProject("default");
+    else await refresh();
+  } catch (error) {
+    message("project-error", error.message);
+  } finally {
+    state.saving = false;
+    controls.forEach((control, index) => (control.disabled = disabled[index]));
+    schedule();
+  }
+};
 function switchProject(project) {
   state.project = project;
   const url = new URL(location.href);

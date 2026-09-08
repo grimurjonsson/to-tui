@@ -1,4 +1,4 @@
-use super::{handlers, web};
+use super::{handlers, projects, web};
 use axum::{
     Router,
     routing::{delete, get, post},
@@ -15,10 +15,18 @@ pub fn create_router() -> anyhow::Result<Router> {
         .route("/", get(web::index))
         .route("/app.js", get(web::script))
         .route("/style.css", get(web::style))
+        .route("/favicon.ico", get(web::favicon))
         .route("/api/events", get(web::events))
         .route("/api/snapshot", get(web::snapshot))
         .route("/api/health", get(health_check))
-        .route("/api/projects", get(handlers::list_projects))
+        .route(
+            "/api/projects",
+            get(handlers::list_projects).post(projects::create),
+        )
+        .route(
+            "/api/projects/{id}",
+            axum::routing::patch(projects::rename).delete(projects::delete),
+        )
         .route(
             "/api/todos",
             get(handlers::list_todos).post(handlers::create_todo),

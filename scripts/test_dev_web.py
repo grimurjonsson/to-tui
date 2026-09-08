@@ -33,17 +33,19 @@ def main():
                 raise AssertionError(result.stdout + result.stderr)
             return result
 
-        try:
-            run("dev-web", "--detach", "--verbose", "--port", str(port))
+        def wait_for_server():
             for _ in range(300):
                 try:
                     with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=0.3) as response:
                         assert response.status == 200
-                    break
+                    return
                 except OSError:
                     time.sleep(0.1)
-            else:
-                raise AssertionError((root / "state/server.log").read_text())
+            raise AssertionError((root / "state/server.log").read_text())
+
+        try:
+            run("dev-web", "--detach", "--restart", "--verbose", "--port", str(port))
+            wait_for_server()
             assert "Running" in run("dev-web-status").stdout
             assert run("dev-web", "--detach", check=False).returncode != 0
             request = urllib.request.Request(
@@ -54,6 +56,19 @@ def main():
             with urllib.request.urlopen(request) as response:
                 assert response.status == 201
             assert "verbose forwarding verified" in (root / "state/server.log").read_text()
+            old_record = json.loads((root / "state/process.json").read_text())
+            result = run("dev-web", "--detach", "--restart", "--port", str(port))
+            assert "Development web server stopped" in result.stdout
+            new_record = json.loads((root / "state/process.json").read_text())
+            assert new_record["pid"] != old_record["pid"]
+            previous = subprocess.run(
+                ["ps", "-p", str(old_record["pid"]), "-o", "stat="],
+                capture_output=True, text=True, check=False,
+            )
+            assert previous.returncode != 0 or previous.stdout.strip().startswith("Z")
+            wait_for_server()
+            assert "Running" in run("dev-web-status").stdout
+
         finally:
             run("dev-web-stop")
         assert "Not running" in run("dev-web-status").stdout
@@ -75,7 +90,11 @@ def main():
         assert json.loads(result.stdout) == [
             "run", "--bin", "totui", "--", "web", "--open", "--verbose", "--port", "48765",
         ]
-    print("Detached lifecycle, HTTP, verbose logging, and exact argument forwarding passed")
+        result = run("dev-web", "--restart", "--open", "--port", "48765")
+        assert json.loads(result.stdout.splitlines()[-1]) == [
+            "run", "--bin", "totui", "--", "web", "--open", "--port", "48765",
+        ]
+    print("Detached lifecycle, restart, HTTP, verbose logging, and exact argument forwarding passed")
 
 
 if __name__ == "__main__":

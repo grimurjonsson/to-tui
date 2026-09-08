@@ -762,3 +762,26 @@ main {
     grid-template-columns: 240px minmax(0, 1fr);
   }
 }
+
+#project-dialog {
+  width: 440px;
+}
+#project-dialog label {
+  display: grid;
+  gap: 8px;
+}
+#project-dialog select,
+#project-dialog input {
+  width: 100%;
+  min-width: 0;
+}
+.project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+#project-error {
+  color: var(--danger);
+  margin-top: 12px;
+}

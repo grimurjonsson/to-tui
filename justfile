@@ -12,9 +12,10 @@ dev:
 #   --open         Open the selected project in your browser.
 #   --verbose      Log mutation payloads (including task text) and operation errors.
 #   --detach       Run in the background; logs: target/dev-web/server.log.
+#   --restart      Stop this checkout's detached instance before starting.
 #   --port PORT    Choose the HTTP port (default: 48372).
 #   --help         Show all development web options and examples.
-# Web dev: --open (browser), --verbose (payload logs), --detach (background), --port PORT (default 48372), --help (details).
+# Web dev: --open (browser), --verbose (payload logs), --detach (background), --restart (replace existing), --port PORT (default 48372), --help (details).
 [positional-arguments]
 dev-web *args:
     @python3 scripts/dev-web.py start "$@"

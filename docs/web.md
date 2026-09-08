@@ -280,6 +280,7 @@ Omitting `placement` leaves hierarchy and ordering unchanged.
 ```sh
 just dev-web --open --verbose
 just dev-web --detach --open --verbose --port 48379
+just dev-web --detach --restart
 just dev-web-status
 just dev-web-stop
 ```
@@ -291,7 +292,10 @@ startup. Use status to distinguish starting/building from running, and inspect
 `target/dev-web/server.log` for startup failures or verbose payloads. Stopping
 terminates the detached process group, including Cargo during compilation.
 Status and stop manage only the detached instance recorded by this checkout;
-a foreground instance is stopped with Ctrl+C. Stop before starting with new options.
+a foreground instance is stopped with Ctrl+C.
+Use `--restart` to stop the recorded instance first, wait for it to exit, and start
+with the supplied options. If none is running, it starts normally. This also works
+without `--detach` to restart in the foreground.
 Each detached start replaces the previous log.
 
 The wrapper uses Python 3 and POSIX process groups (macOS/Linux). Its state is
@@ -342,3 +346,18 @@ Single-line rows are 46px high with 44px controls. On desktop, the task list fil
 the space beside the project sidebar until a task is opened. Closing the editor
 reclaims that space while preserving its draft. Phones retain the full-screen
 editor when a task is opened.
+
+
+## Managing projects
+
+Choose **Manage projects** in the top bar to create a project, rename it, or delete
+it. Project selection is available in the desktop sidebar and the mobile picker.
+Renaming preserves tasks, history, and folder bindings; open browser tabs follow
+the new name. Deleting requires confirmation and removes the project's tasks,
+history, metadata, and saved files. Tabs viewing a deleted project return to
+`default`. The default project cannot be renamed or deleted.
+
+The API accepts `POST /api/projects` and `PATCH /api/projects/{id}` with
+`{"name":"Work"}`, and `DELETE /api/projects/{id}`. IDs come from
+`GET /api/projects`. Duplicate names return 409; invalid names and attempts to
+rename or delete `default` return 400; missing project IDs return 404.

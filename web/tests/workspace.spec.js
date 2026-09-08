@@ -1020,3 +1020,170 @@ test("details panel takes space only while editing and keeps closed drafts", asy
     ),
   ).toBe(true);
 });
+
+test("project CRUD preserves tasks on rename and removes them on delete", async ({
+  page,
+  context,
+}) => {
+  await page.goto(base);
+  await expect(page.locator("#add")).toBeEnabled();
+  await page.locator("#manage-projects").click();
+  await expect(page.locator("#rename-project")).toBeDisabled();
+  await expect(page.locator("#delete-project")).toBeDisabled();
+  await page.locator("#new-project").click();
+  await expect(
+    page.getByRole("dialog", { name: "New project", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("#manage-project-picker")).toBeHidden();
+  await expect(page.locator("#rename-project")).toBeHidden();
+  await expect(page.locator("#project-name")).toBeFocused();
+  await page.screenshot({ path: "test-results/new-project-desktop.png" });
+  await page.locator("#cancel-project-edit").click();
+  await expect(page.locator("#manage-project-picker")).toBeVisible();
+  await page.locator("#new-project").click();
+  await page.locator("#project-name").fill("Work");
+  await page.locator("#save-project").click();
+  await expect(page.locator("#project-label")).toHaveText("WORK");
+  await createInBrowser(page, "Keep through rename");
+  const tab = await context.newPage();
+  await tab.goto(`${base}/?project=Work`);
+  await expect(tab.locator(".task-title")).toHaveText("Keep through rename");
+  await page.locator("#manage-projects").click();
+  await page.locator("#rename-project").click();
+  await page.locator("#project-name").fill("default");
+  await page.locator("#save-project").click();
+  await expect(page.locator("#project-error")).toContainText("already exists");
+  await expect(page.locator("#project-name")).toHaveValue("default");
+  await page.locator("#project-name").fill("Work & plans");
+  await page.screenshot({ path: "test-results/project-manager-desktop.png" });
+  await page.locator("#save-project").click();
+  await expect(page.locator("#project-label")).toHaveText("WORK & PLANS");
+  await expect(page.locator(".task-title")).toHaveText("Keep through rename");
+  await expect(tab.locator("#project-label")).toHaveText("WORK & PLANS");
+  await expect(tab.locator(".task-title")).toHaveText("Keep through rename");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator("#manage-projects").click();
+  await page.locator("#delete-project").click();
+  await expect(page.locator("#project-delete-message")).toContainText(
+    "all its tasks, history",
+  );
+  await page.screenshot({ path: "test-results/project-manager-mobile.png" });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.locator("#cancel-project-edit").click();
+  await expect(page.locator("#project-form")).toBeHidden();
+  await page.locator("#delete-project").click();
+  await page.locator("#save-project").click();
+  await expect(page.locator("#project-label")).toHaveText("DEFAULT");
+  await expect(tab.locator("#project-label")).toHaveText("DEFAULT");
+  await page.locator("#manage-projects").click();
+  await page.locator("#new-project").click();
+  await page.locator("#project-name").fill("Work & plans");
+  await page.locator("#save-project").click();
+  await expect(page.locator("#project-label")).toHaveText("WORK & PLANS");
+  await expect(page.locator(".task-title")).toHaveCount(0);
+});
+
+test("project API validates names and protects default", async () => {
+  const request = (path, method, name) =>
+    fetch(`${base}/api/projects${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(name === undefined ? {} : { body: JSON.stringify({ name }) }),
+    });
+  for (const name of [
+    "   ",
+    "../outside",
+    "a/b",
+    "a\\b",
+    ".",
+    "..",
+    "a\nname",
+  ]) {
+    expect((await request("", "POST", name)).status).toBe(400);
+  }
+  const projects = await (await fetch(`${base}/api/projects`)).json();
+  const id = projects.projects.find((project) => project.name === "default").id;
+  expect((await request(`/${id}`, "PATCH", "Other")).status).toBe(400);
+  expect((await request(`/${id}`, "DELETE")).status).toBe(400);
+  expect((await request("", "POST", "default")).status).toBe(409);
+  expect(
+    (await request("/00000000-0000-0000-0000-000000000000", "DELETE")).status,
+  ).toBe(404);
+});
+
+test("project lifecycle moves history and bindings and cleans stored data", async () => {
+  const request = (path, method, body) =>
+    fetch(`${base}${path}`, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+  const created = await request("/api/projects", "POST", { name: "History" });
+  expect(created.status).toBe(201);
+  const project = await created.json();
+  expect(
+    (
+      await request("/api/todos?project=History", "POST", {
+        content: "Stored task",
+      })
+    ).status,
+  ).toBe(201);
+  writeFileSync(
+    resolve(directory, "config.toml"),
+    'last_used_project = "History"\n[folder_projects]\n"/test/repo" = "History"\n',
+  );
+  const db = (code) =>
+    JSON.parse(
+      execFileSync(
+        "python3",
+        [
+          "-c",
+          `
+import sqlite3, json, os
+from pathlib import Path
+conn = sqlite3.connect(os.path.join(os.environ['TOTUI_DATA_DIR'], 'todos.db'))
+${code}
+`,
+        ],
+        { env, encoding: "utf8" },
+      ),
+    );
+  db(`
+conn.execute("INSERT INTO archived_todos (id, original_date, archived_at, content, state, indent_level, position, created_at, updated_at, project) SELECT id, date, created_at, content, state, indent_level, position, created_at, updated_at, project FROM todos WHERE project='History'")
+conn.execute("INSERT INTO todo_metadata (id, todo_id, plugin_name, created_at, updated_at) SELECT 'metadata', id, 'test', created_at, updated_at FROM todos WHERE project='History'")
+conn.execute("INSERT INTO project_metadata (id, project_name, plugin_name, created_at, updated_at) VALUES ('project-meta', 'History', 'test', '', '')")
+conn.commit()
+print('null')
+`);
+  expect(
+    (await request(`/api/projects/${project.id}`, "PATCH", { name: "Renamed" }))
+      .status,
+  ).toBe(200);
+  expect(
+    db(`
+print(json.dumps([
+conn.execute("SELECT project FROM archived_todos").fetchone()[0],
+conn.execute("SELECT project_name FROM project_metadata").fetchone()[0],
+conn.execute("SELECT COUNT(*) FROM list_revisions WHERE project='History'").fetchone()[0],
+Path(os.environ['TOTUI_DATA_DIR'], 'projects', 'Renamed').is_dir(),
+'last_used_project = "Renamed"' in Path(os.environ['TOTUI_DATA_DIR'], 'config.toml').read_text(),
+]))
+`),
+  ).toEqual(["Renamed", "Renamed", 0, true, true]);
+  expect((await request(`/api/projects/${project.id}`, "DELETE")).status).toBe(
+    204,
+  );
+  expect(
+    db(`
+print(json.dumps([
+*[conn.execute('SELECT COUNT(*) FROM ' + table).fetchone()[0] for table in ['todos', 'archived_todos', 'todo_metadata', 'project_metadata']],
+Path(os.environ['TOTUI_DATA_DIR'], 'projects', 'Renamed').exists(),
+'Renamed' in Path(os.environ['TOTUI_DATA_DIR'], 'config.toml').read_text(),
+]))
+`),
+  ).toEqual([0, 0, 0, 0, false, false]);
+});

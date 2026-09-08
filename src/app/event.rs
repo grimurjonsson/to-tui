@@ -1393,6 +1393,12 @@ fn handle_edit_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         state.edit_cursor_pos += c.len_utf8();
     }
 
+    if state.unsaved_changes {
+        save_todo_list_for_project(&state.todo_list, &state.current_project.name)?;
+        state.unsaved_changes = false;
+        state.last_save_time = Some(std::time::Instant::now());
+    }
+
     Ok(())
 }
 
@@ -3207,6 +3213,82 @@ mod rollover_tests {
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn test_edit_commits_are_saved_without_navigation() {
+        const CHILD_ENV: &str = "TOTUI_TEST_EDIT_COMMITS";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let directory = tempfile::tempdir().unwrap();
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "app::event::rollover_tests::test_edit_commits_are_saved_without_navigation",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .env("TOTUI_DATA_DIR", directory.path())
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let mut state = make_state_in_rollover_mode();
+        state.pending_rollover = None;
+        state.mode = Mode::Navigate;
+        state.todo_list = crate::storage::file::load_todo_list_for_project(
+            &state.current_project.name,
+            state.todo_list.date,
+        )
+        .unwrap();
+
+        handle_key_event(key(KeyCode::Char('o')), &mut state).unwrap();
+        for (content, confirm) in [
+            ("First task", KeyCode::Enter),
+            ("Second task", KeyCode::Esc),
+        ] {
+            for c in content.chars() {
+                handle_key_event(key(KeyCode::Char(c)), &mut state).unwrap();
+            }
+            handle_key_event(key(confirm), &mut state).unwrap();
+            let persisted = crate::storage::database::load_list_snapshot(
+                state.todo_list.date,
+                &state.current_project.name,
+                state.todo_list.file_path.clone(),
+            )
+            .unwrap();
+            assert_eq!(
+                persisted.items.last().map(|item| item.content.as_str()),
+                Some(content)
+            );
+            assert!(!state.unsaved_changes);
+            assert!(state.last_save_time.is_some());
+            assert_eq!(
+                state.mode,
+                if confirm == KeyCode::Enter {
+                    Mode::Edit
+                } else {
+                    Mode::Navigate
+                }
+            );
+        }
+
+        handle_key_event(key(KeyCode::Char('i')), &mut state).unwrap();
+        handle_key_event(key(KeyCode::Char('!')), &mut state).unwrap();
+        handle_key_event(key(KeyCode::Esc), &mut state).unwrap();
+        let persisted = crate::storage::database::load_list_snapshot(
+            state.todo_list.date,
+            &state.current_project.name,
+            state.todo_list.file_path.clone(),
+        )
+        .unwrap();
+        assert_eq!(persisted.items.last().unwrap().content, "Second task!");
     }
 
     #[test]

@@ -756,36 +756,48 @@ pub fn create_project(project: &Project) -> Result<()> {
 /// Rename a project in the database
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<()> {
     init_database()?;
-    let conn = get_connection()?;
-
-    // Update projects table
-    conn.execute(
-        "UPDATE projects SET name = ?1 WHERE name = ?2",
-        params![new_name, old_name],
-    )?;
-
-    // Update todos table
+    let mut connection = get_connection()?;
+    let conn = connection.transaction()?;
+    anyhow::ensure!(
+        conn.execute(
+            "UPDATE projects SET name = ?1 WHERE name = ?2",
+            params![new_name, old_name]
+        )? == 1,
+        "Project '{old_name}' not found"
+    );
     conn.execute(
         "UPDATE todos SET project = ?1 WHERE project = ?2",
         params![new_name, old_name],
     )?;
-
-    // Update archived_todos table
     conn.execute(
         "UPDATE archived_todos SET project = ?1 WHERE project = ?2",
         params![new_name, old_name],
     )?;
-
+    conn.execute(
+        "UPDATE project_metadata SET project_name = ?1 WHERE project_name = ?2",
+        params![new_name, old_name],
+    )?;
+    conn.execute("INSERT INTO list_revisions SELECT ?1, date, revision FROM list_revisions WHERE project = ?2
+        ON CONFLICT(project,date) DO UPDATE SET revision = MAX(revision, excluded.revision) + 1", params![new_name, old_name])?;
+    conn.execute("DELETE FROM list_revisions WHERE project = ?1", [old_name])?;
+    conn.commit()?;
     Ok(())
 }
 
-/// Delete a project from the database
 pub fn delete_project(name: &str) -> Result<()> {
     init_database()?;
-    let conn = get_connection()?;
-
+    let mut connection = get_connection()?;
+    let conn = connection.transaction()?;
+    conn.execute("DELETE FROM todo_metadata WHERE todo_id IN (SELECT id FROM todos WHERE project = ?1 UNION SELECT id FROM archived_todos WHERE project = ?1)", [name])?;
+    conn.execute("DELETE FROM todos WHERE project = ?1", [name])?;
+    conn.execute("DELETE FROM archived_todos WHERE project = ?1", [name])?;
+    conn.execute(
+        "DELETE FROM project_metadata WHERE project_name = ?1",
+        [name],
+    )?;
+    conn.execute("DELETE FROM list_revisions WHERE project = ?1", [name])?;
     conn.execute("DELETE FROM projects WHERE name = ?1", [name])?;
-
+    conn.commit()?;
     Ok(())
 }
 

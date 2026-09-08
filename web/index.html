@@ -6,6 +6,7 @@
     <meta name="color-scheme" content="light dark" />
     <meta name="totui-project" content="__TOTUI_PROJECT__" />
     <title>totui · Tasks</title>
+    <link rel="icon" href="/favicon.ico" type="image/x-icon" />
     <link rel="stylesheet" href="style.css" />
     <script src="app.js" defer></script>
   </head>
@@ -14,6 +15,7 @@
       <a class="brand" href="./"><span class="brand-mark">[✓]</span> totui</a
       ><span class="local-label">YOUR LOCAL WORKSPACE</span>
       <div class="top-actions">
+        <button id="manage-projects">Manage projects</button>
         <span id="connection" role="status">Connecting…</span
         ><button id="refresh" aria-label="Refresh tasks">↻</button
         ><button id="theme" aria-label="Switch color theme">◐</button>
@@ -165,6 +167,38 @@
     <div id="state-menu" role="menu" aria-label="Task state" hidden></div>
     <div id="drag-result" role="status" hidden></div>
     <div id="drag-feedback" role="status" aria-live="polite" hidden></div>
+    <dialog id="project-dialog" aria-labelledby="project-dialog-title">
+      <div class="editor-heading">
+        <h2 id="project-dialog-title">Manage projects</h2>
+        <button id="close-projects" aria-label="Close project manager">
+          ✕
+        </button>
+      </div>
+      <div id="project-management">
+        <label>Project<select id="manage-project-picker"></select></label>
+        <div class="project-actions">
+          <button id="new-project">+ New project</button>
+          <button id="rename-project">Rename</button>
+          <button id="delete-project" class="danger">Delete</button>
+        </div>
+        <p id="project-protection" class="hint">
+          The default project cannot be renamed or deleted.
+        </p>
+      </div>
+      <form id="project-form" hidden>
+        <label id="project-name-label"
+          >Project name<input id="project-name" autocomplete="off" required
+        /></label>
+        <p id="project-delete-message" hidden></p>
+        <div id="project-error" role="alert" hidden></div>
+        <div class="dialog-actions">
+          <button id="cancel-project-edit" type="button">Cancel</button>
+          <button id="save-project" class="primary" type="submit">
+            Create project
+          </button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="delete-dialog">
       <h2>Delete this branch?</h2>
       <p id="delete-message"></p>

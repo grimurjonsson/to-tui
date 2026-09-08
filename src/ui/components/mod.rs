@@ -17,8 +17,8 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, Borders, Clear, Gauge, List, ListItem, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Wrap,
+        Block, Borders, Clear, Gauge, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
     },
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -2256,25 +2256,41 @@ fn render_project_selecting(
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" Projects (Enter to switch, Esc to cancel) ")
-                .style(Style::default().bg(state.theme.background)),
-        )
-        .style(Style::default().fg(state.theme.foreground));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Projects (Enter to switch, Esc to cancel) ")
+        .style(Style::default().bg(state.theme.background));
+    let inner = block.inner(area);
+    let [list_area, footer_area] =
+        Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(inner);
+    let list = List::new(items).style(Style::default().fg(state.theme.foreground));
+    let mut list_state = ListState::default().with_selected(Some(selected_index));
 
     f.render_widget(Clear, area);
-    f.render_widget(list, area);
+    f.render_widget(block, area);
+    f.render_stateful_widget(list, list_area, &mut list_state);
 
-    // Render footer with options
-    let footer_area = Rect {
-        x: area.x + 1,
-        y: area.y + area.height - 2,
-        width: area.width - 2,
-        height: 1,
-    };
+    let visible_rows = list_area.height as usize;
+    if visible_rows > 0 && projects.len() > visible_rows {
+        let offset = list_state.offset();
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some(if offset > 0 { "▲" } else { "│" }))
+            .end_symbol(Some(if offset + visible_rows < projects.len() {
+                "▼"
+            } else {
+                "│"
+            }))
+            .style(Style::default().fg(state.theme.foreground));
+        let mut scrollbar_state =
+            ScrollbarState::new(projects.len() - visible_rows + 1).position(offset);
+        let scrollbar_area = Rect::new(
+            area.right().saturating_sub(1),
+            list_area.y,
+            1,
+            list_area.height,
+        );
+        f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    }
 
     let footer = Paragraph::new(Line::from(vec![
         Span::styled(
@@ -2723,5 +2739,51 @@ mod help_tests {
 
         assert!(lines.len() > 1);
         assert!(lines.iter().all(|line| line.spans[0].content == "    "));
+    }
+}
+
+#[cfg(test)]
+mod project_tests {
+    use super::*;
+    use crate::keybindings::KeybindingCache;
+    use crate::plugin::{PluginActionRegistry, PluginLoader};
+    use crate::project::Project;
+    use crate::todo::TodoList;
+    use crate::ui::theme::Theme;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn test_project_selection_stays_visible_in_small_dialog() {
+        let projects: Vec<_> = (0..30)
+            .map(|i| Project::new(format!("Project {i:02}")))
+            .collect();
+        let state = AppState::new(
+            TodoList::new(Local::now().date_naive(), std::path::PathBuf::new()),
+            Theme::default(),
+            KeybindingCache::default(),
+            1000,
+            None,
+            None,
+            Project::default_project(),
+            PluginLoader::new(),
+            vec![],
+            PluginActionRegistry::new(),
+            crate::config::AutoRolloverPref::Ask,
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        for selected in (0..30).chain((0..30).rev()) {
+            terminal
+                .draw(|frame| render_project_selecting(frame, &state, &projects, selected))
+                .unwrap();
+            let buffer = terminal.backend().buffer();
+            let visible: String = buffer.content.iter().map(|cell| cell.symbol()).collect();
+            assert!(
+                visible.contains(&projects[selected].name),
+                "Selection {selected} disappeared"
+            );
+            assert!(visible.contains("[n]ew"));
+            assert_eq!(visible.contains("▲"), selected >= 5);
+            assert_eq!(visible.contains("▼"), selected < projects.len() - 1);
+        }
     }
 }

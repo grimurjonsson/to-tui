@@ -48,6 +48,24 @@ def describe(record):
             print(line)
 
 
+def stop(record):
+    if not record:
+        print("Not running")
+        return True
+    try:
+        os.killpg(record["pid"], signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    for _ in range(100):
+        if identity(record["pid"]) != record["identity"]:
+            RECORD.unlink(missing_ok=True)
+            print("Development web server stopped")
+            return True
+        time.sleep(0.05)
+    print("Process has not stopped yet; check the log and retry stop", file=sys.stderr)
+    return False
+
+
 def main():
     action, *args = sys.argv[1:]
     if action == "start" and any(arg in ("--help", "-h") for arg in args):
@@ -57,6 +75,7 @@ Options:
   --open         Open the selected project in your browser.
   --verbose      Log mutation payloads (including task text) and operation errors.
   --detach       Run in the background without blocking the terminal.
+  --restart      Stop this checkout's detached instance before starting.
   --port PORT    Choose the HTTP port (default: 48372).
   --help, -h     Show this help.
 
@@ -65,12 +84,13 @@ Detached logs: target/dev-web/server.log (overridden by TOTUI_DEV_WEB_DIR).
   just dev-web-status   Show detached process status and log location.
   just dev-web-stop     Stop this checkout's detached instance.
 
-Example: just dev-web --detach --open --verbose --port 48379""")
+Example: just dev-web --detach --restart --open --verbose --port 48379""")
         return 0
     detach = "--detach" in args
-    args = [arg for arg in args if arg != "--detach"]
+    restart = "--restart" in args
+    args = [arg for arg in args if arg not in ("--detach", "--restart")]
     command = ["cargo", "run", "--bin", "totui", "--", "web", *args]
-    if action == "start" and not detach:
+    if action == "start" and not detach and not restart:
         os.execvp(command[0], command)
     STATE.mkdir(parents=True, exist_ok=True)
     with (STATE / "lock").open("w") as lock:
@@ -83,23 +103,19 @@ Example: just dev-web --detach --open --verbose --port 48379""")
                 print(f"Not running. Last log: {LOG}")
             return 0
         if action == "stop":
-            if not record:
-                print("Not running")
-                return 0
-            os.killpg(record["pid"], signal.SIGTERM)
-            for _ in range(100):
-                if identity(record["pid"]) != record["identity"]:
-                    RECORD.unlink(missing_ok=True)
-                    print("Development web server stopped")
-                    return 0
-                time.sleep(0.05)
-            print("Process has not stopped yet; check the log and retry stop", file=sys.stderr)
-            return 1
+            return 0 if stop(record) else 1
         if action != "start":
             raise ValueError(f"Unknown action: {action}")
+        if restart:
+            if not stop(record):
+                return 1
+            record = None
+        if not detach:
+            sys.stdout.flush()
+            os.execvp(command[0], command)
         if record:
             describe(record)
-            print("Already started; use just dev-web-stop before changing options")
+            print("Already started; use --restart or just dev-web-stop before changing options")
             return 1
         with LOG.open("w") as log:
             process = subprocess.Popen(

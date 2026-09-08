@@ -148,6 +148,13 @@ pub async fn style() -> impl IntoResponse {
     )
 }
 
+pub async fn favicon() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "image/x-icon")],
+        include_bytes!("../../web/favicon.ico").as_slice(),
+    )
+}
+
 pub async fn protect_local_writes(
     request: axum::extract::Request,
     next: axum::middleware::Next,
