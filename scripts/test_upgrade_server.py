@@ -17,6 +17,49 @@ spec.loader.exec_module(upgrade)
 
 
 class UpgradeTests(unittest.TestCase):
+    def setUp(self):
+        uid = patch.object(upgrade.os, "geteuid", return_value=1000)
+        uid.start()
+        self.addCleanup(uid.stop)
+
+    def test_passwordless_sudo_is_checked_without_prompting(self):
+        with patch.object(upgrade.shutil, "which", return_value="/usr/bin/sudo"), \
+             patch.object(upgrade, "run") as run:
+            upgrade.check_privileges()
+            run.assert_called_once_with("sudo", "-n", "true")
+
+    def test_missing_sudo_has_actionable_error(self):
+        with patch.object(upgrade.shutil, "which", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "sudo is required"):
+                upgrade.check_privileges()
+
+    def test_sudo_failure_stops_before_network_or_service_changes(self):
+        with patch.object(upgrade.platform, "system", return_value="Linux"), \
+             patch.object(upgrade.shutil, "which", return_value="/usr/bin/sudo"), \
+             patch.object(upgrade, "run", side_effect=subprocess.CalledProcessError(1, "sudo")) as run, \
+             patch.object(upgrade, "latest_release") as latest:
+            with self.assertRaisesRegex(RuntimeError, "without a password"):
+                upgrade.main()
+            run.assert_called_once_with("sudo", "-n", "true")
+            latest.assert_not_called()
+
+    def test_root_runs_privileged_commands_without_sudo(self):
+        with patch.object(upgrade.os, "geteuid", return_value=0), \
+             patch.object(upgrade.shutil, "which") as which, \
+             patch.object(upgrade, "run", return_value="backup") as run:
+            upgrade.check_privileges()
+            which.assert_not_called()
+            run.assert_not_called()
+            self.assertEqual(upgrade.run_privileged("mktemp", "-d", capture=True), "backup")
+            run.assert_called_once_with("mktemp", "-d", capture=True)
+
+    def test_expired_sudo_stops_upgrade_before_changes(self):
+        with patch.object(upgrade, "check_privileges", side_effect=RuntimeError("expired")), \
+             patch.object(upgrade, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "expired"):
+                upgrade.upgrade(Path("/tmp/new-totui"))
+            run.assert_not_called()
+
     def test_release_order_including_development_versions(self):
         versions = ["0.6.9", "0.6.10", "0.7.0-dev", "0.7.0-rc.2", "0.7.0-rc.10", "0.7.0", "0.7.1", "0.10.0"]
         self.assertEqual(sorted(versions, key=upgrade.version_key), versions)
@@ -56,16 +99,17 @@ class UpgradeTests(unittest.TestCase):
 
         def run(*args, **kwargs):
             calls.append(tuple(map(str, args)))
-            if args[:2] == ("sudo", "mktemp"):
+            if args[:3] == ("sudo", "-n", "mktemp"):
                 return "/root/totui-backup.test\n"
-            if args[:2] == ("sudo", "tar"):
+            if args[:3] == ("sudo", "-n", "tar"):
                 raise subprocess.CalledProcessError(1, args)
 
-        with patch.object(upgrade, "run", side_effect=run), \
+        with patch.object(upgrade, "check_privileges"), \
+             patch.object(upgrade, "run", side_effect=run), \
              contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(subprocess.CalledProcessError):
                 upgrade.upgrade(Path("/tmp/new-totui"))
-        self.assertEqual(calls[-1], ("sudo", "systemctl", "start", "totui.service"))
+        self.assertEqual(calls[-1], ("sudo", "-n", "systemctl", "start", "totui.service"))
         self.assertFalse(any("install" in call for call in calls))
 
     def test_install_happens_only_after_backup(self):
@@ -73,20 +117,21 @@ class UpgradeTests(unittest.TestCase):
 
         def run(*args, **kwargs):
             calls.append(tuple(map(str, args)))
-            if args[:2] == ("sudo", "mktemp"):
+            if args[:3] == ("sudo", "-n", "mktemp"):
                 return "/root/totui-backup.test\n"
 
-        with patch.object(upgrade, "run", side_effect=run), \
+        with patch.object(upgrade, "check_privileges"), \
+             patch.object(upgrade, "run", side_effect=run), \
              patch.object(upgrade, "binary_version", return_value="0.7.0"), \
              contextlib.redirect_stdout(io.StringIO()) as output:
             upgrade.upgrade(Path("/tmp/new-totui"))
-        stop = calls.index(("sudo", "systemctl", "stop", "totui.service"))
-        backup = next(i for i, call in enumerate(calls) if call[:2] == ("sudo", "tar"))
-        install = calls.index(("sudo", "/tmp/new-totui", "server", "install", "--replace", "--yes"))
+        stop = calls.index(("sudo", "-n", "systemctl", "stop", "totui.service"))
+        backup = next(i for i, call in enumerate(calls) if call[:3] == ("sudo", "-n", "tar"))
+        install = calls.index(("sudo", "-n", "/tmp/new-totui", "server", "install", "--replace", "--yes"))
         self.assertLess(stop, backup)
         self.assertLess(backup, install)
         self.assertEqual(calls[backup], (
-            "sudo", "tar", "--dereference", "-C", "/var/lib", "-czf",
+            "sudo", "-n", "tar", "--dereference", "-C", "/var/lib", "-czf",
             "/root/totui-backup.test/data.tar.gz", "totui",
         ))
         self.assertIn("Database and state backup saved: /root/totui-backup.test/data.tar.gz", output.getvalue())
@@ -117,6 +162,7 @@ class UpgradeTests(unittest.TestCase):
              patch.object(upgrade.platform, "machine", return_value="x86_64"), \
              patch.object(upgrade.shutil, "which", return_value="/bin/tool"), \
              patch.object(upgrade, "BINARY", Path("/does-not-exist/totui")), \
+             patch.object(upgrade, "check_privileges"), \
              patch.object(upgrade, "latest_release") as latest:
             with self.assertRaisesRegex(RuntimeError, "not installed"):
                 upgrade.main()
