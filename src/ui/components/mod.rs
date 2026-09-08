@@ -2,6 +2,7 @@ pub mod description_modal;
 pub mod plugin_modal;
 pub mod status_bar;
 pub mod todo_list;
+pub mod web_panel;
 
 use crate::app::AppState;
 use crate::app::mode::Mode;
@@ -41,6 +42,10 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 
     // Render status bar
     status_bar::render(f, state, chunks[1]);
+
+    if state.mode == Mode::Web {
+        web_panel::render(f, state);
+    }
 
     if state.show_help {
         render_help_overlay(f, state);
@@ -441,6 +446,16 @@ fn render_help_overlay(f: &mut Frame, state: &mut AppState) {
         ),
     ]));
     lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![
+        help_binding(
+            state,
+            HelpBindingScope::Navigate,
+            Action::OpenWebManager,
+            key_style,
+        ),
+        Span::styled("Web server: start, stop, restart, and status", desc_style),
+    ]));
 
     // Day Navigation section
     lines.push(Line::from(Span::styled(

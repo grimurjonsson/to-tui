@@ -176,6 +176,8 @@ pub struct AppState {
     /// Receiver for marketplace fetch results
     pub marketplace_fetch_rx: Option<mpsc::Receiver<Result<Vec<PluginEntry>, String>>>,
     pub status_message: Option<(String, Instant)>,
+    pub web: super::web::WebController,
+    pub github_icon: Option<crate::ui::github_icon::GithubIcon>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
     pub plugin_result_source: Option<PluginResultSource>,
     pub spinner_frame: usize,
@@ -306,6 +308,8 @@ impl AppState {
             plugins_modal_state: None,
             marketplace_fetch_rx: None,
             status_message: None,
+            web: super::web::WebController::default(),
+            github_icon: None,
             plugin_result_rx: None,
             plugin_result_source: None,
             spinner_frame: 0,

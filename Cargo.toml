@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "to-tui"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 
 [lib]
@@ -14,6 +14,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "totui"
 path = "src/main.rs"
+
+[[bin]]
+name = "to-tui"
+path = "src/bin/to-tui.rs"
 
 [[bin]]
 name = "totui-mcp"
@@ -54,7 +58,11 @@ tar = "0.4"
 open = "5"
 totui-plugin-interface = { path = "crates/totui-plugin-interface" }
 abi_stable = "0.11"
+base64 = "0.22"
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 serial_test = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

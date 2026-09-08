@@ -67,6 +67,7 @@ pub enum Action {
 
     // Project
     OpenProjectModal,
+    OpenWebManager,
     MoveToProject,
 
     // Clipboard
@@ -131,6 +132,7 @@ impl fmt::Display for Action {
             Action::OpenPluginMenu => "open_plugin_menu",
             Action::OpenRolloverModal => "open_rollover_modal",
             Action::OpenProjectModal => "open_project_modal",
+            Action::OpenWebManager => "open_web_manager",
             Action::MoveToProject => "move_to_project",
             Action::Yank => "yank",
             Action::CopyLogPath => "copy_log_path",
@@ -194,6 +196,7 @@ impl FromStr for Action {
             "open_plugin_menu" => Ok(Action::OpenPluginMenu),
             "open_rollover_modal" => Ok(Action::OpenRolloverModal),
             "open_project_modal" => Ok(Action::OpenProjectModal),
+            "open_web_manager" => Ok(Action::OpenWebManager),
             "move_to_project" => Ok(Action::MoveToProject),
             "yank" => Ok(Action::Yank),
             "copy_log_path" => Ok(Action::CopyLogPath),
@@ -768,6 +771,7 @@ fn default_navigate_bindings() -> HashMap<String, String> {
     m.insert(">".to_string(), "next_day".to_string());
     m.insert("T".to_string(), "go_to_today".to_string());
     m.insert("p".to_string(), "cycle_priority".to_string());
+    m.insert("w".to_string(), "open_web_manager".to_string());
     m.insert("P".to_string(), "open_plugin_menu".to_string());
     m.insert("R".to_string(), "open_rollover_modal".to_string());
     m.insert("<C-p>".to_string(), "open_project_modal".to_string());

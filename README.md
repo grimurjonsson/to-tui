@@ -76,20 +76,23 @@ totui show --date 2024-01-15
 
 ### API Server
 
-The REST API runs automatically when you start the TUI, or you can manage it manually:
+The REST API/web workspace runs automatically when you start the TUI. Press **w**
+or click the **w web-ui** footer control to start, stop, restart, or open it in a browser.
+The indicator updates when the server changes, including through the CLI.
+You can also manage the server manually:
 
 ```bash
 # Start the API server (default port: 48372)
-totui serve start
+totui web start
 
 # Check server status
-totui serve status
+totui web status
 
 # Stop the server
-totui serve stop
+totui web stop
 
 # Use a different port
-totui serve start --port 3000
+totui web start --port 3000
 ```
 
 API endpoints:
