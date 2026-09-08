@@ -4,11 +4,20 @@ use std::fs;
 use std::path::PathBuf;
 
 pub fn get_to_tui_dir() -> Result<PathBuf> {
-    if let Some(path) = std::env::var_os("TOTUI_DATA_DIR") {
-        return Ok(PathBuf::from(path));
+    if let Some(root) = crate::storage::context::data_root() {
+        return Ok(root);
     }
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not find home directory"))?;
-    Ok(home.join(".to-tui"))
+    let root = if let Some(path) = std::env::var_os("TOTUI_DATA_DIR") {
+        PathBuf::from(path)
+    } else {
+        dirs::home_dir()
+            .ok_or_else(|| anyhow!("Could not find home directory"))?
+            .join(".to-tui")
+    };
+    Ok(match crate::remote::active() {
+        Some(client) => client.workspace_path(root),
+        None => root,
+    })
 }
 
 pub fn get_projects_dir() -> Result<PathBuf> {

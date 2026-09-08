@@ -5,7 +5,7 @@ use crate::storage::{database, file};
 use crate::todo::ops;
 use axum::{
     Extension, Json,
-    extract::{Path, Query, State},
+    extract::{Path, Query},
     http::{StatusCode, header},
     response::{
         Html, IntoResponse, Response, Sse,
@@ -54,7 +54,11 @@ pub fn observer() -> anyhow::Result<LiveState> {
     Ok(LiveState(receiver))
 }
 
-pub async fn events(State(state): State<LiveState>) -> Response {
+pub async fn events() -> Response {
+    let state = match crate::storage::context::blocking(observer).await {
+        Ok(Ok(state)) => state,
+        Ok(Err(error)) | Err(error) => return ErrorResponse::internal(error),
+    };
     let events = stream::unfold((state.0, true), |(mut receiver, first)| async move {
         if !first && receiver.changed().await.is_err() {
             return None;
@@ -80,7 +84,7 @@ pub async fn events(State(state): State<LiveState>) -> Response {
 }
 
 pub async fn snapshot(Query(query): Query<DateQuery>) -> Response {
-    let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, ops::OpsError> {
+    let result = crate::storage::context::blocking(move || -> Result<serde_json::Value, ops::OpsError> {
         let project = ops::resolve_project(query.project.as_deref())?;
         let today = Local::now().date_naive();
         let date = query.date.unwrap_or(today);

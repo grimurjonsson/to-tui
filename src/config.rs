@@ -67,6 +67,10 @@ pub enum AutoRolloverPref {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub remotes: BTreeMap<String, crate::remote::RemoteConfig>,
+    #[serde(default)]
+    pub default_remote: Option<String>,
     #[serde(default = "default_theme")]
     pub theme: String,
 
@@ -108,6 +112,8 @@ fn default_timeoutlen() -> u64 {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            remotes: BTreeMap::new(),
+            default_remote: None,
             theme: default_theme(),
             timeoutlen: default_timeoutlen(),
             keybindings: KeybindingsConfig::default(),
@@ -122,6 +128,20 @@ impl Default for Config {
 }
 
 impl Config {
+    pub fn load_for_remote(local: &Self, project_exists: impl Fn(&str) -> bool) -> Result<Self> {
+        let mut remote = Self::load()?;
+        for (folder, project) in &local.folder_projects {
+            if project_exists(project) {
+                remote
+                    .folder_projects
+                    .entry(folder.clone())
+                    .or_insert_with(|| project.clone());
+            }
+        }
+        remote.save()?;
+        Ok(remote)
+    }
+
     pub fn load() -> Result<Self> {
         let config_path = get_config_path()?;
 
@@ -169,6 +189,33 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_first_remote_launch_keeps_existing_folder_project() {
+        let local_root = tempfile::tempdir().unwrap();
+        let remote_root = tempfile::tempdir().unwrap();
+        let folder = crate::project::folder_key_for(local_root.path()).unwrap();
+        let local = crate::storage::context::with_root(local_root.path().to_path_buf(), || {
+            let mut config = Config::default();
+            config
+                .folder_projects
+                .insert(folder.clone(), "to-tui".into());
+            config.save().unwrap();
+            Config::load().unwrap()
+        });
+        crate::storage::context::with_root(remote_root.path().to_path_buf(), || {
+            let remote =
+                Config::load_for_remote(&local, |name| matches!(name, "default" | "to-tui"))
+                    .unwrap();
+            let selected = crate::project::resolve_project_name(
+                Some(&folder),
+                &remote.folder_projects,
+                remote.last_used_project.as_deref(),
+                |name| matches!(name, "default" | "to-tui"),
+            );
+            assert_eq!(selected, "to-tui");
+        });
+    }
 
     #[test]
     fn test_default_config() {

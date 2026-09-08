@@ -1,6 +1,8 @@
 use to_tui::api;
 mod app;
 mod cli;
+mod remote_cli;
+mod server;
 mod ui;
 mod web_process;
 
@@ -24,6 +26,7 @@ use plugin::{PluginActionRegistry, PluginLoader, PluginManager};
 use project::{DEFAULT_PROJECT_NAME, Project, ProjectRegistry};
 use std::env;
 use std::fs;
+use std::future::IntoFuture;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::panic;
@@ -40,7 +43,11 @@ use utils::paths::{get_logs_dir, get_plugin_config_dir, get_plugin_config_path};
 /// Creates an empty list if no existing todos are found.
 fn load_today_list_for_project(project_name: &str) -> Result<todo::TodoList> {
     let today = Local::now().date_naive();
-    if file_exists_for_project(project_name, today)? {
+    if to_tui::remote::active()
+        .and_then(|client| client.cached())
+        .is_some()
+        || file_exists_for_project(project_name, today)?
+    {
         load_todo_list_for_project(project_name, today)
     } else {
         Ok(todo::TodoList::new(
@@ -188,15 +195,69 @@ fn main() -> Result<()> {
     install_crash_handler();
 
     let cli = Cli::parse();
+    if let Some(Commands::Remote { command }) = &cli.command {
+        return remote_cli::run(command.clone());
+    }
+    if cli.remote.is_some()
+        && !matches!(
+            cli.command,
+            None | Some(Commands::Add { .. } | Commands::Show { .. } | Commands::Todo { .. })
+        )
+    {
+        anyhow::bail!("--remote is supported for the TUI, add, show and todo commands");
+    }
+    if let Some(Commands::Server { command }) = &cli.command {
+        return server::run(command.clone());
+    }
     if let Some(Commands::Web(options)) = &cli.command {
         return web_process::run(options.clone());
     }
 
-    // Ensure installation is properly set up (handles v1 -> v2 migration)
-    ensure_installation_ready()?;
     let mut config = Config::load()?;
+    let selected_remote = if cli.local {
+        None
+    } else {
+        cli.remote.or_else(|| config.default_remote.clone())
+    };
+    if let Some(name) = selected_remote.as_deref() {
+        if !matches!(
+            cli.command,
+            None | Some(Commands::Add { .. } | Commands::Show { .. } | Commands::Todo { .. })
+        ) {
+            anyhow::bail!("This command requires local mode. Use --local explicitly");
+        }
+        let profile = config
+            .remotes
+            .get(name)
+            .ok_or_else(|| anyhow!("Unknown remote '{name}'"))?
+            .clone();
+        let use_cache = cli.command.is_none();
+        let mut client = to_tui::remote::Client::configured(name, profile.clone())?;
+        let root = utils::paths::get_to_tui_dir()?;
+        let warm_cache = profile.user_id.is_some()
+            && to_tui::remote::cache::Cache::exists(&client.workspace_path(root.clone()));
+        if !use_cache || !warm_cache {
+            let user = client.user()?;
+            let mut verified = profile;
+            verified.user_id = Some(user.id);
+            client = to_tui::remote::Client::configured(name, verified)?;
+            client.check()?;
+        }
+        if use_cache {
+            let path = client.workspace_path(root);
+            client = client.with_cache(&path)?;
+        }
+        to_tui::remote::activate(client)?;
+        fs::create_dir_all(utils::paths::get_to_tui_dir()?)?;
+        let projects = ProjectRegistry::load()?;
+        config = Config::load_for_remote(&config, |name| projects.get_by_name(name).is_some())?;
+    } else {
+        ensure_installation_ready()?;
+    }
 
     match cli.command {
+        Some(Commands::Remote { command }) => remote_cli::run(command)?,
+        Some(Commands::Server { command }) => server::run(command)?,
         Some(Commands::Add { task }) => {
             handle_add(task)?;
         }
@@ -209,8 +270,12 @@ fn main() -> Result<()> {
         Some(Commands::Web(options)) => {
             web_process::run(options)?;
         }
-        Some(Commands::Serve { command, port }) => {
-            handle_serve_command(command, port)?;
+        Some(Commands::Serve {
+            command,
+            port,
+            auth,
+        }) => {
+            handle_serve_command(command, port, auth)?;
         }
         Some(Commands::Generate {
             generator,
@@ -224,7 +289,7 @@ fn main() -> Result<()> {
             handle_plugin_command(command)?;
         }
         Some(Commands::Todo { command }) => {
-            handle_todo_command(command)?;
+            handle_todo_command(command, selected_remote.as_deref())?;
         }
         Some(Commands::Hook { command }) => {
             handle_hook_command(command);
@@ -236,7 +301,9 @@ fn main() -> Result<()> {
 
             tracing::info!("totui starting");
 
-            ensure_server_running(DEFAULT_API_PORT)?;
+            if to_tui::remote::active().is_none() {
+                ensure_server_running(DEFAULT_API_PORT)?;
+            }
 
             // Determine which project to load
             let current_project = get_current_project(&mut config)?;
@@ -364,28 +431,32 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_serve_command(command: Option<ServeCommand>, port: u16) -> Result<()> {
+fn handle_serve_command(command: Option<ServeCommand>, port: u16, auth: bool) -> Result<()> {
     match command.unwrap_or(ServeCommand::Start { daemon: false }) {
         ServeCommand::Start { daemon } => {
             if daemon {
-                run_server_foreground(port, false, false)
+                run_server_foreground(port, false, false, auth)
             } else {
-                handle_serve_start(port)
+                handle_serve_start(port, auth)
             }
         }
         ServeCommand::Stop => handle_serve_stop(),
-        ServeCommand::Restart => handle_serve_restart(port),
+        ServeCommand::Restart => handle_serve_restart(port, auth),
         ServeCommand::Status => handle_serve_status(port),
     }
 }
 
-fn handle_serve_start(port: u16) -> Result<()> {
+fn handle_serve_start(port: u16, auth: bool) -> Result<()> {
     if is_server_running(port) {
+        anyhow::ensure!(
+            !auth,
+            "Server is already running; use serve restart --auth to enable authentication"
+        );
         println!("Server is already running on port {port}");
         return Ok(());
     }
 
-    start_server_background(port)?;
+    start_server_background(port, auth)?;
     println!("Server started on port {port}");
     Ok(())
 }
@@ -404,10 +475,11 @@ fn handle_serve_stop() -> Result<()> {
     Ok(())
 }
 
-fn handle_serve_restart(port: u16) -> Result<()> {
+fn handle_serve_restart(port: u16, auth: bool) -> Result<()> {
+    let auth = auth || web_process::authentication_enabled()?;
     let _ = handle_serve_stop();
     std::thread::sleep(Duration::from_millis(500));
-    handle_serve_start(port)
+    handle_serve_start(port, auth)
 }
 
 fn handle_serve_status(port: u16) -> Result<()> {
@@ -454,11 +526,15 @@ fn is_server_running(port: u16) -> bool {
     }
 }
 
-fn start_server_background(port: u16) -> Result<()> {
+fn start_server_background(port: u16, auth: bool) -> Result<()> {
     let current_exe = env::current_exe()?;
 
-    let child = Command::new(&current_exe)
-        .args(["serve", "start", "--port", &port.to_string(), "--daemon"])
+    let mut command = Command::new(&current_exe);
+    command.args(["serve", "start", "--port", &port.to_string(), "--daemon"]);
+    if auth {
+        command.arg("--auth");
+    }
+    let child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -496,7 +572,7 @@ fn ensure_server_running(port: u16) -> Result<()> {
 #[cfg(not(unix))]
 fn ensure_server_running(port: u16) -> Result<()> {
     if !is_server_running(port) {
-        start_server_background(port)?;
+        start_server_background(port, false)?;
     }
     Ok(())
 }
@@ -570,9 +646,16 @@ fn workspace_url(addr: std::net::SocketAddr, project: &str) -> Result<reqwest::U
 }
 
 #[tokio::main]
-async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> Result<()> {
+async fn run_server_foreground(
+    port: u16,
+    open_browser: bool,
+    verbose: bool,
+    auth: bool,
+) -> Result<()> {
     fs::create_dir_all(utils::paths::get_to_tui_dir()?)?;
-    ensure_installation_ready()?;
+    if !auth {
+        ensure_installation_ready()?;
+    }
     let mut filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "info,tower_http=debug".into());
     if verbose {
@@ -580,14 +663,26 @@ async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> 
     }
     tracing_subscriber::fmt().with_env_filter(filter).init();
 
-    let project = get_current_project(&mut Config::load()?)?;
-    let app = api::create_router()?.layer(axum::Extension(api::web::StartupProject(
-        project.name.clone(),
-    )));
+    let (app, project_name) = if auth {
+        let auth_url =
+            std::env::var("TOTUI_AUTH_URL").unwrap_or_else(|_| api::auth::DEFAULT_AUTH_URL.into());
+        (
+            api::create_authenticated_router(&auth_url)?,
+            DEFAULT_PROJECT_NAME.to_owned(),
+        )
+    } else {
+        let project = get_current_project(&mut Config::load()?)?;
+        (
+            api::create_router()?.layer(axum::Extension(api::web::StartupProject(
+                project.name.clone(),
+            ))),
+            project.name,
+        )
+    };
     let host = std::env::var("TOTUI_BIND").unwrap_or_else(|_| "127.0.0.1".into());
     let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
     let addr = listener.local_addr()?;
-    let url = workspace_url(addr, &project.name)?;
+    let url = workspace_url(addr, &project_name)?;
     tracing::info!("Workspace available at {url}");
     if open_browser {
         open::that(url.as_str())?;
@@ -595,9 +690,44 @@ async fn run_server_foreground(port: u16, open_browser: bool, verbose: bool) -> 
     if let Some(path) = std::env::var_os("TOTUI_WEB_READY_FILE") {
         fs::write(path, url.as_str())?;
     }
-    axum::serve(listener, app).await?;
+    let (shutdown, stopped) = tokio::sync::oneshot::channel();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = stopped.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+    tokio::select! {
+        result = &mut server => result?,
+        _ = server_shutdown() => {
+            let _ = shutdown.send(());
+            if let Ok(result) = tokio::time::timeout(Duration::from_secs(2), &mut server).await {
+                result?;
+            }
+        }
+    }
 
     Ok(())
+}
+
+async fn server_shutdown() {
+    #[cfg(unix)]
+    {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = terminate.recv() => {},
+                    _ = tokio::signal::ctrl_c() => {},
+                }
+            }
+            Err(error) => {
+                tracing::error!(%error, "Could not register SIGTERM handler");
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }
 
 fn handle_add(task: String) -> Result<()> {
@@ -1028,10 +1158,44 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-fn handle_todo_command(command: TodoCommand) -> Result<()> {
+fn handle_todo_command(command: TodoCommand, remote_name: Option<&str>) -> Result<()> {
     use to_tui::todo::ops;
 
+    let registry = ProjectRegistry::load()?;
+    let config = Config::load()?;
+    let folder = project::current_folder_key();
+    let project = match command.project() {
+        Some(name) => ops::resolve_project(Some(name)).map_err(|e| anyhow!(e))?,
+        None => project::resolve_project_name(
+            folder.as_deref(),
+            &config.folder_projects,
+            config.last_used_project.as_deref(),
+            |name| registry.get_by_name(name).is_some(),
+        ),
+    };
+    let client = to_tui::remote::active();
+    let backend = if client.is_some() { "remote" } else { "local" };
+    let url = client.as_ref().map(|c| c.url());
+    if matches!(
+        command,
+        TodoCommand::Create { .. }
+            | TodoCommand::Update { .. }
+            | TodoCommand::Move { .. }
+            | TodoCommand::Delete { .. }
+    ) {
+        eprintln!(
+            "Destination: {backend} {} | project {project}",
+            url.unwrap_or("database")
+        );
+    }
+    let selected_project = project;
     match command {
+        TodoCommand::Context { .. } => print_json(&serde_json::json!({
+            "backend": backend, "remote": remote_name, "server_url": url,
+            "project": selected_project, "folder": folder,
+            "directory": std::env::current_dir()?.canonicalize()?,
+            "data_directory": utils::paths::get_to_tui_dir()?,
+        })),
         TodoCommand::Create {
             json,
             content,
@@ -1040,7 +1204,7 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
             due_date,
             parent_id,
             priority,
-            project,
+            project: _,
             date,
         } => {
             let spec: ops::CreateSpec = match json {
@@ -1055,8 +1219,8 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                     priority,
                 },
             };
-            let item =
-                ops::create(project.as_deref(), date.as_deref(), spec).map_err(|e| anyhow!(e))?;
+            let item = ops::create(Some(selected_project.as_str()), date.as_deref(), spec)
+                .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Update {
@@ -1067,7 +1231,7 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
             state,
             due_date,
             priority,
-            project,
+            project: _,
             date,
         } => {
             let spec: ops::UpdateSpec = match json {
@@ -1085,33 +1249,47 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                     priority,
                 },
             };
-            let item = ops::update(project.as_deref(), date.as_deref(), &id, spec)
+            let item = ops::update(Some(selected_project.as_str()), date.as_deref(), &id, spec)
                 .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Move {
             id,
             parent,
-            project,
+            project: _,
             date,
         } => {
-            let item = ops::move_item(project.as_deref(), date.as_deref(), &id, parent.as_deref())
+            let item = ops::move_item(
+                Some(selected_project.as_str()),
+                date.as_deref(),
+                &id,
+                parent.as_deref(),
+            )
+            .map_err(|e| anyhow!(e))?;
+            print_json(&item)
+        }
+        TodoCommand::Get {
+            id,
+            project: _,
+            date,
+        } => {
+            let item = ops::get(Some(selected_project.as_str()), date.as_deref(), &id)
                 .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
-        TodoCommand::Get { id, project, date } => {
-            let item =
-                ops::get(project.as_deref(), date.as_deref(), &id).map_err(|e| anyhow!(e))?;
-            print_json(&item)
-        }
-        TodoCommand::List { project, date } => {
-            let result = ops::list(project.as_deref(), date.as_deref()).map_err(|e| anyhow!(e))?;
+        TodoCommand::List { project: _, date } => {
+            let result = ops::list(Some(selected_project.as_str()), date.as_deref())
+                .map_err(|e| anyhow!(e))?;
             // Print the bare array so callers can pipe straight into `jq '.[]'`.
             print_json(&result.items)
         }
-        TodoCommand::Delete { id, project, date } => {
-            let removed =
-                ops::delete(project.as_deref(), date.as_deref(), &id).map_err(|e| anyhow!(e))?;
+        TodoCommand::Delete {
+            id,
+            project: _,
+            date,
+        } => {
+            let removed = ops::delete(Some(selected_project.as_str()), date.as_deref(), &id)
+                .map_err(|e| anyhow!(e))?;
             print_json(&serde_json::json!({ "deleted": removed }))
         }
         TodoCommand::Projects => {

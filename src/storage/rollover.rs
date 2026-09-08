@@ -14,6 +14,11 @@ use uuid::Uuid;
 pub fn find_rollover_candidates_for_project(
     project_name: &str,
 ) -> Result<Option<(NaiveDate, Vec<crate::todo::TodoItem>)>> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::Candidates {
+            project: project_name.into(),
+        });
+    }
     find_rollover_candidates_for_project_at(project_name, Local::now().date_naive())
 }
 
@@ -87,6 +92,19 @@ pub fn execute_rollover_for_project(
     source_date: NaiveDate,
     items: Vec<crate::todo::TodoItem>,
 ) -> Result<TodoList> {
+    if let Some(client) = crate::remote::active() {
+        let snapshot: crate::remote::protocol::Snapshot =
+            client.call(crate::remote::protocol::Request::Rollover {
+                project: project_name.into(),
+                source_date,
+                items,
+            })?;
+        let path = get_daily_file_path_for_project(project_name, snapshot.date)?;
+        if client.cached().is_some() {
+            return client.load(project_name, snapshot.date, false, path);
+        }
+        return Ok(snapshot.into_list(path));
+    }
     let today = Local::now().date_naive();
     let source = load_todo_list_for_project(project_name, source_date)?;
     anyhow::ensure!(

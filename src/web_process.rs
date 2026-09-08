@@ -19,6 +19,13 @@ pub fn status(port: u16) -> Result<WebStatus> {
     }
 }
 
+pub fn authentication_enabled() -> Result<bool> {
+    #[cfg(unix)]
+    return unix::authentication_enabled();
+    #[cfg(not(unix))]
+    Ok(false)
+}
+
 pub fn run(options: WebOptions) -> Result<()> {
     if options.log && options.command.is_some() {
         bail!("Use --log on its own, or web logs");
@@ -26,12 +33,17 @@ pub fn run(options: WebOptions) -> Result<()> {
     if matches!(
         options.command,
         Some(WebCommand::Stop | WebCommand::Status | WebCommand::Logs { .. })
-    ) && (options.detach || options.restart || options.open || options.verbose)
+    ) && (options.detach || options.restart || options.open || options.verbose || options.auth)
     {
         bail!("Start options cannot be used with stop, status, or logs");
     }
     if options.command.is_none() && !options.detach && !options.restart && !options.log {
-        return crate::run_server_foreground(options.port, options.open, options.verbose);
+        return crate::run_server_foreground(
+            options.port,
+            options.open,
+            options.verbose,
+            options.auth,
+        );
     }
     #[cfg(unix)]
     return unix::manage(options);
@@ -62,6 +74,8 @@ mod unix {
         pid: u32,
         identity: String,
         url: String,
+        #[serde(default)]
+        auth: bool,
     }
 
     fn identity(pid: u32) -> Result<Option<String>> {
@@ -150,7 +164,15 @@ mod unix {
             pid,
             identity: stamp,
             url,
+            auth: args.contains(&"--auth"),
         }))
+    }
+
+    pub(super) fn authentication_enabled() -> Result<bool> {
+        let record = active(&get_to_tui_dir()?.join("web/process.json"))?;
+        Ok(record
+            .or(legacy_record()?)
+            .is_some_and(|record| record.auth))
     }
 
     pub(super) fn status(port: u16) -> Result<WebStatus> {
@@ -253,7 +275,7 @@ mod unix {
         }
     }
 
-    pub(super) fn manage(options: WebOptions) -> Result<()> {
+    pub(super) fn manage(mut options: WebOptions) -> Result<()> {
         let directory = get_to_tui_dir()?.join("web");
         fs::create_dir_all(&directory)?;
         let log = directory.join("server.log");
@@ -293,6 +315,7 @@ mod unix {
             _ => {}
         }
         if options.restart || matches!(options.command, Some(WebCommand::Restart)) {
+            options.auth |= record.as_ref().is_some_and(|record| record.auth);
             stop(record.take(), &stop_path)?;
         }
         if let Some(record) = record {
@@ -301,7 +324,12 @@ mod unix {
         }
         if options.command.is_none() && !options.detach {
             drop(lock);
-            return crate::run_server_foreground(options.port, options.open, options.verbose);
+            return crate::run_server_foreground(
+                options.port,
+                options.open,
+                options.verbose,
+                options.auth,
+            );
         }
         start(&options, &directory, &record_path, &log)
     }
@@ -321,6 +349,9 @@ mod unix {
         }
         if options.verbose {
             command.arg("--verbose");
+        }
+        if options.auth {
+            command.arg("--auth");
         }
         unsafe {
             command.pre_exec(|| {
@@ -349,6 +380,7 @@ mod unix {
                             pid: child.id(),
                             identity: stamp,
                             url,
+                            auth: options.auth,
                         };
                         let mut file = tempfile::NamedTempFile::new_in(directory)?;
                         file.write_all(&serde_json::to_vec(&record)?)?;
@@ -385,6 +417,7 @@ mod unix {
                 pid: std::process::id(),
                 identity: "different process".into(),
                 url: "http://localhost/".into(),
+                auth: false,
             };
             fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
             assert!(active(&path).unwrap().is_none());

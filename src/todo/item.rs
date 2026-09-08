@@ -3,7 +3,7 @@ use super::state::TodoState;
 use chrono::{DateTime, NaiveDate, Utc};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TodoItem {
     pub id: Uuid,
     pub content: String,

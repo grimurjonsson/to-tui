@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "to-tui"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2024"
 
 [lib]
@@ -59,6 +59,7 @@ open = "5"
 totui-plugin-interface = { path = "crates/totui-plugin-interface" }
 abi_stable = "0.11"
 base64 = "0.22"
+sha2 = "0.10"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

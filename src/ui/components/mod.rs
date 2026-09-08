@@ -1,6 +1,7 @@
 pub mod description_modal;
 pub mod plugin_modal;
 pub mod status_bar;
+pub mod sync_dialog;
 pub mod todo_list;
 pub mod web_panel;
 
@@ -83,6 +84,9 @@ pub fn render(f: &mut Frame, state: &mut AppState) {
 
     if state.mode == Mode::EditDescription {
         description_modal::render_description_modal(f, state);
+    }
+    if let Some(dialog) = &state.sync_dialog {
+        sync_dialog::render(f, dialog);
     }
 }
 

@@ -5,6 +5,15 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-08
+Sign in to a remote server with OAuth and keep your todos synced across machines. Remote workspaces work offline and resolve conflicts when you reconnect. The server installs natively, and existing local data migrates safely. Web controls now target the remote and open the project you pick. Agent skills use the remote-aware CLI, and the docs cover remote setup.
+
+response was unslopped
+
+### Added
+- Add authenticated remote workspaces with offline sync and conflict resolution
+- Add native server installation, OAuth workspaces, and safe local migrations
+
 ## [0.6.1] - 2026-09-08
 You've hit your session limit · resets 5:50pm (Atlantic/Reykjavik)
 

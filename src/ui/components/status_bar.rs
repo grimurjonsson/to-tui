@@ -33,15 +33,33 @@ fn content(state: &AppState) -> [String; 5] {
     } else {
         "archived"
     };
+    let remote_label = to_tui::remote::active()
+        .map(|client| format!("[{}] ", client.url()))
+        .unwrap_or_default();
     let project = if state.current_project.name != crate::project::DEFAULT_PROJECT_NAME {
-        format!("[{}] ", state.current_project.name)
+        format!("{remote_label}[{}] ", state.current_project.name)
     } else {
-        String::new()
+        remote_label
     };
+    let sync = to_tui::remote::active()
+        .and_then(|c| c.cached())
+        .map(|cache| {
+            let status = cache.status();
+            if status.conflicts > 0 {
+                format!(" | {} conflicts (F6)", status.conflicts)
+            } else if status.error.is_some() {
+                format!(" | offline/error, {} queued (F6)", status.pending)
+            } else if status.pending > 0 {
+                format!(" | {} queued", status.pending)
+            } else {
+                " | synced".into()
+            }
+        })
+        .unwrap_or_default();
     let info = match &state.status_message {
         Some((message, time)) if time.elapsed().as_secs() <= 3 => format!(" {message} "),
         _ => format!(
-            " {project}{} | {} ({day}) | {} items{readonly}{unsaved}",
+            " {project}{} | {} ({day}) | {} items{readonly}{unsaved}{sync}",
             state.mode,
             state.viewing_date.format("%Y-%m-%d"),
             state.todo_list.items.len()
@@ -62,13 +80,12 @@ fn content(state: &AppState) -> [String; 5] {
         Some(version) => format!(" v{VERSION} → v{version} "),
         None => format!(" v{VERSION} "),
     };
-    [
-        info,
-        hints.into(),
-        format!(" {shortcut} web-ui ({}) ", state.web.label()),
-        " 🔗 ".into(),
-        version,
-    ]
+    let web = if to_tui::remote::active().is_some() {
+        format!(" {shortcut} web-ui ")
+    } else {
+        format!(" {shortcut} web-ui ({}) ", state.web.label())
+    };
+    [info, hints.into(), web, " 🔗 ".into(), version]
 }
 
 fn sections(area: Rect, content: &[String; 5]) -> [Rect; 5] {

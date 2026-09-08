@@ -49,9 +49,10 @@ pub struct WebController {
     pub status: Option<WebStatus>,
     pub error: Option<String>,
     pub port: u16,
+    remote_url: Option<String>,
     selected: usize,
     busy: Option<WebAction>,
-    pending: Option<WebAction>,
+    pending: Option<(WebAction, String)>,
     receiver: Option<Receiver<Update>>,
     last_check: Option<Instant>,
 }
@@ -62,6 +63,7 @@ impl Default for WebController {
             status: None,
             error: None,
             port: DEFAULT_API_PORT,
+            remote_url: to_tui::remote::active().map(|client| client.url().to_owned()),
             selected: 0,
             busy: None,
             pending: None,
@@ -73,7 +75,19 @@ impl Default for WebController {
 
 impl WebController {
     pub fn selected_action(&self) -> WebAction {
-        WebAction::ALL[self.selected]
+        if self.is_remote() {
+            WebAction::Open
+        } else {
+            WebAction::ALL[self.selected]
+        }
+    }
+
+    pub fn is_remote(&self) -> bool {
+        self.remote_url.is_some()
+    }
+
+    pub fn action_enabled(&self, action: WebAction) -> bool {
+        !self.is_remote() || action == WebAction::Open
     }
 
     pub fn select_next(&mut self) {
@@ -84,11 +98,14 @@ impl WebController {
         self.selected = (self.selected + WebAction::ALL.len() - 1) % WebAction::ALL.len();
     }
 
-    pub fn activate_selected(&mut self) {
-        self.request(self.selected_action());
+    pub fn activate_selected(&mut self, project: &str) {
+        self.request(self.selected_action(), project);
     }
 
     pub fn label(&self) -> &str {
+        if let Some(url) = &self.remote_url {
+            return url;
+        }
         if let Some(action) = self.busy {
             return action.label();
         }
@@ -101,12 +118,20 @@ impl WebController {
         }
     }
 
-    pub fn request(&mut self, action: WebAction) {
+    pub fn request(&mut self, action: WebAction, project: &str) {
+        if let Some(url) = &self.remote_url {
+            if action == WebAction::Open {
+                self.error = open_project(url, project).err().map(|e| e.to_string());
+            } else {
+                self.error = Some("Manage the remote service on its server".into());
+            }
+            return;
+        }
         if self.busy.is_some() {
             return;
         }
         self.error = None;
-        self.pending = Some(action);
+        self.pending = Some((action, project.to_owned()));
         self.busy = Some(action);
     }
 
@@ -152,7 +177,7 @@ impl WebController {
         {
             return;
         }
-        let action = self.pending.take();
+        let pending = self.pending.take();
         let port = self.port;
         let url = match &self.status {
             Some(WebStatus::Running { url, .. }) => Some(url.clone()),
@@ -161,26 +186,49 @@ impl WebController {
         let (sender, receiver) = mpsc::channel();
         self.receiver = Some(receiver);
         std::thread::spawn(move || {
-            let operation_error = action
-                .and_then(|action| execute(action, port, url).err())
+            let completed = pending.is_some();
+            let operation_error = pending
+                .and_then(|(action, project)| execute(action, port, url, &project).err())
                 .map(|error| format!("{error:#}"));
             let status = web_process::status(port).map_err(|error| format!("{error:#}"));
             let _ = sender.send(Update {
                 status,
                 operation_error,
-                completed: action.is_some(),
+                completed,
             });
         });
     }
 }
 
-fn execute(action: WebAction, port: u16, url: Option<String>) -> Result<()> {
+fn project_url(base: &str, project: &str) -> Result<reqwest::Url> {
+    let mut url = reqwest::Url::parse(base).context("Invalid web server URL")?;
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| key != "project")
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    url.query_pairs_mut()
+        .clear()
+        .extend_pairs(pairs)
+        .append_pair("project", project);
+    Ok(url)
+}
+
+fn open_project(base: &str, project: &str) -> Result<()> {
+    open::that(project_url(base, project)?.as_str())?;
+    Ok(())
+}
+
+fn execute(action: WebAction, port: u16, url: Option<String>, project: &str) -> Result<()> {
     let verb = match action {
         WebAction::Start => "start",
         WebAction::Stop => "stop",
         WebAction::Restart => "restart",
         WebAction::Open => {
-            open::that(url.context("Start the web server before opening the browser")?)?;
+            open_project(
+                &url.context("Start the web server before opening the browser")?,
+                project,
+            )?;
             return Ok(());
         }
     };
@@ -199,14 +247,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_browser_url_selects_current_project_for_local_and_remote_servers() {
+        for base in [
+            "http://127.0.0.1:48372/?project=old",
+            "https://todo.example.com/?project=old&view=list",
+        ] {
+            let url = project_url(base, "Notes & ideas #1").unwrap();
+            let projects: Vec<_> = url
+                .query_pairs()
+                .filter(|(key, _)| key == "project")
+                .map(|(_, value)| value.into_owned())
+                .collect();
+            assert_eq!(projects, ["Notes & ideas #1"]);
+            assert!(url.fragment().is_none());
+            if base.contains("view=list") {
+                assert!(
+                    url.query_pairs()
+                        .any(|(key, value)| key == "view" && value == "list")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_remote_web_navigation_only_selects_open() {
+        let mut controller = WebController {
+            remote_url: Some("https://todo.example.com".into()),
+            ..WebController::default()
+        };
+        assert_eq!(controller.label(), "https://todo.example.com");
+        assert_eq!(controller.selected_action(), WebAction::Open);
+        for _ in 0..WebAction::ALL.len() {
+            controller.select_next();
+            assert_eq!(controller.selected_action(), WebAction::Open);
+        }
+        for _ in 0..WebAction::ALL.len() {
+            controller.select_previous();
+            assert_eq!(controller.selected_action(), WebAction::Open);
+        }
+        for action in [WebAction::Start, WebAction::Stop, WebAction::Restart] {
+            assert!(!controller.action_enabled(action));
+            controller.request(action, "default");
+            assert!(controller.pending.is_none());
+            assert!(controller.busy.is_none());
+        }
+        assert!(controller.action_enabled(WebAction::Open));
+    }
+
+    #[test]
     fn test_web_refresh_preserves_queued_stop() {
         let mut controller = WebController::default();
         let (sender, receiver) = mpsc::channel();
         controller.receiver = Some(receiver);
-        controller.request(WebAction::Stop);
-        controller.request(WebAction::Start);
+        controller.request(WebAction::Stop, "default");
+        controller.request(WebAction::Start, "default");
         controller.tick();
-        assert!(matches!(controller.pending, Some(WebAction::Stop)));
+        assert!(matches!(controller.pending, Some((WebAction::Stop, _))));
         assert_eq!(controller.label(), "stopping");
         drop(sender);
     }

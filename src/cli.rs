@@ -8,12 +8,28 @@ pub const DEFAULT_API_PORT: u16 = 48372;
 #[command(version)]
 #[command(about = "A terminal-based todo list manager with daily rolling lists", long_about = None)]
 pub struct Cli {
+    /// Use a configured remote workspace
+    #[arg(long, global = true, conflicts_with = "local")]
+    pub remote: Option<String>,
+    /// Use local storage even when a default remote is configured
+    #[arg(long, global = true)]
+    pub local: bool,
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Configure and authenticate remote workspaces
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommand,
+    },
+    /// Install and manage the Linux systemd server
+    Server {
+        #[command(subcommand)]
+        command: ServerCommand,
+    },
     /// Run or manage the local web workspace
     Web(WebOptions),
     Add {
@@ -37,6 +53,9 @@ pub enum Commands {
         /// Port to run the server on
         #[arg(short, long, global = true, default_value_t = DEFAULT_API_PORT)]
         port: u16,
+        /// Require OAuth authentication and isolate each user's data
+        #[arg(long, global = true)]
+        auth: bool,
     },
     /// Generate todos from external sources using plugins
     Generate {
@@ -72,6 +91,56 @@ pub enum Commands {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+pub enum ServerCommand {
+    /// Install the server and enable startup on boot (requires root)
+    #[command(alias = "wizard")]
+    Install(ServerInstallOptions),
+    /// Run the server in the foreground
+    Run {
+        #[arg(long, default_value_t = DEFAULT_API_PORT, value_parser = clap::value_parser!(u16).range(1024..))]
+        port: u16,
+        /// Require OAuth authentication and isolate each user's data
+        #[arg(long)]
+        auth: bool,
+    },
+    /// Show the systemd service status
+    Status,
+    /// Show server logs from the journal
+    Logs {
+        #[arg(short, long)]
+        follow: bool,
+    },
+    /// Start the installed service
+    Start,
+    /// Stop the installed service
+    Stop,
+    /// Restart the installed service
+    Restart,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ServerInstallOptions {
+    /// Require OAuth authentication and isolate each user's data
+    #[arg(long)]
+    pub auth: bool,
+    /// Local port for the existing reverse proxy
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1024..))]
+    pub port: Option<u16>,
+    /// IANA timezone for daily lists, for example Europe/Oslo (default: UTC)
+    #[arg(long)]
+    pub timezone: Option<String>,
+    /// Use supplied options and defaults without interactive prompts
+    #[arg(short, long)]
+    pub yes: bool,
+    /// Print the installation and service unit without changing the machine
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Replace a previously installed to-tui service and binary; preserve data
+    #[arg(long)]
+    pub replace: bool,
+}
+
+#[derive(Subcommand, Debug, Clone)]
 pub enum HookCommand {
     /// Handle a Claude Code `Stop` event: read the hook payload on stdin and,
     /// when the session's totui tree has drifted, print a reminder for the model.
@@ -96,6 +165,11 @@ pub enum HookCommand {
 /// message on stderr when it fails, so callers can pipe stdout straight into `jq`.
 #[derive(Subcommand, Debug, Clone)]
 pub enum TodoCommand {
+    /// Report the resolved backend, project and folder before reading or writing todos
+    Context {
+        #[arg(short, long)]
+        project: Option<String>,
+    },
     /// Create a todo. Supply --json or the individual flags.
     Create {
         /// Full spec as a JSON object, or `-` to read it from stdin.
@@ -195,6 +269,21 @@ pub enum TodoCommand {
     Projects,
 }
 
+impl TodoCommand {
+    pub fn project(&self) -> Option<&str> {
+        match self {
+            Self::Context { project }
+            | Self::Create { project, .. }
+            | Self::Update { project, .. }
+            | Self::Move { project, .. }
+            | Self::Get { project, .. }
+            | Self::List { project, .. }
+            | Self::Delete { project, .. } => project.as_deref(),
+            Self::Projects => None,
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum PluginCommand {
     /// List installed plugins
@@ -257,6 +346,9 @@ pub enum ServeCommand {
 
 #[derive(clap::Args, Debug, Clone)]
 pub struct WebOptions {
+    /// Require OAuth authentication and isolate each user's data
+    #[arg(long, global = true)]
+    pub auth: bool,
     #[command(subcommand)]
     pub command: Option<WebCommand>,
     #[arg(short, long, global = true, default_value_t = DEFAULT_API_PORT)]
@@ -340,4 +432,29 @@ mod web_cli_tests {
     fn test_web_log_rejects_start_flags() {
         assert!(Cli::try_parse_from(["totui", "web", "--log", "--detach"]).is_err());
     }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum RemoteCommand {
+    /// Add a named HTTPS server
+    Add { name: String, url: String },
+    /// Open your browser to sign in and connect this client
+    Login {
+        name: String,
+        /// Import a legacy Cookie header from stdin instead of browser login
+        #[arg(long)]
+        cookie_stdin: bool,
+    },
+    /// Select the default remote workspace
+    Use { name: String },
+    /// Restore the local workspace as the default
+    Local,
+    /// Verify remote authentication and protocol compatibility
+    Status { name: Option<String> },
+    /// List configured servers
+    List,
+    /// Remove a saved session without changing the selected workspace
+    Logout { name: String },
+    /// Remove a remote profile and its saved session
+    Remove { name: String },
 }

@@ -1,9 +1,12 @@
+pub(crate) mod change_log;
+pub(crate) mod context;
 pub mod database;
 pub mod file;
 pub mod markdown;
 pub mod metadata;
 pub mod migration;
 pub mod rollover;
+pub(crate) mod sync;
 pub mod ui_cache;
 
 pub use database::load_archived_todos_for_date_and_project;

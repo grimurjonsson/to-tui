@@ -1,6 +1,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const state = {
+  userId: null,
   project:
     new URLSearchParams(location.search).get("project") ||
     document.querySelector('meta[name="totui-project"]').content,
@@ -43,8 +44,23 @@ async function api(path, options = {}) {
   const response = await fetch(path, {
     cache: "no-store",
     ...options,
-    headers: { "Content-Type": "application/json", ...options.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(state.userId ? { "X-Totui-Expected-User": state.userId } : {}),
+      ...options.headers,
+    },
   });
+  const userId = response.headers.get("X-Totui-User");
+  if (
+    response.status === 401 ||
+    (userId && state.userId && userId !== state.userId)
+  ) {
+    state.generation++;
+    document.body.replaceChildren();
+    location.reload();
+    return new Promise(() => {});
+  }
+  if (userId) state.userId = userId;
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     const error = new Error(
@@ -1167,11 +1183,10 @@ async function finishDrag(event) {
     clearTimeout(state.dragResultTimer);
     state.dragResultTimer = setTimeout(() => message("drag-result", ""), 2500);
   } else {
+    state.mutationError =
+      "Move was not saved. The list may have changed; review it and drag again. Your editor draft is preserved.";
     await refresh();
-    message(
-      "error",
-      "Move was not saved. The list may have changed; review it and drag again. Your editor draft is preserved.",
-    );
+    message("error", state.mutationError);
   }
 }
 document.addEventListener("keydown", (event) => {

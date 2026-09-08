@@ -6,6 +6,7 @@ pub mod keybindings;
 pub mod mcp;
 pub mod plugin;
 pub mod project;
+pub mod remote;
 pub mod storage;
 pub mod todo;
 pub mod utils;
