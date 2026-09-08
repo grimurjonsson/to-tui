@@ -21,7 +21,7 @@ use std::time::Duration;
 
 pub const DEFAULT_AUTH_URL: &str = "http://127.0.0.1:4180/oauth2/auth";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct User {
     pub id: String,
     pub email: Option<String>,
@@ -94,6 +94,7 @@ impl ServerState {
             UNIQUE(authority, subject)
         )",
         )?;
+        super::client_auth::init(&conn)?;
         fs::create_dir_all(root.join("users"))?;
         #[cfg(unix)]
         {
@@ -135,6 +136,44 @@ impl ServerState {
         })
         .await
         .is_ok_and(|result| result.is_ok())
+    }
+
+    pub(crate) fn client_auth_root(&self) -> Result<PathBuf> {
+        ensure!(
+            matches!(self.mode, Mode::Auth { .. }),
+            "Browser login requires authenticated server mode"
+        );
+        Ok(self.root.clone())
+    }
+
+    async fn resolve_token(&self, token: String) -> Result<(User, Workspace), StatusCode> {
+        let Mode::Auth { workspaces, .. } = &self.mode else {
+            return Err(StatusCode::UNAUTHORIZED);
+        };
+        let root = self.root.clone();
+        let workspaces = workspaces.clone();
+        tokio::task::spawn_blocking(move || {
+            let user =
+                super::client_auth::verify(&root, &token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+            let directory = Uuid::parse_str(&user.id)
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                .to_string();
+            let mut workspaces = workspaces
+                .lock()
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let workspace = match workspaces.get(&user.id) {
+                Some(workspace) => workspace.clone(),
+                None => {
+                    let workspace = Workspace::open(root.join("users").join(directory))
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    workspaces.insert(user.id.clone(), workspace.clone());
+                    workspace
+                }
+            };
+            Ok((user, workspace))
+        })
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     }
 
     async fn resolve(&self, headers: &HeaderMap) -> Result<(User, Workspace), StatusCode> {
@@ -246,10 +285,28 @@ pub async fn identify(
     mut request: Request,
     next: Next,
 ) -> Response {
-    if matches!(request.uri().path(), "/api/health" | "/api/ready") {
+    if matches!(
+        request.uri().path(),
+        "/api/health" | "/api/ready" | "/api/remote/login/exchange" | "/api/remote/logout"
+    ) {
         return next.run(request).await;
     }
-    let (user, workspace) = match state.resolve(request.headers()).await {
+    let resolved = if request.uri().path().starts_with("/api/remote/")
+        && request.headers().contains_key(header::AUTHORIZATION)
+    {
+        match request
+            .headers()
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+        {
+            Some(token) => state.resolve_token(token.to_owned()).await,
+            None => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        state.resolve(request.headers()).await
+    };
+    let (user, workspace) = match resolved {
         Ok(resolved) => resolved,
         Err(status) => return status.into_response(),
     };

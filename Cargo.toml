@@ -59,6 +59,7 @@ open = "5"
 totui-plugin-interface = { path = "crates/totui-plugin-interface" }
 abi_stable = "0.11"
 base64 = "0.22"
+sha2 = "0.10"
 
 [dev-dependencies]
 pretty_assertions = "1.4"

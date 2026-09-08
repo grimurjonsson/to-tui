@@ -176,6 +176,8 @@ pub struct AppState {
     /// Receiver for marketplace fetch results
     pub marketplace_fetch_rx: Option<mpsc::Receiver<Result<Vec<PluginEntry>, String>>>,
     pub status_message: Option<(String, Instant)>,
+    pub sync_dialog: Option<super::sync::SyncDialog>,
+    pub sync_dismissed: Option<uuid::Uuid>,
     pub web: super::web::WebController,
     pub github_icon: Option<crate::ui::github_icon::GithubIcon>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
@@ -308,6 +310,8 @@ impl AppState {
             plugins_modal_state: None,
             marketplace_fetch_rx: None,
             status_message: None,
+            sync_dialog: None,
+            sync_dismissed: None,
             web: super::web::WebController::default(),
             github_icon: None,
             plugin_result_rx: None,
@@ -974,9 +978,22 @@ impl AppState {
         }
 
         let date = self.todo_list.date;
-        let new_list = load_todo_list_for_project(&self.current_project.name, date)?;
-        if new_list.revision.get() == self.todo_list.revision.get() {
-            return Ok(());
+        let new_list = load_todos_for_viewing_in_project(&self.current_project.name, date)?;
+        self.apply_refreshed_list(new_list);
+        Ok(())
+    }
+
+    pub fn apply_refreshed_list(&mut self, new_list: crate::todo::TodoList) {
+        if self.unsaved_changes
+            || self.mode != Mode::Navigate
+            || new_list.date != self.todo_list.date
+            || new_list.revision.get() <= self.todo_list.revision.get()
+        {
+            return;
+        }
+        if new_list.items == self.todo_list.items {
+            self.todo_list.revision.set(new_list.revision.get());
+            return;
         }
         let selected_id = self.selected_item().map(|item| item.id);
         self.undo_stack.clear();
@@ -989,7 +1006,6 @@ impl AppState {
         }
         self.clamp_cursor();
         self.unsaved_changes = false;
-        Ok(())
     }
 
     pub fn close_plugin_menu(&mut self) {

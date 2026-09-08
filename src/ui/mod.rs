@@ -83,8 +83,19 @@ async fn run_app(
     state: &mut AppState,
     mut plugin_rx: mpsc::UnboundedReceiver<()>,
 ) -> Result<()> {
-    let observer = crate::storage::database::get_connection()?;
-    let mut data_version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+    let observer = if to_tui::remote::active().is_some() {
+        None
+    } else {
+        Some(crate::storage::database::get_connection()?)
+    };
+    let mut data_version: i64 = match &observer {
+        Some(conn) => conn.query_row("PRAGMA data_version", [], |row| row.get(0))?,
+        None => 0,
+    };
+    let mut remote_refresh = std::time::Instant::now();
+    let mut remote_pending: Option<
+        std::sync::mpsc::Receiver<(String, anyhow::Result<to_tui::todo::TodoList>)>,
+    > = None;
     let mut reader = EventStream::new();
     let mut tick_interval = tokio::time::interval(Duration::from_millis(100));
     let mut image_size = None;
@@ -92,7 +103,9 @@ async fn run_app(
     loop {
         // State maintenance
         state.clear_expired_status_message();
-        state.web.tick();
+        if to_tui::remote::active().is_none() {
+            state.web.tick();
+        }
         state.check_plugin_result();
         state.check_marketplace_fetch();
         state.check_version_update();
@@ -203,11 +216,49 @@ async fn run_app(
             // Periodic tick for animations (spinner, status messages)
             _ = tick_interval.tick() => {
                 // Don't log ticks - too noisy
-                let version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;
-                if version != data_version && !state.unsaved_changes && state.mode == crate::app::mode::Mode::Navigate {
-                    match state.reload_from_database() {
-                        Ok(()) => data_version = version,
-                        Err(error) => state.set_status_message(format!("Refresh failed: {error}")),
+                if let Some(observer) = &observer {
+                    let version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;
+                    if version != data_version && !state.unsaved_changes && state.mode == crate::app::mode::Mode::Navigate {
+                        match state.reload_from_database() {
+                            Ok(()) => data_version = version,
+                            Err(error) => state.set_status_message(format!("Refresh failed: {error}")),
+                        }
+                    }
+                } else if let Some(cache) = to_tui::remote::active().and_then(|c| c.cached()) {
+                    if !state.unsaved_changes && state.mode == crate::app::Mode::Navigate
+                        && state.sync_dialog.is_none()
+                        && cache.generation()? > state.todo_list.revision.get()
+                        && let Err(error) = state.reload_from_database() {
+                        state.set_status_message(format!("Cache refresh failed: {error}"));
+                    }
+                    crate::app::sync::poll(state, false);
+                } else {
+                    if let Some(receiver) = &remote_pending {
+                        match receiver.try_recv() {
+                            Ok((project, result)) => {
+                                remote_pending = None;
+                                if project == state.current_project.name {
+                                    match result {
+                                        Ok(list) => state.apply_refreshed_list(list),
+                                        Err(error) => state.set_status_message(format!("Refresh failed: {error}")),
+                                    }
+                                }
+                            }
+                            Err(std::sync::mpsc::TryRecvError::Disconnected) => remote_pending = None,
+                            Err(std::sync::mpsc::TryRecvError::Empty) => {},
+                        }
+                    }
+                    if remote_pending.is_none() && remote_refresh.elapsed() >= Duration::from_secs(5)
+                        && state.viewing_date == state.today {
+                        remote_refresh = std::time::Instant::now();
+                        let project = state.current_project.name.clone();
+                        let date = state.todo_list.date;
+                        let (sender, receiver) = std::sync::mpsc::channel();
+                        remote_pending = Some(receiver);
+                        std::thread::spawn(move || {
+                            let list = crate::storage::file::load_todo_list_for_project(&project, date);
+                            let _ = sender.send((project, list));
+                        });
                     }
                 }
                 state.tick_spinner();

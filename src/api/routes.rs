@@ -1,4 +1,4 @@
-use super::{auth, handlers, projects, web};
+use super::{auth, client_auth, handlers, projects, web};
 use axum::{
     Router,
     routing::{delete, get, post},
@@ -36,6 +36,26 @@ fn router(state: auth::ServerState) -> Router {
         .route("/api/events", get(web::events))
         .route("/api/snapshot", get(web::snapshot))
         .route("/api/me", get(auth::me))
+        .route("/api/remote/v1", post(crate::remote::handle))
+        .route(
+            "/api/remote/sync",
+            get(crate::remote::sync_api::snapshot).post(crate::remote::sync_api::apply),
+        )
+        .route(
+            "/api/remote/items/{id}",
+            get(crate::remote::sync_api::get_item)
+                .put(crate::remote::sync_api::put_item)
+                .delete(crate::remote::sync_api::delete_item),
+        )
+        .route("/api/remote/events", get(crate::remote::events::events))
+        .route("/api/remote/changes", get(crate::remote::events::changes))
+        .route("/api/remote/me", get(auth::me))
+        .route("/api/remote/login/exchange", post(client_auth::exchange))
+        .route("/api/remote/logout", post(client_auth::revoke))
+        .route(
+            "/remote/login",
+            get(client_auth::login).post(client_auth::approve),
+        )
         .route("/api/health", get(health_check))
         .route("/api/ready", get(readiness_check))
         .route(

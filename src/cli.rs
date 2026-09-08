@@ -8,12 +8,23 @@ pub const DEFAULT_API_PORT: u16 = 48372;
 #[command(version)]
 #[command(about = "A terminal-based todo list manager with daily rolling lists", long_about = None)]
 pub struct Cli {
+    /// Use a configured remote workspace
+    #[arg(long, global = true, conflicts_with = "local")]
+    pub remote: Option<String>,
+    /// Use local storage even when a default remote is configured
+    #[arg(long, global = true)]
+    pub local: bool,
     #[command(subcommand)]
     pub command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Configure and authenticate remote workspaces
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommand,
+    },
     /// Install and manage the Linux systemd server
     Server {
         #[command(subcommand)]
@@ -154,6 +165,11 @@ pub enum HookCommand {
 /// message on stderr when it fails, so callers can pipe stdout straight into `jq`.
 #[derive(Subcommand, Debug, Clone)]
 pub enum TodoCommand {
+    /// Report the resolved backend, project and folder before reading or writing todos
+    Context {
+        #[arg(short, long)]
+        project: Option<String>,
+    },
     /// Create a todo. Supply --json or the individual flags.
     Create {
         /// Full spec as a JSON object, or `-` to read it from stdin.
@@ -251,6 +267,21 @@ pub enum TodoCommand {
     },
     /// Print the available project names as a JSON array
     Projects,
+}
+
+impl TodoCommand {
+    pub fn project(&self) -> Option<&str> {
+        match self {
+            Self::Context { project }
+            | Self::Create { project, .. }
+            | Self::Update { project, .. }
+            | Self::Move { project, .. }
+            | Self::Get { project, .. }
+            | Self::List { project, .. }
+            | Self::Delete { project, .. } => project.as_deref(),
+            Self::Projects => None,
+        }
+    }
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -401,4 +432,29 @@ mod web_cli_tests {
     fn test_web_log_rejects_start_flags() {
         assert!(Cli::try_parse_from(["totui", "web", "--log", "--detach"]).is_err());
     }
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum RemoteCommand {
+    /// Add a named HTTPS server
+    Add { name: String, url: String },
+    /// Open your browser to sign in and connect this client
+    Login {
+        name: String,
+        /// Import a legacy Cookie header from stdin instead of browser login
+        #[arg(long)]
+        cookie_stdin: bool,
+    },
+    /// Select the default remote workspace
+    Use { name: String },
+    /// Restore the local workspace as the default
+    Local,
+    /// Verify remote authentication and protocol compatibility
+    Status { name: Option<String> },
+    /// List configured servers
+    List,
+    /// Remove a saved session without changing the selected workspace
+    Logout { name: String },
+    /// Remove a remote profile and its saved session
+    Remove { name: String },
 }

@@ -8,11 +8,15 @@ use std::path::PathBuf;
 use tracing::{debug, trace};
 use uuid::Uuid;
 
-/// Parse an RFC3339 timestamp string into a DateTime<Utc>
-fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
+pub(crate) fn parse_timestamp(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|dt| dt.with_timezone(&Utc))
+        .or_else(|| {
+            chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f")
+                .ok()
+                .map(|dt| dt.and_utc())
+        })
 }
 
 fn get_db_path() -> Result<PathBuf> {
@@ -77,20 +81,20 @@ impl TodoRowData {
         todo.collapsed = self.collapsed != 0;
 
         if let Some(s) = self.created_at_str
-            && let Some(dt) = parse_rfc3339(&s)
+            && let Some(dt) = parse_timestamp(&s)
         {
             todo.created_at = dt;
         }
         if let Some(s) = self.updated_at_str
-            && let Some(dt) = parse_rfc3339(&s)
+            && let Some(dt) = parse_timestamp(&s)
         {
             todo.modified_at = dt;
         }
         if let Some(s) = self.completed_at_str {
-            todo.completed_at = parse_rfc3339(&s);
+            todo.completed_at = parse_timestamp(&s);
         }
         if let Some(s) = self.deleted_at_str {
-            todo.deleted_at = parse_rfc3339(&s);
+            todo.deleted_at = parse_timestamp(&s);
         }
 
         todo
@@ -98,6 +102,10 @@ impl TodoRowData {
 }
 
 pub fn get_connection() -> Result<Connection> {
+    anyhow::ensure!(
+        crate::remote::active().is_none(),
+        "This operation is not supported by the remote client; local storage was not used"
+    );
     let db_path = get_db_path()?;
     let conn = Connection::open(&db_path)
         .with_context(|| format!("Failed to open database at {db_path:?}"))?;
@@ -144,6 +152,9 @@ fn migrate_todo_columns(conn: &Connection, table: &str) -> Result<()> {
 }
 
 pub fn init_database() -> Result<()> {
+    if crate::remote::active().is_some() {
+        return Ok(());
+    }
     let mut connection = get_connection()?;
     let conn = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
@@ -313,6 +324,7 @@ pub fn init_database() -> Result<()> {
           INSERT INTO list_revisions VALUES(OLD.project, OLD.date, 1)
           ON CONFLICT(project,date) DO UPDATE SET revision=revision+1; END;")?;
 
+    crate::storage::sync::init(&conn)?;
     conn.commit()?;
     Ok(())
 }
@@ -323,7 +335,19 @@ fn load_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Resul
     load_items_on(&conn, date, project_name)
 }
 
-fn load_items_on(conn: &Connection, date: NaiveDate, project_name: &str) -> Result<Vec<TodoItem>> {
+pub(crate) fn load_item_on(conn: &Connection, id: Uuid) -> Result<Option<TodoItem>> {
+    use rusqlite::OptionalExtension;
+    let row = conn.query_row(
+        "SELECT id, content, state, indent_level, parent_id, due_date, description, priority, collapsed, created_at, updated_at, completed_at, deleted_at FROM todos WHERE id=?1 AND deleted_at IS NULL",
+        [id.to_string()], TodoRowData::from_row).optional()?;
+    Ok(row.map(TodoRowData::into_todo_item))
+}
+
+pub(crate) fn load_items_on(
+    conn: &Connection,
+    date: NaiveDate,
+    project_name: &str,
+) -> Result<Vec<TodoItem>> {
     let date_str = date.format("%Y-%m-%d").to_string();
 
     let mut stmt = conn.prepare(
@@ -352,6 +376,9 @@ pub fn list_revision(conn: &Connection, date: NaiveDate, project: &str) -> Resul
 }
 
 pub fn load_list_snapshot(date: NaiveDate, project: &str, path: PathBuf) -> Result<TodoList> {
+    if let Some(client) = crate::remote::active() {
+        return client.load(project, date, false, path);
+    }
     let mut conn = get_connection()?;
     let tx = conn.transaction()?;
     let list = TodoList::with_items(date, path, load_items_on(&tx, date, project)?);
@@ -361,6 +388,9 @@ pub fn load_list_snapshot(date: NaiveDate, project: &str, path: PathBuf) -> Resu
 }
 
 pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result<()> {
+    if let Some(client) = crate::remote::active() {
+        return client.save(&[(list, project_name)]);
+    }
     let mut connection = get_connection()?;
     let conn = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let revision = save_list_on(&conn, list, project_name)?;
@@ -369,7 +399,7 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
     Ok(())
 }
 
-fn save_list_on(conn: &Connection, list: &TodoList, project_name: &str) -> Result<i64> {
+pub(crate) fn save_list_on(conn: &Connection, list: &TodoList, project_name: &str) -> Result<i64> {
     anyhow::ensure!(
         list_revision(conn, list.date, project_name)? == list.revision.get(),
         "Conflict: this list changed in another interface. Reload and reapply your changes."
@@ -509,6 +539,9 @@ fn save_list_on(conn: &Connection, list: &TodoList, project_name: &str) -> Resul
 }
 
 pub fn save_lists_atomically(lists: &[(&TodoList, &str)]) -> Result<()> {
+    if let Some(client) = crate::remote::active() {
+        return client.save(lists);
+    }
     let mut conn = get_connection()?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let revisions = lists
@@ -537,6 +570,9 @@ pub fn rollover_snapshot(source: &TodoList, destination: &TodoList, project: &st
 }
 
 pub fn export_current_list(date: NaiveDate, project: &str, path: &std::path::Path) -> Result<()> {
+    if crate::remote::active().is_some() {
+        return Ok(());
+    }
     let mut conn = get_connection()?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let list = TodoList::with_items(date, path.to_path_buf(), load_items_on(&tx, date, project)?);
@@ -552,6 +588,12 @@ pub fn export_current_list(date: NaiveDate, project: &str, path: &std::path::Pat
 }
 
 pub fn has_todos_for_date_and_project(date: NaiveDate, project_name: &str) -> Result<bool> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::Exists {
+            project: project_name.into(),
+            date,
+        });
+    }
     let conn = get_connection()?;
     let date_str = date.format("%Y-%m-%d").to_string();
 
@@ -618,6 +660,9 @@ fn archive_on(conn: &Connection, date: NaiveDate, project_name: &str) -> Result<
 }
 
 pub fn load_history_snapshot(date: NaiveDate, project: &str, path: PathBuf) -> Result<TodoList> {
+    if let Some(client) = crate::remote::active() {
+        return client.load(project, date, true, path);
+    }
     let mut conn = get_connection()?;
     let tx = conn.transaction()?;
     let archived = load_archived_on(&tx, date, project)?;
@@ -636,11 +681,14 @@ pub fn load_archived_todos_for_date_and_project(
     date: NaiveDate,
     project_name: &str,
 ) -> Result<Vec<TodoItem>> {
+    if let Some(client) = crate::remote::active() {
+        return Ok(client.load(project_name, date, true, PathBuf::new())?.items);
+    }
     let conn = get_connection()?;
     load_archived_on(&conn, date, project_name)
 }
 
-fn load_archived_on(
+pub(crate) fn load_archived_on(
     conn: &Connection,
     date: NaiveDate,
     project_name: &str,
@@ -672,6 +720,9 @@ use crate::project::Project;
 
 /// Load all projects from the database
 pub fn load_projects() -> Result<Vec<Project>> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::Projects);
+    }
     init_database()?;
     let conn = get_connection()?;
 
@@ -708,6 +759,10 @@ pub fn load_projects() -> Result<Vec<Project>> {
 
 /// Get a project by name
 pub fn get_project_by_name(name: &str) -> Result<Option<Project>> {
+    if let Some(client) = crate::remote::active() {
+        let projects: Vec<Project> = client.call(crate::remote::protocol::Request::Projects)?;
+        return Ok(projects.into_iter().find(|p| p.name == name));
+    }
     init_database()?;
     let conn = get_connection()?;
 
@@ -739,6 +794,11 @@ pub fn get_project_by_name(name: &str) -> Result<Option<Project>> {
 
 /// Create a new project in the database
 pub fn create_project(project: &Project) -> Result<()> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::CreateProject {
+            project: project.clone(),
+        });
+    }
     init_database()?;
     let conn = get_connection()?;
 
@@ -756,6 +816,12 @@ pub fn create_project(project: &Project) -> Result<()> {
 
 /// Rename a project in the database
 pub fn rename_project(old_name: &str, new_name: &str) -> Result<()> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::RenameProject {
+            old: old_name.into(),
+            new: new_name.into(),
+        });
+    }
     init_database()?;
     let mut connection = get_connection()?;
     let conn = connection.transaction()?;
@@ -786,6 +852,9 @@ pub fn rename_project(old_name: &str, new_name: &str) -> Result<()> {
 }
 
 pub fn delete_project(name: &str) -> Result<()> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::DeleteProject { name: name.into() });
+    }
     init_database()?;
     let mut connection = get_connection()?;
     let conn = connection.transaction()?;

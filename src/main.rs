@@ -1,6 +1,7 @@
 use to_tui::api;
 mod app;
 mod cli;
+mod remote_cli;
 mod server;
 mod ui;
 mod web_process;
@@ -42,7 +43,11 @@ use utils::paths::{get_logs_dir, get_plugin_config_dir, get_plugin_config_path};
 /// Creates an empty list if no existing todos are found.
 fn load_today_list_for_project(project_name: &str) -> Result<todo::TodoList> {
     let today = Local::now().date_naive();
-    if file_exists_for_project(project_name, today)? {
+    if to_tui::remote::active()
+        .and_then(|client| client.cached())
+        .is_some()
+        || file_exists_for_project(project_name, today)?
+    {
         load_todo_list_for_project(project_name, today)
     } else {
         Ok(todo::TodoList::new(
@@ -190,6 +195,17 @@ fn main() -> Result<()> {
     install_crash_handler();
 
     let cli = Cli::parse();
+    if let Some(Commands::Remote { command }) = &cli.command {
+        return remote_cli::run(command.clone());
+    }
+    if cli.remote.is_some()
+        && !matches!(
+            cli.command,
+            None | Some(Commands::Add { .. } | Commands::Show { .. } | Commands::Todo { .. })
+        )
+    {
+        anyhow::bail!("--remote is supported for the TUI, add, show and todo commands");
+    }
     if let Some(Commands::Server { command }) = &cli.command {
         return server::run(command.clone());
     }
@@ -197,11 +213,50 @@ fn main() -> Result<()> {
         return web_process::run(options.clone());
     }
 
-    // Ensure installation is properly set up (handles v1 -> v2 migration)
-    ensure_installation_ready()?;
     let mut config = Config::load()?;
+    let selected_remote = if cli.local {
+        None
+    } else {
+        cli.remote.or_else(|| config.default_remote.clone())
+    };
+    if let Some(name) = selected_remote.as_deref() {
+        if !matches!(
+            cli.command,
+            None | Some(Commands::Add { .. } | Commands::Show { .. } | Commands::Todo { .. })
+        ) {
+            anyhow::bail!("This command requires local mode. Use --local explicitly");
+        }
+        let profile = config
+            .remotes
+            .get(name)
+            .ok_or_else(|| anyhow!("Unknown remote '{name}'"))?
+            .clone();
+        let use_cache = cli.command.is_none();
+        let mut client = to_tui::remote::Client::configured(name, profile.clone())?;
+        let root = utils::paths::get_to_tui_dir()?;
+        let warm_cache = profile.user_id.is_some()
+            && to_tui::remote::cache::Cache::exists(&client.workspace_path(root.clone()));
+        if !use_cache || !warm_cache {
+            let user = client.user()?;
+            let mut verified = profile;
+            verified.user_id = Some(user.id);
+            client = to_tui::remote::Client::configured(name, verified)?;
+            client.check()?;
+        }
+        if use_cache {
+            let path = client.workspace_path(root);
+            client = client.with_cache(&path)?;
+        }
+        to_tui::remote::activate(client)?;
+        fs::create_dir_all(utils::paths::get_to_tui_dir()?)?;
+        let projects = ProjectRegistry::load()?;
+        config = Config::load_for_remote(&config, |name| projects.get_by_name(name).is_some())?;
+    } else {
+        ensure_installation_ready()?;
+    }
 
     match cli.command {
+        Some(Commands::Remote { command }) => remote_cli::run(command)?,
         Some(Commands::Server { command }) => server::run(command)?,
         Some(Commands::Add { task }) => {
             handle_add(task)?;
@@ -234,7 +289,7 @@ fn main() -> Result<()> {
             handle_plugin_command(command)?;
         }
         Some(Commands::Todo { command }) => {
-            handle_todo_command(command)?;
+            handle_todo_command(command, selected_remote.as_deref())?;
         }
         Some(Commands::Hook { command }) => {
             handle_hook_command(command);
@@ -246,7 +301,9 @@ fn main() -> Result<()> {
 
             tracing::info!("totui starting");
 
-            ensure_server_running(DEFAULT_API_PORT)?;
+            if to_tui::remote::active().is_none() {
+                ensure_server_running(DEFAULT_API_PORT)?;
+            }
 
             // Determine which project to load
             let current_project = get_current_project(&mut config)?;
@@ -1101,10 +1158,44 @@ fn print_json<T: serde::Serialize>(value: &T) -> Result<()> {
     Ok(())
 }
 
-fn handle_todo_command(command: TodoCommand) -> Result<()> {
+fn handle_todo_command(command: TodoCommand, remote_name: Option<&str>) -> Result<()> {
     use to_tui::todo::ops;
 
+    let registry = ProjectRegistry::load()?;
+    let config = Config::load()?;
+    let folder = project::current_folder_key();
+    let project = match command.project() {
+        Some(name) => ops::resolve_project(Some(name)).map_err(|e| anyhow!(e))?,
+        None => project::resolve_project_name(
+            folder.as_deref(),
+            &config.folder_projects,
+            config.last_used_project.as_deref(),
+            |name| registry.get_by_name(name).is_some(),
+        ),
+    };
+    let client = to_tui::remote::active();
+    let backend = if client.is_some() { "remote" } else { "local" };
+    let url = client.as_ref().map(|c| c.url());
+    if matches!(
+        command,
+        TodoCommand::Create { .. }
+            | TodoCommand::Update { .. }
+            | TodoCommand::Move { .. }
+            | TodoCommand::Delete { .. }
+    ) {
+        eprintln!(
+            "Destination: {backend} {} | project {project}",
+            url.unwrap_or("database")
+        );
+    }
+    let selected_project = project;
     match command {
+        TodoCommand::Context { .. } => print_json(&serde_json::json!({
+            "backend": backend, "remote": remote_name, "server_url": url,
+            "project": selected_project, "folder": folder,
+            "directory": std::env::current_dir()?.canonicalize()?,
+            "data_directory": utils::paths::get_to_tui_dir()?,
+        })),
         TodoCommand::Create {
             json,
             content,
@@ -1113,7 +1204,7 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
             due_date,
             parent_id,
             priority,
-            project,
+            project: _,
             date,
         } => {
             let spec: ops::CreateSpec = match json {
@@ -1128,8 +1219,8 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                     priority,
                 },
             };
-            let item =
-                ops::create(project.as_deref(), date.as_deref(), spec).map_err(|e| anyhow!(e))?;
+            let item = ops::create(Some(selected_project.as_str()), date.as_deref(), spec)
+                .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Update {
@@ -1140,7 +1231,7 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
             state,
             due_date,
             priority,
-            project,
+            project: _,
             date,
         } => {
             let spec: ops::UpdateSpec = match json {
@@ -1158,33 +1249,47 @@ fn handle_todo_command(command: TodoCommand) -> Result<()> {
                     priority,
                 },
             };
-            let item = ops::update(project.as_deref(), date.as_deref(), &id, spec)
+            let item = ops::update(Some(selected_project.as_str()), date.as_deref(), &id, spec)
                 .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
         TodoCommand::Move {
             id,
             parent,
-            project,
+            project: _,
             date,
         } => {
-            let item = ops::move_item(project.as_deref(), date.as_deref(), &id, parent.as_deref())
+            let item = ops::move_item(
+                Some(selected_project.as_str()),
+                date.as_deref(),
+                &id,
+                parent.as_deref(),
+            )
+            .map_err(|e| anyhow!(e))?;
+            print_json(&item)
+        }
+        TodoCommand::Get {
+            id,
+            project: _,
+            date,
+        } => {
+            let item = ops::get(Some(selected_project.as_str()), date.as_deref(), &id)
                 .map_err(|e| anyhow!(e))?;
             print_json(&item)
         }
-        TodoCommand::Get { id, project, date } => {
-            let item =
-                ops::get(project.as_deref(), date.as_deref(), &id).map_err(|e| anyhow!(e))?;
-            print_json(&item)
-        }
-        TodoCommand::List { project, date } => {
-            let result = ops::list(project.as_deref(), date.as_deref()).map_err(|e| anyhow!(e))?;
+        TodoCommand::List { project: _, date } => {
+            let result = ops::list(Some(selected_project.as_str()), date.as_deref())
+                .map_err(|e| anyhow!(e))?;
             // Print the bare array so callers can pipe straight into `jq '.[]'`.
             print_json(&result.items)
         }
-        TodoCommand::Delete { id, project, date } => {
-            let removed =
-                ops::delete(project.as_deref(), date.as_deref(), &id).map_err(|e| anyhow!(e))?;
+        TodoCommand::Delete {
+            id,
+            project: _,
+            date,
+        } => {
+            let removed = ops::delete(Some(selected_project.as_str()), date.as_deref(), &id)
+                .map_err(|e| anyhow!(e))?;
             print_json(&serde_json::json!({ "deleted": removed }))
         }
         TodoCommand::Projects => {

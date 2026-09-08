@@ -36,6 +36,13 @@ use totui_plugin_interface::{
 const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    if state.sync_dialog.is_some() {
+        return super::sync::handle(key, state);
+    }
+    if key.code == KeyCode::F(6) {
+        super::sync::poll(state, true);
+        return Ok(());
+    }
     if key.code == KeyCode::F(5) && key.modifiers.is_empty() {
         let path = crate::utils::paths::get_to_tui_dir()?
             .join(format!("recovery-{}.md", uuid::Uuid::new_v4()));
@@ -154,7 +161,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
-    if state.mode == Mode::Web {
+    if state.mode == Mode::Web || state.sync_dialog.is_some() {
         return Ok(());
     }
     // Handle scroll events in help overlay
@@ -2564,7 +2571,9 @@ fn handle_project_create_input(
                     let project = project.clone();
                     // Create the project directory
                     let dailies_dir = get_dailies_dir_for_project(&project.name)?;
-                    fs::create_dir_all(&dailies_dir)?;
+                    if to_tui::remote::active().is_none() {
+                        fs::create_dir_all(&dailies_dir)?;
+                    }
 
                     state.set_status_message(format!("Created project '{}'", project.name));
 
@@ -2668,7 +2677,7 @@ fn handle_project_rename_input(
                     // Rename the project directory
                     let old_dir = get_project_dir(&project_name)?;
                     let new_dir = get_project_dir(&new_name)?;
-                    if old_dir.exists() {
+                    if to_tui::remote::active().is_none() && old_dir.exists() {
                         fs::rename(&old_dir, &new_dir)?;
                     }
 
@@ -2765,7 +2774,7 @@ fn handle_project_confirm_delete(
                 Ok(()) => {
                     // Delete the project directory
                     let project_dir = get_project_dir(&project_name)?;
-                    if project_dir.exists() {
+                    if to_tui::remote::active().is_none() && project_dir.exists() {
                         fs::remove_dir_all(&project_dir)?;
                     }
 

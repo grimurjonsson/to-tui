@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod client_auth;
 pub mod handlers;
 pub mod models;
 mod projects;

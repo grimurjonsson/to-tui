@@ -7,6 +7,14 @@ use chrono::{Local, NaiveDate};
 use std::fs;
 
 pub fn load_todo_list_for_project(project_name: &str, date: NaiveDate) -> Result<TodoList> {
+    if let Some(client) = crate::remote::active() {
+        return client.load(
+            project_name,
+            date,
+            false,
+            get_daily_file_path_for_project(project_name, date)?,
+        );
+    }
     ensure_project_directories_exist(project_name)?;
     database::init_database()?;
 
@@ -37,6 +45,9 @@ pub fn load_todo_list_for_project(project_name: &str, date: NaiveDate) -> Result
 }
 
 pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result<()> {
+    if let Some(client) = crate::remote::active() {
+        return client.save(&[(list, project_name)]);
+    }
     ensure_project_directories_exist(project_name)?;
     database::init_database()?;
 
@@ -47,12 +58,21 @@ pub fn save_todo_list_for_project(list: &TodoList, project_name: &str) -> Result
 }
 
 pub fn export_committed_list(list: &TodoList, project: &str) {
+    if crate::remote::active().is_some() {
+        return;
+    }
     if let Err(error) = database::export_current_list(list.date, project, &list.file_path) {
         tracing::warn!(%error, %project, date = %list.date, "Task changes committed; markdown export will be retried on the next save");
     }
 }
 
 pub fn file_exists_for_project(project_name: &str, date: NaiveDate) -> Result<bool> {
+    if let Some(client) = crate::remote::active() {
+        return client.call(crate::remote::protocol::Request::Exists {
+            project: project_name.into(),
+            date,
+        });
+    }
     database::init_database()?;
 
     if database::has_todos_for_date_and_project(date, project_name)? {
@@ -64,6 +84,14 @@ pub fn file_exists_for_project(project_name: &str, date: NaiveDate) -> Result<bo
 }
 
 pub fn load_todos_for_viewing_in_project(project_name: &str, date: NaiveDate) -> Result<TodoList> {
+    if let Some(client) = crate::remote::active() {
+        return client.load(
+            project_name,
+            date,
+            true,
+            get_daily_file_path_for_project(project_name, date)?,
+        );
+    }
     ensure_project_directories_exist(project_name)?;
     database::init_database()?;
 
