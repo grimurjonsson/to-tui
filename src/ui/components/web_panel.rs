@@ -28,11 +28,15 @@ pub fn render(frame: &mut Frame, state: &AppState) {
     };
     let muted = if light { Color::DarkGray } else { Color::Gray };
     let accent = state.theme.in_progress;
-    let status_color = match state.web.label() {
-        "running" => green,
-        "stopped" => muted,
-        "error" => state.theme.priority_p0,
-        _ => state.theme.priority_p1,
+    let status_color = if state.web.is_remote() {
+        accent
+    } else {
+        match state.web.label() {
+            "running" => green,
+            "stopped" => muted,
+            "error" => state.theme.priority_p0,
+            _ => state.theme.priority_p1,
+        }
     };
     let mut lines = vec![
         Line::from(vec![
@@ -51,6 +55,7 @@ pub fn render(frame: &mut Frame, state: &AppState) {
         Line::from(""),
     ];
     for action in WebAction::ALL {
+        let enabled = state.web.action_enabled(action);
         let color = match action {
             WebAction::Start => green,
             WebAction::Stop => state.theme.priority_p0,
@@ -58,7 +63,9 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             WebAction::Open => accent,
         };
         let selected = state.web.selected_action() == action;
-        let style = if selected {
+        let style = if !enabled {
+            Style::default().fg(muted).add_modifier(Modifier::DIM)
+        } else if selected {
             Style::default()
                 .fg(Color::White)
                 .bg(Color::Blue)
@@ -67,51 +74,58 @@ pub fn render(frame: &mut Frame, state: &AppState) {
             Style::default().fg(color)
         };
         lines.push(Line::styled(
-            format!(" {} {} ", if selected { "▶" } else { " " }, action.title()),
+            format!(
+                " {} {}{} ",
+                if selected { "▶" } else { " " },
+                action.title(),
+                if enabled { "" } else { " (disabled)" },
+            ),
             style,
         ));
     }
     lines.push(Line::from(""));
-    match &state.web.status {
-        Some(WebStatus::Running { url, legacy }) => {
-            lines.push(Line::styled(url.clone(), Style::default().fg(accent)));
-            if *legacy {
+    if !state.web.is_remote() {
+        match &state.web.status {
+            Some(WebStatus::Running { url, legacy }) => {
+                lines.push(Line::styled(url.clone(), Style::default().fg(accent)));
+                if *legacy {
+                    lines.push(Line::styled(
+                        "Existing API daemon; restart to enable managed web logs.",
+                        Style::default().fg(state.theme.priority_p1),
+                    ));
+                }
+            }
+            Some(WebStatus::External) => {
                 lines.push(Line::styled(
-                    "Existing API daemon; restart to enable managed web logs.",
+                    format!(
+                        "An untracked server is listening on port {}.",
+                        state.web.port,
+                    ),
                     Style::default().fg(state.theme.priority_p1),
                 ));
+                lines.push(Line::styled(
+                    "Stop it in the terminal that launched it.",
+                    Style::default().fg(muted),
+                ));
             }
-        }
-        Some(WebStatus::External) => {
-            lines.push(Line::styled(
-                format!(
-                    "An untracked server is listening on port {}.",
-                    state.web.port,
-                ),
-                Style::default().fg(state.theme.priority_p1),
-            ));
-            lines.push(Line::styled(
-                "Stop it in the terminal that launched it.",
+            _ => lines.push(Line::styled(
+                format!("Start port: {}", state.web.port),
                 Style::default().fg(muted),
-            ));
+            )),
         }
-        _ => lines.push(Line::styled(
-            format!("Start port: {}", state.web.port),
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled("Logs: ", Style::default().fg(muted)),
+            Span::styled(
+                "totui web logs --follow | lux",
+                Style::default().fg(state.theme.description_indicator),
+            ),
+        ]));
+        lines.push(Line::styled(
+            "The server keeps running when you close the TUI.",
             Style::default().fg(muted),
-        )),
+        ));
     }
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("Logs: ", Style::default().fg(muted)),
-        Span::styled(
-            "totui web logs --follow | lux",
-            Style::default().fg(state.theme.description_indicator),
-        ),
-    ]));
-    lines.push(Line::styled(
-        "The server keeps running when you close the TUI.",
-        Style::default().fg(muted),
-    ));
     if let Some(error) = &state.web.error {
         lines.push(Line::from(""));
         lines.push(Line::styled(

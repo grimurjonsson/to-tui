@@ -143,7 +143,7 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('w') => state.mode = Mode::Navigate,
             KeyCode::Up => state.web.select_previous(),
             KeyCode::Down => state.web.select_next(),
-            KeyCode::Enter => state.web.activate_selected(),
+            KeyCode::Enter => state.web.activate_selected(&state.current_project.name),
             _ => {}
         },
         Mode::Navigate => handle_navigate_mode(key, state)?,

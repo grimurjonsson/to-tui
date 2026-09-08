@@ -80,13 +80,12 @@ fn content(state: &AppState) -> [String; 5] {
         Some(version) => format!(" v{VERSION} → v{version} "),
         None => format!(" v{VERSION} "),
     };
-    [
-        info,
-        hints.into(),
-        format!(" {shortcut} web-ui ({}) ", state.web.label()),
-        " 🔗 ".into(),
-        version,
-    ]
+    let web = if to_tui::remote::active().is_some() {
+        format!(" {shortcut} web-ui ")
+    } else {
+        format!(" {shortcut} web-ui ({}) ", state.web.label())
+    };
+    [info, hints.into(), web, " 🔗 ".into(), version]
 }
 
 fn sections(area: Rect, content: &[String; 5]) -> [Rect; 5] {
