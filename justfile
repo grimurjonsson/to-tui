@@ -31,6 +31,10 @@ dev-web-stop:
 install-with-curl:
     curl -fsSL https://raw.githubusercontent.com/grimurjonsson/to-tui/main/scripts/install.sh | bash
 
+# Upgrade an installed, running Linux server from the latest GitHub release (asks first).
+upgrade-server-with-curl:
+    @python3 scripts/upgrade-server.py
+
 # Build and install to ~/.local/bin
 install:
     #!/usr/bin/env bash
