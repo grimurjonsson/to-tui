@@ -379,6 +379,7 @@ function switchProject(project) {
   changeScope();
 }
 function changeScope() {
+  message("list-copy-status", "");
   state.mutationError = "";
   closeStateMenu(false);
   cancelDrag();
@@ -799,6 +800,8 @@ function loadEditor(id) {
   for (const element of $("task-form").elements) element.disabled = readonly;
   $("task-actions").hidden = id === "new" || readonly;
   $("delete-actions").hidden = id === "new" || readonly;
+  $("copy-task").hidden = id === "new";
+  message("copy-status", "");
   message(
     "draft-status",
     readonly
@@ -1158,6 +1161,19 @@ function syncModal() {
 }
 matchMedia("(max-width:850px)").addEventListener("change", syncModal);
 $("details").addEventListener("keydown", (event) => {
+  if (
+    event.key === "y" &&
+    !event.defaultPrevented &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.target.closest("input, textarea, select, [contenteditable]") &&
+    !$("copy-task").hidden
+  ) {
+    event.preventDefault();
+    $("copy-task").click();
+    return;
+  }
   if (event.key === "Escape") {
     $("close-editor").click();
     return;
@@ -1669,6 +1685,11 @@ $("shortcuts-toggle").onclick = () => {
   showKeys(true);
 };
 $("keys-close").onclick = () => showKeys(false);
+$("copy-task").onclick = () =>
+  copyTaskText($("content").value, $("description").value, $("copy-status"));
+$("list").addEventListener("pointermove", () =>
+  $("list").classList.remove("keyboard-navigation"),
+);
 document.addEventListener("keydown", (event) => {
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
     return;
@@ -1698,8 +1719,13 @@ document.addEventListener("keydown", (event) => {
   const moveCursor = (target) => {
     if (!target) return;
     state.cursor = target.id;
+    state.selected = target.id;
+    if (state.editor) loadEditor(target.id);
     renderList(snapshot);
-    state.rows.get(target.id)?.scrollIntoView({ block: "nearest" });
+    $("list").classList.add("keyboard-navigation");
+    const row = state.rows.get(target.id);
+    row?.querySelector(".task-open").focus({ preventScroll: true });
+    row?.scrollIntoView({ block: "nearest" });
   };
   const hasChildren = (item) =>
     snapshot.items.some((child) => child.parent_id === item?.id);
@@ -1715,6 +1741,14 @@ document.addEventListener("keydown", (event) => {
       break;
     case "s":
       if (current) cycleState(current.id);
+      break;
+    case "y":
+      if (current)
+        copyTaskText(
+          current.content,
+          current.description,
+          $("list-copy-status"),
+        );
       break;
     case "h":
       if (!current) return;

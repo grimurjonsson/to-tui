@@ -54,6 +54,157 @@ async function createInBrowser(page, content) {
   ).toBeVisible();
 }
 
+test("j and k keep moving after closing the editor", async ({ page }) => {
+  const tasks = ["First", "Second", "Third"].map((content) =>
+    cli("create", "--content", content),
+  );
+  await page.goto(base);
+  await page.locator(`[data-id="${tasks[0].id}"] .task-open`).click();
+  await page.locator("#close-editor").click();
+  await page.keyboard.press("j");
+  await page.keyboard.press("j");
+  await expect(page.locator(`[data-id="${tasks[2].id}"]`)).toHaveClass(
+    /active|cursor/,
+  );
+  await expect(page.locator("#details")).not.toBeVisible();
+  await page.keyboard.press("k");
+  await page.keyboard.press("k");
+  await expect(
+    page.locator(`[data-id="${tasks[0].id}"] .task-open`),
+  ).toBeFocused();
+  await expect(page.locator(".task-row.active,.task-row.cursor")).toHaveCount(
+    1,
+  );
+});
+
+test("j and k repeatedly move one highlighted task and follow the editor without losing drafts", async ({
+  page,
+}) => {
+  const tasks = ["First", "Second", "Third", "Fourth"].map((content) =>
+    cli("create", "--content", content),
+  );
+  await page.goto(base);
+  await page.locator(`[data-id="${tasks[0].id}"] .task-open`).click();
+  await page.locator("#description").fill("Keep my draft");
+  await page.locator(`[data-id="${tasks[0].id}"] .task-open`).focus();
+  await page.locator(`[data-id="${tasks[0].id}"] .task-open`).hover();
+  for (const [key, index] of [
+    ["j", 1],
+    ["j", 2],
+    ["j", 3],
+    ["k", 2],
+    ["k", 1],
+    ["k", 0],
+  ]) {
+    await page.keyboard.press(key);
+    await expect(page.locator(".task-row.active,.task-row.cursor")).toHaveCount(
+      1,
+    );
+    await expect(
+      page.locator(".task-row.active,.task-row.cursor"),
+    ).toHaveAttribute("data-id", tasks[index].id);
+    await expect(
+      page.locator(`[data-id="${tasks[index].id}"] .task-open`),
+    ).toBeFocused();
+    await expect(page.locator("#content")).toHaveValue(tasks[index].content);
+    if (index !== 0)
+      await expect(page.locator(`[data-id="${tasks[0].id}"]`)).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+  }
+  await expect(page.locator("#description")).toHaveValue("Keep my draft");
+  expect(cli("get", tasks[0].id).description).toBeUndefined();
+});
+
+test("copy task uses the requested format from keyboard and editor without saving", async ({
+  page,
+}) => {
+  const task = cli(
+    "create",
+    "--content",
+    "Plan café ☕",
+    "--description",
+    "First step\nSecond step",
+  );
+  await page.addInitScript(() => {
+    window.copiedTasks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (value) => {
+          window.copiedTasks.push(value);
+        },
+      },
+    });
+  });
+  await page.goto(base);
+  const row = page.locator(`[data-id="${task.id}"] .task-open`);
+  await row.focus();
+  await page.keyboard.press("y");
+  await expect(page.locator("#list-copy-status")).toHaveText(
+    "Copied to clipboard",
+  );
+  expect(await page.evaluate(() => window.copiedTasks)).toEqual([
+    "Plan café ☕ - First step\nSecond step",
+  ]);
+
+  await row.click();
+  await page.locator("#content").fill("Edited title");
+  await page.locator("#description").fill("Unsaved details");
+  await page.getByRole("button", { name: "Copy task", exact: true }).click();
+  await expect(page.locator("#copy-status")).toHaveText("Copied to clipboard");
+  expect(await page.evaluate(() => window.copiedTasks.at(-1))).toBe(
+    "Edited title - Unsaved details",
+  );
+  expect(cli("get", task.id).content).toBe("Plan café ☕");
+  expect(cli("get", task.id).description).toBe("First step\nSecond step");
+
+  for (const description of ["", "   \n  "]) {
+    await page.locator("#description").fill(description);
+    await page.locator("#close-editor").focus();
+    await page.keyboard.press("y");
+    expect(await page.evaluate(() => window.copiedTasks.at(-1))).toBe(
+      "Edited title",
+    );
+  }
+  const count = await page.evaluate(() => window.copiedTasks.length);
+  await page.locator("#description").fill("");
+  await page.keyboard.press("y");
+  await expect(page.locator("#description")).toHaveValue("y");
+  await page.locator("#close-editor").focus();
+  await page.keyboard.press("Control+y");
+  expect(await page.evaluate(() => window.copiedTasks.length)).toBe(count);
+});
+
+test("copy task reports denied and unavailable clipboard access without changing the task", async ({
+  page,
+}) => {
+  const task = cli("create", "--content", "Keep this task");
+  const before = cli("get", task.id);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async () => {
+          throw new DOMException("Denied", "NotAllowedError");
+        },
+      },
+    });
+  });
+  await page.goto(base);
+  await page.locator(`[data-id="${task.id}"] .task-open`).click();
+  await page.locator("#copy-task").click();
+  await expect(page.locator("#copy-status")).toContainText("Could not copy");
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "clipboard", { value: undefined }),
+  );
+  await page.locator("#copy-task").click();
+  await expect(page.locator("#copy-status")).toContainText(
+    "Clipboard unavailable",
+  );
+  expect(cli("get", task.id)).toEqual(before);
+});
+
 test("drafts, conflict recovery, external writers, tabs, and measured rendering", async ({
   page,
   context,

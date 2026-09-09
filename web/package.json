@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "node --check app.js && prettier --check app.js style.css index.html playwright.config.js tests/*.js",
+    "check": "node --check app.js && node --check kanban.js && node --check clipboard.js && prettier --check *.js *.css *.html tests/*.js",
     "test": "playwright test",
-    "format": "prettier --write app.js style.css index.html playwright.config.js tests/*.js"
+    "format": "prettier --write *.js *.css *.html tests/*.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

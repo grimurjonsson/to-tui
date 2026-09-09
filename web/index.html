@@ -8,6 +8,7 @@
     <title>totui</title>
     <link rel="icon" href="/favicon.ico" type="image/x-icon" />
     <link rel="stylesheet" href="style.css" />
+    <script src="clipboard.js" defer></script>
     <script src="app.js" defer></script>
   </head>
   <body>
@@ -109,6 +110,7 @@
             /></label>
           </div>
           <div id="notice" role="status" hidden></div>
+          <div id="list-copy-status" class="hint" role="status" hidden></div>
           <div id="error" role="alert" hidden></div>
           <div class="ledger">
             <div class="ledger-row head" aria-hidden="true">
@@ -217,6 +219,12 @@
               ><span id="save-status" role="status"></span>
             </div>
           </form>
+          <div class="branch-actions">
+            <button id="copy-task" class="textlink" title="Copy task (y)">
+              Copy task
+            </button>
+            <span id="copy-status" class="hint" role="status" hidden></span>
+          </div>
           <details id="task-actions" class="move">
             <summary>Move</summary>
             <div class="move-inner">
@@ -265,6 +273,7 @@
       <div><b>j k</b> move</div>
       <div><b>x</b> toggle done</div>
       <div><b>s</b> cycle state</div>
+      <div><b>y</b> copy task</div>
       <div><b>h l</b> fold, unfold</div>
       <div><b>o</b> new task</div>
       <div><b>↵</b> open details</div>

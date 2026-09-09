@@ -145,6 +145,12 @@ pub async fn script() -> impl IntoResponse {
         include_str!("../../web/app.js"),
     )
 }
+pub async fn clipboard_script() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript")],
+        include_str!("../../web/clipboard.js"),
+    )
+}
 pub async fn style() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css")],

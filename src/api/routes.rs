@@ -35,6 +35,7 @@ fn router(state: auth::ServerState) -> Router {
         .route("/kanban.css", get(super::kanban::style))
         .route("/signed-out", get(server_info::signed_out))
         .route("/app.js", get(web::script))
+        .route("/clipboard.js", get(web::clipboard_script))
         .route("/style.css", get(web::style))
         .route("/favicon.ico", get(web::favicon))
         .route("/fonts/IBMPlexSans-latin.woff2", get(web::font_sans))

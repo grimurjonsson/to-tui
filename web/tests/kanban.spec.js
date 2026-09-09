@@ -57,6 +57,49 @@ test.afterEach(async () => {
 const card = (page) =>
   page.locator(".kanban-card,.kanban-row").filter({ hasText: "Drag me" });
 const column = (page, status) => page.locator(`[data-status="${status}"]`);
+test("copy ticket supports focused cards and editor drafts without changing the board", async ({
+  page,
+}) => {
+  const before = action({ action: "view" });
+  await page.addInitScript(() => {
+    window.copiedTasks = [];
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (value) => {
+          window.copiedTasks.push(value);
+        },
+      },
+    });
+  });
+  await page.goto(`${base}/kanban`);
+  await card(page).locator(".kanban-card-open").focus();
+  await page.keyboard.press("y");
+  await expect(page.locator("#board-copy-status")).toHaveText(
+    "Copied to clipboard",
+  );
+  expect(await page.evaluate(() => window.copiedTasks)).toEqual([
+    "Drag me - Keep details",
+  ]);
+  await card(page).locator(".kanban-card-open").click();
+  await page.locator("#title").fill("Revised ticket");
+  await page.locator("#description").fill("Details\nwith Unicode ✓");
+  await page.locator("#copy-ticket").click();
+  await expect(page.locator("#copy-status")).toHaveText("Copied to clipboard");
+  expect(await page.evaluate(() => window.copiedTasks.at(-1))).toBe(
+    "Revised ticket - Details\nwith Unicode ✓",
+  );
+  await page.locator("#description").fill("");
+  await page.locator("#close").focus();
+  await page.keyboard.press("y");
+  expect(await page.evaluate(() => window.copiedTasks.at(-1))).toBe(
+    "Revised ticket",
+  );
+  await page.locator("#description").focus();
+  await page.keyboard.press("y");
+  await expect(page.locator("#description")).toHaveValue("y");
+  expect(await page.evaluate(() => window.copiedTasks.length)).toBe(3);
+  expect(action({ action: "view" })).toEqual(before);
+});
 test("drag moves persist and backward drops require a reason", async ({
   page,
 }) => {

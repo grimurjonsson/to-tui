@@ -222,6 +222,16 @@ function render() {
             element("span", `Updated ${shortStamp(ticket.updated_at)}`),
           );
           open.onclick = () => openEditor("ticket", ticket);
+          card.onkeydown = (event) => {
+            if (isCopyShortcut(event) && !draggedTicket) {
+              event.preventDefault();
+              copyTaskText(
+                ticket.title,
+                ticket.description,
+                $("board-copy-status"),
+              );
+            }
+          };
           card.append(open);
           const actions = element("div", "", "card-actions");
           function shortcut(text, handler, className) {
@@ -345,6 +355,7 @@ function openEditor(nextMode, ticket = null) {
   mode = nextMode;
   editorTicket = ticket ? structuredClone(ticket) : null;
   message("form-error", "");
+  message("copy-status", "");
   $("stale").hidden = true;
   $("editor-heading").textContent =
     mode === "board"
@@ -479,6 +490,24 @@ async function quickAction(ticket, action, fields = {}) {
 }
 $("to-board").onclick = () =>
   mutate("move_ticket", { ...ticketFields(), status: "ready", reason: null });
+function isCopyShortcut(event) {
+  return (
+    event.key === "y" &&
+    !event.defaultPrevented &&
+    !event.metaKey &&
+    !event.ctrlKey &&
+    !event.altKey &&
+    !event.target.closest("input, textarea, select, [contenteditable]")
+  );
+}
+$("copy-ticket").onclick = () =>
+  copyTaskText($("title").value, $("description").value, $("copy-status"));
+$("editor").addEventListener("keydown", (event) => {
+  if (editorTicket && isCopyShortcut(event)) {
+    event.preventDefault();
+    $("copy-ticket").click();
+  }
+});
 $("archive-ticket").onclick = () =>
   mutate(
     editorTicket.archived ? "unarchive_ticket" : "archive_ticket",

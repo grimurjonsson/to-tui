@@ -581,7 +581,7 @@ main {
   display: flex;
   gap: 12px;
 }
-.task-row:hover {
+#list:not(.keyboard-navigation) .task-row:hover {
   background: rgba(255, 255, 255, 0.03);
 }
 .task-row.cursor {

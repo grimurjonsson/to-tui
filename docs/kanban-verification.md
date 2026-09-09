@@ -1,5 +1,19 @@
 # Kanban completion verification
 
+## Keyboard navigation correction (2026-09-09)
+
+Reproduced two web navigation failures: repeated `j` presses stayed one row below the original focused row, and the editor selection and keyboard cursor highlighted different rows. Navigation now moves browser focus, cursor, and selection together, updates an already-open editor while preserving drafts, and suppresses mouse-hover row shading until the pointer moves. Regression tests cover repeated movement in both directions with the editor open and closed, one highlighted row, retained drafts, and hover shading.
+
+All 43 browser tests passed, along with Rust formatting, strict all-target Clippy, build and tests. The Linux release passed the two navigation regressions and two clipboard checks. Deployed from `/home/caitlyn/repos/to-tui-clipboard-20260909`, preserving the clipboard feature and sticky-note styling. Backup: `/root/totui-backup.VDX3sLME`. Installed/built SHA-256: `d92841f4eb5a93a395bcede941ae00a24ed112c01e439708d8d0ac2b5bc8396b`. Service readiness and authenticated HTTPS project reads passed; no recent service errors were logged.
+
+## Web clipboard deployment (2026-09-09)
+
+Deployed Copy task buttons and `y` shortcuts for daily tasks and Kanban tickets to Caitlyn. Copies use `Task name - description`, omitting the separator when the description is empty. The deployed build preserves the current chalk dividers and sticky-note styling from the Kanban design worktree.
+
+Combined source: `/home/caitlyn/repos/to-tui-clipboard-20260909`. Pre-upgrade binary, unit, and database/state backup: `/root/totui-backup.5Ng8FUkL`. Installed and built binary SHA-256: `9990091dd9fa9c945422903114112776d5bd12d78acdc4ea7a41dde6de412d84`.
+
+Validation: all 41 local browser tests, Rust formatting, strict all-target Clippy, build and tests passed. The combined Linux build passed eight Kanban browser tests and two daily-task clipboard tests, web syntax/format checks, and warning-free debug/release builds. After installation, service/database readiness and authenticated public HTTPS account/project reads passed. An isolated instance of the installed binary served clipboard and UI assets matching the combined source byte-for-byte. No recent service errors were logged.
+
 Verified 2026-09-09 against the current worktrees and installed release artifacts. Historical checkpoints in `kanban-implementation.md` record intermediate gaps; this audit supersedes their outstanding-work notes.
 
 | Requested outcome | Implementation and evidence |
