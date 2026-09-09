@@ -1361,3 +1361,51 @@ dialog p {
     scroll-behavior: auto !important;
   }
 }
+
+.task-edit {
+  border: 0;
+  padding: 0 6px;
+  color: var(--faint);
+  font-size: 0.75rem;
+}
+.inline-edit {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.inline-edit textarea {
+  background: var(--raised);
+  border: 1px solid var(--muted);
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-height: 0;
+  resize: none;
+  overflow: hidden;
+  line-height: var(--pitch);
+  flex: 1;
+  min-width: 80px;
+  width: 100%;
+  font: inherit;
+}
+.inline-edit textarea:focus {
+  border-color: var(--hl);
+  box-shadow: 0 0 0 2px var(--hl-soft);
+}
+.inline-edit .hint {
+  width: 100%;
+}
+
+.task-row:has(.inline-edit) .entry {
+  grid-column: 3 / -1;
+}
+.task-row:has(.inline-edit) :is(.pri, .due, .task-edit) {
+  display: none;
+}
+.inline-edit button {
+  padding: 0 6px;
+  font-size: 0.75rem;
+  line-height: var(--pitch);
+}

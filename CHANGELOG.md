@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2026-09-09
+Task text fields in the web UI now grow as you type, and sidebar edit and save actions are explicit buttons instead of implicit behaviors.
+
+### Added
+- Add auto-growing inline task editing with explicit sidebar controls
+
 ## [0.7.2] - 2026-09-09
 Kanban boards are now available across the CLI, MCP server, REST API, remote sync, and web UI. The web workspace has been redesigned as a dark ledger, tasks can be copied from the web, and keyboard row navigation has been fixed. Toggling items on remote-synced lists now responds immediately thanks to incremental cache persistence.
 

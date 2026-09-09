@@ -1,5 +1,25 @@
 # Kanban completion verification
 
+## Inline cursor placement (2026-09-09)
+
+Opening the inline editor places a collapsed selection at the end of the title. Desktop/phone checks verify focus and both selection offsets; both passed along with web checks and the builds. Deployed to Caitlyn with backup `/root/totui-backup.hzEk7kX4`; installed/built SHA-256: `78071197d93f8fa2d4c9adf3af7d827d42a8032bad5f76314d657e837b813710`. Service readiness and authenticated public account reads passed.
+
+## Inline editor boundary (2026-09-09)
+
+Added an opaque raised background, full border, padding, and amber focus ring to distinguish editable text from surrounding tasks and action buttons. Five existing inline browser checks and web formatting/syntax checks passed; the debug and Linux release builds passed. Deployed to Caitlyn with backup `/root/totui-backup.3NQo1Pj4`; installed/built SHA-256: `65bcc6a97aeee9affecd2301bdfe6c239975c4ee1db49497dcd19fc8098cb4e3`. Service readiness and authenticated public account reads passed.
+
+## Growing inline editor (2026-09-09)
+
+The inline title editor now wraps text and measures its height on opening, input, and list resizing. It expands for long titles and shrinks after deletion. Enter still saves; Shift+Enter inserts a line break. Five focused browser checks passed, covering desktop/phone initial sizing, growth, shrinkage, viewport resizing, saving/cancellation, and conflict preservation. Web syntax/format checks and Rust formatting, strict all-target Clippy, build and tests passed.
+
+Deployed to Caitlyn after the five focused release-browser checks passed. Backup: `/root/totui-backup.LKk4cSHL`. Installed/built SHA-256: `0a361ffe07602bbc85687a8fc3975da40420f3f28c9c339f054e4ff386de1abe`. Service readiness and authenticated public account reads passed.
+
+## Inline task renaming (2026-09-09)
+
+Daily task titles now open an inline rename field. Enter/Save commits and Escape/Cancel discards; Edit buttons and the right-click menu open the full sidebar. Inline updates preserve other fields and reject stale revisions while retaining the entered text. Desktop and phone previews were inspected. The browser suite passed 45 scenarios initially; the remaining account-switch test was updated to use the Edit button, then passed alongside all three inline regressions. Rust formatting, strict all-target Clippy, build/tests, and web formatting/syntax checks passed.
+
+The combined Caitlyn release passed four focused browser checks and was deployed with its existing sticky-note styling preserved. Backup: `/root/totui-backup.135NrJNx`. Installed/built SHA-256: `58f5b1cad85d05357378ff85c9b4634de3c105a0261ef6dadc4796d9b9480321`. The service is active and authenticated public account reads succeeded.
+
 ## Keyboard navigation correction (2026-09-09)
 
 Reproduced two web navigation failures: repeated `j` presses stayed one row below the original focused row, and the editor selection and keyboard cursor highlighted different rows. Navigation now moves browser focus, cursor, and selection together, updates an already-open editor while preserving drafts, and suppresses mouse-hover row shading until the pointer moves. Regression tests cover repeated movement in both directions with the editor open and closed, one highlighted row, retained drafts, and hover shading.

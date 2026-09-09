@@ -537,12 +537,16 @@ function renderList(previous) {
       const open = document.createElement("button");
       open.className = "task-open";
       open.innerHTML = '<span class="task-title"></span>';
-      open.onclick = () => select(item.id);
+      open.onclick = () => editInline(item.id);
       const fold = document.createElement("button");
       fold.className = "fold";
       fold.hidden = true;
       fold.onclick = () => unfoldItem(item.id);
-      entry.append(branch, open, fold);
+      const edit = document.createElement("button");
+      edit.className = "task-edit";
+      edit.textContent = "Edit";
+      edit.onclick = () => select(item.id);
+      entry.append(branch, open, fold, edit);
       const priority = document.createElement("div");
       priority.className = "pri";
       priority.innerHTML = '<span class="priority-badge" hidden></span>';
@@ -599,6 +603,9 @@ function renderList(previous) {
     checkbox.setAttribute("aria-label", `Complete ${item.content}`);
     checkbox.title = `${item.state_description.replace("_", " ")}. Click to ${item.state === "x" ? "mark pending" : "mark done"}, right-click for every state`;
     text(row.querySelector(".task-title"), item.content);
+    row
+      .querySelector(".task-edit")
+      .setAttribute("aria-label", `Edit ${item.content}`);
     row
       .querySelector(".task-open")
       .setAttribute(
@@ -1435,6 +1442,88 @@ async function setTaskState(id, nextState, revision, targetQuery) {
   } else await refresh();
 }
 
+function resizeInlineInput(input) {
+  input.style.height = "auto";
+  const style = getComputedStyle(input);
+  input.style.height = `${input.scrollHeight + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)}px`;
+}
+new ResizeObserver(() => {
+  document.querySelectorAll(".inline-edit textarea").forEach(resizeInlineInput);
+}).observe($("list"));
+
+function editInline(id) {
+  if (state.saving || state.drag) return;
+  if (state.snapshot.read_only) return select(id);
+  const row = state.rows.get(id);
+  if (row.querySelector(".inline-edit")) {
+    row.querySelector("textarea").focus();
+    return;
+  }
+  const item = state.snapshot.items.find((task) => task.id === id);
+  if (!item) return;
+  closeEditor();
+  const revision = state.snapshot.revision;
+  const targetQuery = query().toString();
+  const title = row.querySelector(".task-open");
+  const form = document.createElement("form");
+  form.className = "inline-edit";
+  const input = document.createElement("textarea");
+  input.rows = 1;
+  input.addEventListener("input", () => resizeInlineInput(input));
+  input.value = item.content;
+  input.required = true;
+  input.setAttribute("aria-label", "Task name");
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save";
+  const cancel = document.createElement("button");
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  const status = document.createElement("span");
+  status.className = "hint";
+  status.setAttribute("role", "status");
+  const close = () => {
+    form.remove();
+    title.hidden = false;
+    title.focus({ preventScroll: true });
+  };
+  cancel.onclick = close;
+  form.onkeydown = (event) => {
+    event.stopPropagation();
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+    if (event.key === "Escape" && !state.saving) {
+      event.preventDefault();
+      close();
+    }
+  };
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const content = input.value.trim();
+    if (!content || state.saving) return;
+    if (content === item.content) return close();
+    status.textContent = "Saving…";
+    const saved = await mutate(
+      `api/todos/${id}?${targetQuery}`,
+      "PATCH",
+      { content, expected_revision: revision },
+      null,
+    );
+    if (saved) close();
+    else
+      status.textContent =
+        "Not saved. Your text is kept here; cancel to load the latest task.";
+  };
+  form.append(input, save, cancel, status);
+  title.hidden = true;
+  title.after(form);
+  resizeInlineInput(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+}
+
 function openStateMenu(event, id) {
   if (state.snapshot.read_only || state.saving || state.drag) return;
   const item = state.snapshot.items.find((task) => task.id === id);
@@ -1452,6 +1541,15 @@ function openStateMenu(event, id) {
   const menu = $("state-menu");
   menu.setAttribute("aria-label", `State of ${item.content}`);
   menu.replaceChildren();
+  const edit = document.createElement("button");
+  edit.type = "button";
+  edit.setAttribute("role", "menuitem");
+  edit.textContent = "Edit task";
+  edit.onclick = () => {
+    closeStateMenu(false);
+    select(id);
+  };
+  menu.append(edit);
   for (const option of $("state").options) {
     const button = document.createElement("button");
     button.type = "button";

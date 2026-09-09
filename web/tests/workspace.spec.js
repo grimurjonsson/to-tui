@@ -59,7 +59,7 @@ test("j and k keep moving after closing the editor", async ({ page }) => {
     cli("create", "--content", content),
   );
   await page.goto(base);
-  await page.locator(`[data-id="${tasks[0].id}"] .task-open`).click();
+  await page.locator(`[data-id="${tasks[0].id}"] .task-edit`).click();
   await page.locator("#close-editor").click();
   await page.keyboard.press("j");
   await page.keyboard.press("j");
@@ -84,7 +84,7 @@ test("j and k repeatedly move one highlighted task and follow the editor without
     cli("create", "--content", content),
   );
   await page.goto(base);
-  await page.locator(`[data-id="${tasks[0].id}"] .task-open`).click();
+  await page.locator(`[data-id="${tasks[0].id}"] .task-edit`).click();
   await page.locator("#description").fill("Keep my draft");
   await page.locator(`[data-id="${tasks[0].id}"] .task-open`).focus();
   await page.locator(`[data-id="${tasks[0].id}"] .task-open`).hover();
@@ -148,7 +148,7 @@ test("copy task uses the requested format from keyboard and editor without savin
     "Plan café ☕ - First step\nSecond step",
   ]);
 
-  await row.click();
+  await page.locator(`[data-id="${task.id}"] .task-edit`).click();
   await page.locator("#content").fill("Edited title");
   await page.locator("#description").fill("Unsaved details");
   await page.getByRole("button", { name: "Copy task", exact: true }).click();
@@ -192,7 +192,7 @@ test("copy task reports denied and unavailable clipboard access without changing
     });
   });
   await page.goto(base);
-  await page.locator(`[data-id="${task.id}"] .task-open`).click();
+  await page.locator(`[data-id="${task.id}"] .task-edit`).click();
   await page.locator("#copy-task").click();
   await expect(page.locator("#copy-status")).toContainText("Could not copy");
   await page.evaluate(() =>
@@ -211,7 +211,7 @@ test("drafts, conflict recovery, external writers, tabs, and measured rendering"
 }) => {
   const task = cli("create", "--content", "Plan release", "--state", "*");
   await page.goto(base);
-  await page.getByRole("button", { name: "Plan release in progress" }).click();
+  await page.getByRole("button", { name: "Edit Plan release" }).click();
   await page
     .getByRole("textbox", { name: "Description", exact: true })
     .fill("An active browser draft");
@@ -361,7 +361,7 @@ test("phone hierarchy controls, all states, clearing fields, deletion, and theme
   const page = await context.newPage();
   await page.goto(base);
   await createInBrowser(page, "Parent task");
-  await page.getByRole("button", { name: "Parent task pending" }).tap();
+  await page.getByRole("button", { name: "Edit Parent task" }).tap();
   await expect(
     page.getByRole("dialog", { name: "Task details" }),
   ).toBeVisible();
@@ -383,7 +383,7 @@ test("phone hierarchy controls, all states, clearing fields, deletion, and theme
   await page
     .getByRole("button", { name: "Expand Parent task", exact: true })
     .tap();
-  await page.getByRole("button", { name: "Child task pending" }).tap();
+  await page.getByRole("button", { name: "Edit Child task" }).tap();
   for (const state of ["*", "x", "?", "!", "-", " "]) {
     await page
       .getByRole("combobox", { name: "State", exact: true })
@@ -552,7 +552,7 @@ test("reordering above the viewport preserves the visible task and active draft"
     );
     return { id: row.dataset.id, y: row.getBoundingClientRect().top };
   });
-  await page.locator(`[data-id="${anchor.id}"] .task-open`).click();
+  await page.locator(`[data-id="${anchor.id}"] .task-edit`).click();
   await page
     .getByRole("textbox", { name: "Description", exact: true })
     .fill("Draft survives movement above the viewport");
@@ -614,7 +614,7 @@ for (const phone of [false, true]) {
       page.getByRole("button", { name: "Collapse Destination", exact: true }),
     );
     await activate(
-      page.getByRole("button", { name: "Moving branch pending", exact: true }),
+      page.getByRole("button", { name: "Edit Moving branch", exact: true }),
     );
     await expect(page.locator("#move-root")).toBeDisabled();
     await openMove(page);
@@ -636,7 +636,7 @@ for (const phone of [false, true]) {
     if (phone)
       await activate(
         page.getByRole("button", {
-          name: "Moving branch pending",
+          name: "Edit Moving branch",
           exact: true,
         }),
       );
@@ -722,9 +722,7 @@ test("Save task commits parent, position, and text together", async ({
   const parent = cli("create", "--content", "Destination");
   const task = cli("create", "--content", "Move me");
   await page.goto(base);
-  await page
-    .getByRole("button", { name: "Move me pending", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Edit Move me", exact: true }).click();
   await openMove(page);
   await page
     .getByRole("combobox", { name: "Move under", exact: true })
@@ -788,7 +786,7 @@ for (const phone of [false, true]) {
     const c = cli("create", "--content", "Branch C");
     await page.goto(base);
     await page
-      .getByRole("button", { name: "Branch A pending", exact: true })
+      .getByRole("button", { name: "Edit Branch A", exact: true })
       .click();
     await page.locator("#description").fill("Draft stays while dragging");
     if (phone) await page.locator("#close-editor").click();
@@ -843,7 +841,7 @@ for (const phone of [false, true]) {
     await expect.poll(() => cli("get", c.id).indent_level).toBe(0);
     if (phone)
       await page
-        .getByRole("button", { name: "Branch A pending", exact: true })
+        .getByRole("button", { name: "Edit Branch A", exact: true })
         .click();
     await expect(page.locator("#description")).toHaveValue(
       "Draft stays while dragging",
@@ -863,9 +861,7 @@ test("drag rejects stale placement while keeping an active draft", async ({
   const a = cli("create", "--content", "Drag A");
   const b = cli("create", "--content", "Drag B");
   await page.goto(base);
-  await page
-    .getByRole("button", { name: "Drag A pending", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Edit Drag A", exact: true }).click();
   await page.locator("#description").fill("Do not lose this draft");
   const from = await page
     .locator(`[data-id="${a.id}"] .drag-handle`)
@@ -959,7 +955,7 @@ for (const phone of [false, true]) {
     const task = cli("create", "--content", "Clickable task", "--state", "*");
     await page.goto(base);
     await page
-      .getByRole("button", { name: "Clickable task in progress", exact: true })
+      .getByRole("button", { name: "Edit Clickable task", exact: true })
       .click();
     await page.locator("#description").fill("Keep this draft");
     if (phone) await page.locator("#close-editor").click();
@@ -994,7 +990,7 @@ for (const phone of [false, true]) {
     expect(completedAt()).toBe("None");
     if (phone)
       await page
-        .getByRole("button", { name: "Clickable task pending", exact: true })
+        .getByRole("button", { name: "Edit Clickable task", exact: true })
         .click();
     await expect(page.locator("#description")).toHaveValue("Keep this draft");
     if (phone) await page.locator("#close-editor").click();
@@ -1026,7 +1022,7 @@ test("right-click state menu saves all states, preserves drafts, and supports ke
   const task = cli("create", "--content", "Context task");
   await page.goto(base);
   await page
-    .getByRole("button", { name: "Context task pending", exact: true })
+    .getByRole("button", { name: "Edit Context task", exact: true })
     .click();
   await page.locator("#description").fill("Context menu draft");
   const row = page.locator(`[data-id="${task.id}"]`);
@@ -1083,7 +1079,7 @@ test("right-click state menu saves all states, preserves drafts, and supports ke
   cli("create", "--content", "History menu", "--date", "2025-01-01");
   await page.getByLabel("Browse historical date").fill("2025-01-01");
   await page
-    .getByRole("button", { name: "History menu pending", exact: true })
+    .getByRole("button", { name: "Edit History menu", exact: true })
     .click({ button: "right" });
   await expect(page.locator("#state-menu")).toBeHidden();
 });
@@ -1145,7 +1141,7 @@ test("details panel takes space only while editing and keeps closed drafts", asy
   await expect(page.locator("#details")).toBeHidden();
   const width = (await page.locator("main").boundingBox()).width;
   await page
-    .getByRole("button", { name: "Panel task pending", exact: true })
+    .getByRole("button", { name: "Edit Panel task", exact: true })
     .click();
   await expect(page.locator("#details")).toBeVisible();
   expect((await page.locator("main").boundingBox()).width).toBeLessThan(width);
@@ -1154,7 +1150,7 @@ test("details panel takes space only while editing and keeps closed drafts", asy
   await expect(page.locator("#details")).toBeHidden();
   expect((await page.locator("main").boundingBox()).width).toBe(width);
   await page
-    .getByRole("button", { name: "Panel task pending", exact: true })
+    .getByRole("button", { name: "Edit Panel task", exact: true })
     .click();
   await expect(page.locator("#description")).toHaveValue(
     "Draft survives closing",
@@ -1164,7 +1160,7 @@ test("details panel takes space only while editing and keeps closed drafts", asy
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator("#details")).toBeHidden();
   await page
-    .getByRole("button", { name: "Panel task pending", exact: true })
+    .getByRole("button", { name: "Edit Panel task", exact: true })
     .click();
   await expect(
     page.getByRole("dialog", { name: "Task details" }),
@@ -1358,7 +1354,7 @@ test("an account switch reloads before using another user's response", async ({
   cli("create", "--content", "Account switch task");
   await page.goto(base);
   await expect(page.locator(".task-title")).toHaveText("Account switch task");
-  await page.locator(".task-title").click();
+  await page.locator(".task-edit").click();
   await page
     .getByRole("textbox", { name: "Description", exact: true })
     .fill("Unsaved private draft");
@@ -1634,3 +1630,102 @@ test("email opens the account menu and only a confirmed current version gets a c
     await expect(page.locator("#server-current")).toBeHidden();
   }
 });
+
+for (const phone of [false, true]) {
+  test(`inline rename saves and cancels without a sidebar (${phone ? "phone" : "desktop"})`, async ({
+    page,
+  }) => {
+    if (phone) await page.setViewportSize({ width: 390, height: 844 });
+    const task = cli(
+      "create",
+      "--content",
+      "Quick task",
+      "--description",
+      "Keep details",
+    );
+    await page.goto(base);
+    const row = page.locator(`[data-id="${task.id}"]`);
+    await row.locator(".task-open").click();
+    await expect(page.locator("#details")).not.toBeVisible();
+    const input = row.getByRole("textbox", { name: "Task name", exact: true });
+    await expect(input).toBeFocused();
+    expect(
+      await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
+    ).toEqual(["Quick task".length, "Quick task".length]);
+    await input.fill("Renamed inline");
+    await page.screenshot({
+      path: `test-results/inline-${phone ? "phone" : "desktop"}.png`,
+    });
+    await input.press("Enter");
+    await expect(row.locator(".task-title")).toHaveText("Renamed inline");
+    expect(cli("get", task.id).description).toBe("Keep details");
+    await row.locator(".task-open").click();
+    await input.fill("Discard this");
+    await input.press("Escape");
+    await expect(row.locator(".task-title")).toHaveText("Renamed inline");
+    await row.locator(".task-edit").click();
+    await expect(page.locator("#content")).toHaveValue("Renamed inline");
+    await page.locator("#close-editor").click();
+    await row.click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "Edit task", exact: true })
+      .click();
+    await expect(page.locator("#content")).toHaveValue("Renamed inline");
+  });
+}
+
+test("inline rename retains text on conflict without overwriting newer edits", async ({
+  page,
+}) => {
+  const task = cli("create", "--content", "Original");
+  await page.goto(base);
+  const row = page.locator(`[data-id="${task.id}"]`);
+  await row.locator(".task-open").click();
+  const input = row.getByRole("textbox", { name: "Task name", exact: true });
+  await input.fill("My draft");
+  cli("update", task.id, "--content", "Changed elsewhere");
+  await input.press("Enter");
+  await expect(row.getByRole("status")).toContainText("Not saved");
+  await expect(input).toHaveValue("My draft");
+  expect(cli("get", task.id).content).toBe("Changed elsewhere");
+  await expect(page.locator("#details")).not.toBeVisible();
+});
+
+for (const phone of [false, true]) {
+  test(`inline editor fits existing text and grows and shrinks (${phone ? "phone" : "desktop"})`, async ({
+    page,
+  }) => {
+    if (phone) await page.setViewportSize({ width: 390, height: 844 });
+    const content =
+      "A long task with plenty of detail to keep visible while editing. "
+        .repeat(5)
+        .trim();
+    const task = cli("create", "--content", content);
+    await page.goto(base);
+    await page.locator(`[data-id="${task.id}"] .task-open`).click();
+    const input = page.locator(".inline-edit textarea");
+    const fits = () =>
+      input.evaluate((el) => el.scrollHeight <= el.clientHeight + 1);
+    await expect.poll(fits).toBe(true);
+    const initial = await input.evaluate((el) => el.clientHeight);
+    expect(initial).toBeGreaterThan(40);
+    await input.fill(content.repeat(3));
+    await expect
+      .poll(() => input.evaluate((el) => el.clientHeight))
+      .toBeGreaterThan(initial);
+    await expect.poll(fits).toBe(true);
+    await input.fill("Short task");
+    await expect
+      .poll(() => input.evaluate((el) => el.clientHeight))
+      .toBeLessThan(initial);
+    await input.fill(content);
+    await page.setViewportSize({ width: phone ? 600 : 700, height: 900 });
+    await expect.poll(fits).toBe(true);
+    await page.screenshot({
+      path: `test-results/inline-growing-${phone ? "phone" : "desktop"}.png`,
+    });
+    await input.press("Enter");
+    await expect(input).toHaveCount(0);
+    expect(cli("get", task.id).content).toBe(content);
+  });
+}
