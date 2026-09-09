@@ -3,7 +3,7 @@
   "name": "totui-mcp",
   "displayName": "to-tui",
   "description": "MCP server and skills for to-tui - terminal todo list manager with daily todos, hierarchical tasks, and rollover support",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "author": {
     "name": "to-tui"
   },
