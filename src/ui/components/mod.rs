@@ -26,6 +26,10 @@ use ratatui::{
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub fn render(f: &mut Frame, state: &mut AppState) {
+    if let Some(board) = &state.kanban {
+        board.render(f);
+        return;
+    }
     // Update terminal dimensions for click and scroll calculations
     state.terminal_width = f.area().width;
     state.terminal_height = f.area().height;
@@ -147,6 +151,7 @@ fn render_help_overlay(f: &mut Frame, state: &mut AppState) {
         "  ── Essentials ──",
         section_style,
     )));
+    lines.push(Line::from("  F7           Project kanban board"));
     lines.push(Line::from(vec![
         help_binding(
             state,
@@ -1040,10 +1045,25 @@ fn render_plugin_overlay(f: &mut Frame, state: &AppState, plugin_state: &PluginS
             plugin_name,
             input_buffer,
             cursor_pos,
+            ..
         } => render_plugin_input(f, state, plugin_name, input_buffer, *cursor_pos),
         PluginSubState::Executing { plugin_name } => render_plugin_executing(f, state, plugin_name),
         PluginSubState::Error { message } => render_plugin_error(f, state, message),
         PluginSubState::Preview { items } => render_plugin_preview(f, state, items),
+        PluginSubState::EntryMenu {
+            plugin_name,
+            entries,
+            selected_index,
+        } => render_plugin_entry_menu(f, state, plugin_name, entries, *selected_index),
+        PluginSubState::Picker {
+            plugin_name,
+            title,
+            items,
+            selected_index,
+            filter,
+            ..
+        } => render_plugin_picker(f, state, plugin_name, title, items, *selected_index, filter),
+        PluginSubState::Confirm { message, .. } => render_plugin_confirm(f, state, message),
     }
 }
 
@@ -1100,6 +1120,133 @@ fn render_plugin_selecting(
 
     f.render_widget(Clear, area);
     f.render_widget(list, area);
+}
+
+fn render_plugin_entry_menu(
+    f: &mut Frame,
+    state: &AppState,
+    plugin_name: &str,
+    entries: &[crate::plugin::manifest::EntrySpec],
+    selected_index: usize,
+) {
+    let area = centered_rect(50, 40, f.area());
+
+    let items: Vec<ListItem> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let style = if i == selected_index {
+                Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default().fg(state.theme.foreground)
+            };
+            ListItem::new(Line::from(Span::styled(entry.label.clone(), style)))
+        })
+        .collect();
+
+    let title = format!(" {} ", plugin_name);
+    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(title));
+
+    f.render_widget(ratatui::widgets::Clear, area);
+    f.render_widget(list, area);
+}
+
+/// Build a picker-detail Line where `[bracketed]` segments are colored.
+///
+/// Plugins emit detail lines like `To Do • Bug • P: P3 • [backend, urgent]`.
+/// The bracketed segment is rendered in cyan; the rest stays DarkGray.
+fn styled_detail_line(detail: &str) -> Line<'static> {
+    let dark = Style::default().fg(ratatui::style::Color::DarkGray);
+    let label_color = Style::default().fg(ratatui::style::Color::Cyan);
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut rest = detail.to_string();
+    while let Some(open) = rest.find('[') {
+        if open > 0 {
+            spans.push(Span::styled(rest[..open].to_string(), dark));
+        }
+        if let Some(close) = rest[open..].find(']') {
+            let end = open + close + 1;
+            spans.push(Span::styled(rest[open..end].to_string(), label_color));
+            rest = rest[end..].to_string();
+        } else {
+            spans.push(Span::styled(rest[open..].to_string(), dark));
+            rest.clear();
+            break;
+        }
+    }
+    if !rest.is_empty() {
+        spans.push(Span::styled(rest, dark));
+    }
+    Line::from(spans)
+}
+
+fn render_plugin_picker(
+    f: &mut Frame,
+    state: &AppState,
+    plugin_name: &str,
+    title: &str,
+    items: &[crate::app::state::PickerItem],
+    selected_index: usize,
+    filter: &str,
+) {
+    let area = centered_rect(70, 70, f.area());
+
+    let visible: Vec<&crate::app::state::PickerItem> = items
+        .iter()
+        .filter(|it| crate::app::event::match_picker_filter(filter, it))
+        .collect();
+
+    let list_items: Vec<ListItem> = visible
+        .iter()
+        .enumerate()
+        .map(|(i, it)| {
+            let label_style = if i == selected_index {
+                Style::default()
+                    .fg(ratatui::style::Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default().fg(state.theme.foreground)
+            };
+            let primary = Line::from(Span::styled(it.label.clone(), label_style));
+            if let Some(d) = &it.detail {
+                ListItem::new(vec![primary, styled_detail_line(d)])
+            } else {
+                ListItem::new(primary)
+            }
+        })
+        .collect();
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    let filter_title = format!(" {} — filter ", plugin_name);
+    let filter_para = Paragraph::new(format!("/{}", filter)).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(filter_title.as_str()),
+    );
+    f.render_widget(Clear, area);
+    f.render_widget(filter_para, chunks[0]);
+
+    let list = List::new(list_items).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} ", title)),
+    );
+    f.render_widget(list, chunks[1]);
+}
+
+fn render_plugin_confirm(f: &mut Frame, _state: &AppState, message: &str) {
+    let area = centered_rect(50, 20, f.area());
+    let para = Paragraph::new(format!("{}\n\n[Y]es   [N]o", message))
+        .alignment(ratatui::layout::Alignment::Center)
+        .block(Block::default().borders(Borders::ALL).title(" Confirm "));
+    f.render_widget(Clear, area);
+    f.render_widget(para, area);
 }
 
 fn render_plugin_input(

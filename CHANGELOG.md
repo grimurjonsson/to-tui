@@ -5,6 +5,13 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.2] - 2026-09-09
+Kanban boards are now available across the CLI, MCP server, REST API, remote sync, and web UI. The web workspace has been redesigned as a dark ledger, tasks can be copied from the web, and keyboard row navigation has been fixed. Toggling items on remote-synced lists now responds immediately thanks to incremental cache persistence.
+
+### Added
+- Add web task copying and fix keyboard row navigation
+- Add kanban boards across CLI, MCP, REST, remote and web
+
 ## [0.7.1] - 2026-09-09
 The web sidebar now shows the running server version and your signed-in account, with an account menu for managing projects and logging out. It checks GitHub for newer stable releases hourly and flags an available update. The configured server owner can trigger an upgrade from the browser, and a new `just upgrade-server-with-curl` command upgrades a self-hosted server from the latest release after a confirmation prompt, backing up the databases, binary, and service unit first. A sudo fix makes those upgrades work when no terminal is attached.
 

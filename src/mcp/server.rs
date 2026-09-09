@@ -16,6 +16,11 @@ use super::schemas::{
     TodoItemResponse, TodoListResponse, UpdateTodoRequest,
 };
 
+#[derive(Debug, Clone, serde::Serialize, schemars::JsonSchema)]
+struct KanbanResponse {
+    board: Option<crate::kanban::Board>,
+}
+
 #[derive(Clone)]
 pub struct TodoMcpServer {
     tool_router: ToolRouter<Self>,
@@ -51,6 +56,19 @@ fn format_error(detail: McpErrorDetail) -> String {
 
 #[tool_router]
 impl TodoMcpServer {
+    #[tool(
+        name = "kanban",
+        description = "Manage a persistent project kanban board. Use action=view to discover tickets, comments, outstanding feedback and revisions. Create a board with create_board, then create_ticket. Move tickets through backlog, ready, in_progress, review, done, blocked using move_ticket. Every ticket mutation requires expected_revision from the latest board. Always read activity and feedback before working; backward moves require a reason. Address feedback with address_feedback and a resolution before marking done. Use trash_ticket to remove a ticket from active work and restore_ticket to recover it with its history intact. Use archive_ticket for Done tickets to move them into Completed, and unarchive_ticket to restore them to Done. Tickets with trashed=true or archived=true are not active work. Set actor to your agent name."
+    )]
+    async fn kanban(
+        &self,
+        params: Parameters<crate::kanban::Request>,
+    ) -> Result<Json<KanbanResponse>, String> {
+        crate::kanban::execute(params.0)
+            .map(|board| Json(KanbanResponse { board }))
+            .map_err(|error| error.to_string())
+    }
+
     #[tool(
         name = "list_todos",
         description = "List todos for a specific date and project. Defaults to today and 'default' project. Automatically rolls over incomplete todos from previous days if today's list is empty. Set hide_completed=true to omit done and cancelled items. Each item carries its state, priority (P0/P1/P2, if set), due date and description. Response includes a 'formatted' field - display it directly as markdown to the user."
@@ -242,5 +260,15 @@ impl rmcp::ServerHandler for TodoMcpServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_server_constructs_with_valid_tool_schemas() {
+        let _server = TodoMcpServer::new();
     }
 }

@@ -812,3 +812,101 @@ fn test_sse_pushes_only_changed_task_and_resumes_after_disconnect() {
     ));
     let _: SyncCursor = delta.cursor.to_string().parse().unwrap();
 }
+
+#[test]
+fn test_authenticated_kanban_isolation_and_browser_feedback_rediscovery() {
+    use crate::kanban::{Action, Board, Request as KanbanRequest, Status};
+    let server = Server::start();
+    let alice = server.client("session=alice");
+    let bob = server.client("session=bob");
+    let call = |client: &Client, action| {
+        client.call::<Option<Board>>(Request::Kanban {
+            request: KanbanRequest {
+                project: "default".into(),
+                actor: "agent".into(),
+                action,
+            },
+        })
+    };
+    call(
+        &alice,
+        Action::CreateBoard {
+            name: "Private board".into(),
+        },
+    )
+    .unwrap();
+    assert!(call(&bob, Action::View).unwrap().is_none());
+    let ticket = call(
+        &alice,
+        Action::CreateTicket {
+            title: "Private ticket".into(),
+            description: "Private requirements".into(),
+            assignee: Some("agent".into()),
+        },
+    )
+    .unwrap()
+    .unwrap()
+    .tickets
+    .remove(0);
+    call(
+        &alice,
+        Action::MoveTicket {
+            id: ticket.id.clone(),
+            expected_revision: 1,
+            status: Status::Done,
+            reason: None,
+        },
+    )
+    .unwrap();
+    call(
+        &bob,
+        Action::CreateBoard {
+            name: "Bob board".into(),
+        },
+    )
+    .unwrap();
+    assert!(
+        call(
+            &bob,
+            Action::Comment {
+                id: ticket.id.clone(),
+                expected_revision: 2,
+                body: "Cross-tenant attempt".into()
+            }
+        )
+        .is_err()
+    );
+    let http = reqwest::blocking::Client::new();
+    let response = http.post(format!("{}/api/kanban", server.url)).header("cookie", "session=alice").header("x-totui-expected-user", alice.user().unwrap().id).json(&serde_json::json!({"project":"default", "actor":"user", "action":"move_ticket", "id":ticket.id, "expected_revision":2, "status":"ready", "reason":"Handle empty input"})).send().unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let refreshed = call(&alice, Action::View).unwrap().unwrap();
+    assert_eq!(
+        refreshed.tickets[0].feedback.as_deref(),
+        Some("Handle empty input")
+    );
+    assert_eq!(refreshed.tickets[0].status, Status::Ready);
+    assert!(
+        call(&bob, Action::View)
+            .unwrap()
+            .unwrap()
+            .tickets
+            .is_empty()
+    );
+    assert_eq!(
+        http.get(format!("{}/api/kanban?project=default", server.url))
+            .send()
+            .unwrap()
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        http.post(format!("{}/api/kanban", server.url))
+            .header("cookie", "session=bob")
+            .header("x-totui-expected-user", alice.user().unwrap().id)
+            .json(&serde_json::json!({"project":"default", "actor":"user", "action":"view"}))
+            .send()
+            .unwrap()
+            .status(),
+        StatusCode::CONFLICT
+    );
+}

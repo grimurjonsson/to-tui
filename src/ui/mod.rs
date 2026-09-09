@@ -107,6 +107,7 @@ async fn run_app(
             state.web.tick();
         }
         state.check_plugin_result();
+        state.check_plugin_action();
         state.check_marketplace_fetch();
         state.check_version_update();
         state.check_download_progress();
@@ -215,6 +216,7 @@ async fn run_app(
 
             // Periodic tick for animations (spinner, status messages)
             _ = tick_interval.tick() => {
+                if let Some(board) = &mut state.kanban { board.tick(); }
                 // Don't log ticks - too noisy
                 if let Some(observer) = &observer {
                     let version: i64 = observer.query_row("PRAGMA data_version", [], |row| row.get(0))?;

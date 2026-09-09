@@ -28,6 +28,10 @@ pub struct HookResult {
     pub commands: Vec<FfiCommand>,
     /// Error message if hook failed (timeout, panic, or plugin error).
     pub error: Option<String>,
+    /// Picker/Confirm/Todos/Error variants from the plugin's response.
+    /// `None` if the plugin returned Commands or Status (commands extracted into
+    /// `commands` field above).
+    pub next_response: Option<totui_plugin_interface::FfiActionResponse>,
 }
 
 /// Dispatches events to subscribed plugins asynchronously.
@@ -80,7 +84,14 @@ impl HookDispatcher {
     /// * `event` - The event to dispatch
     /// * `plugin` - The loaded plugin to call
     /// * `timeout` - Timeout for this hook call
-    pub fn dispatch_to_plugin(&self, event: FfiEvent, plugin: &LoadedPlugin, timeout: Duration) {
+    /// * `host` - Owned snapshot of host state for the plugin to query
+    pub fn dispatch_to_plugin(
+        &self,
+        event: FfiEvent,
+        plugin: &LoadedPlugin,
+        timeout: Duration,
+        host: crate::plugin::host_impl::OwnedPluginHostApi,
+    ) {
         // Skip if hook is disabled for this plugin
         if self.disabled_hooks.contains(&plugin.name) {
             tracing::debug!(plugin = %plugin.name, "Skipping disabled hook");
@@ -97,11 +108,27 @@ impl HookDispatcher {
         );
 
         // Call the plugin with timeout
-        let result = call_hook_with_timeout(&plugin.plugin, event, timeout);
+        let result = call_hook_with_timeout(&plugin.plugin, event, timeout, host);
 
         let hook_result = match result {
             Ok(response) => {
-                let commands: Vec<_> = response.commands.into_iter().collect();
+                use totui_plugin_interface::FfiActionResponse;
+                let (commands, next_response) = match response {
+                    FfiActionResponse::Commands { commands } => {
+                        (commands.into_iter().collect::<Vec<_>>(), None)
+                    }
+                    FfiActionResponse::Status { commands, .. } => {
+                        // For Status emitted from a hook, we don't have a UI surface to
+                        // show the message — fall back to Commands-only behavior.
+                        (commands.into_iter().collect::<Vec<_>>(), None)
+                    }
+                    // These variants need UI; pass them through next_response.
+                    other @ FfiActionResponse::OpenKanban
+                    | other @ FfiActionResponse::Picker { .. }
+                    | other @ FfiActionResponse::Confirm { .. }
+                    | other @ FfiActionResponse::Todos { .. }
+                    | other @ FfiActionResponse::Error { .. } => (Vec::new(), Some(other)),
+                };
                 if !commands.is_empty() {
                     tracing::debug!(
                         plugin = %plugin_name,
@@ -110,11 +137,19 @@ impl HookDispatcher {
                         "Plugin returned commands"
                     );
                 }
+                if next_response.is_some() {
+                    tracing::debug!(
+                        plugin = %plugin_name,
+                        event = ?event_type,
+                        "Plugin returned interactive response (Picker/Confirm/Todos/Error)"
+                    );
+                }
                 HookResult {
                     plugin_name,
                     event_type,
                     commands,
                     error: None,
+                    next_response,
                 }
             }
             Err(e) => {
@@ -129,6 +164,7 @@ impl HookDispatcher {
                     event_type,
                     commands: vec![],
                     error: Some(e),
+                    next_response: None,
                 }
             }
         };
@@ -196,10 +232,13 @@ fn call_hook_with_timeout(
     plugin: &totui_plugin_interface::Plugin_TO<'static, abi_stable::std_types::RBox<()>>,
     event: FfiEvent,
     timeout: Duration,
-) -> Result<totui_plugin_interface::FfiHookResponse, String> {
+    host: crate::plugin::host_impl::OwnedPluginHostApi,
+) -> Result<totui_plugin_interface::FfiActionResponse, String> {
+    use abi_stable::sabi_trait::TD_Opaque;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
+    use totui_plugin_interface::HostApi_TO;
 
     // Use atomic flag for timeout coordination
     let completed = Arc::new(AtomicBool::new(false));
@@ -215,8 +254,12 @@ fn call_hook_with_timeout(
         }
     });
 
+    // Build the HostApi_TO from the owned snapshot
+    let host_to: HostApi_TO<'_, abi_stable::std_types::RBox<()>> =
+        HostApi_TO::from_value(host, TD_Opaque);
+
     // Call the plugin synchronously in current thread
-    let result = call_plugin_on_event(plugin, event);
+    let result = call_plugin_on_event(plugin, event, host_to);
     completed.store(true, Ordering::Release);
 
     // Check if timeout occurred
@@ -254,9 +297,11 @@ mod tests {
             event_type: FfiEventType::OnAdd,
             commands: vec![],
             error: None,
+            next_response: None,
         };
         assert_eq!(result.plugin_name, "test");
         assert!(result.error.is_none());
+        assert!(result.next_response.is_none());
     }
 
     #[test]
@@ -284,6 +329,7 @@ mod tests {
                 event_type: FfiEventType::OnAdd,
                 commands: vec![],
                 error: Some(format!("Error {}", i)),
+                next_response: None,
             })
             .unwrap();
         }
@@ -309,6 +355,7 @@ mod tests {
                 event_type: FfiEventType::OnAdd,
                 commands: vec![],
                 error: Some(format!("Error {}", i)),
+                next_response: None,
             })
             .unwrap();
         }
@@ -320,6 +367,7 @@ mod tests {
             event_type: FfiEventType::OnAdd,
             commands: vec![],
             error: None,
+            next_response: None,
         })
         .unwrap();
         dispatcher.poll_results();
@@ -331,6 +379,7 @@ mod tests {
                 event_type: FfiEventType::OnAdd,
                 commands: vec![],
                 error: Some(format!("Error {}", i)),
+                next_response: None,
             })
             .unwrap();
         }

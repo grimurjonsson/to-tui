@@ -3,7 +3,7 @@
 //! This module provides the `PluginHostApiImpl` struct that implements the
 //! `HostApi` trait, giving plugins query access to the todo list and projects.
 
-use abi_stable::std_types::{ROption, RString, RVec};
+use abi_stable::std_types::{ROption, RResult, RString, RVec};
 use std::collections::HashSet;
 use totui_plugin_interface::{
     FfiProjectContext, FfiStateFilter, FfiTodoItem, FfiTodoMetadata, FfiTodoNode, FfiTodoQuery,
@@ -126,6 +126,26 @@ impl<'a> PluginHostApiImpl<'a> {
 }
 
 impl HostApi for PluginHostApiImpl<'_> {
+    fn kanban_request(&self, request: RString) -> RResult<RString, RString> {
+        let result = (|| -> anyhow::Result<String> {
+            let action: crate::kanban::Action = serde_json::from_str(request.as_str())?;
+            anyhow::ensure!(
+                self.can_access_project(&self.current_project.name),
+                "Plugin is not enabled for this project"
+            );
+            let board = crate::kanban::execute(crate::kanban::Request {
+                project: self.current_project.name.clone(),
+                actor: format!("plugin:{}", self.plugin_name),
+                action,
+            })?;
+            Ok(serde_json::to_string(&board)?)
+        })();
+        match result {
+            Ok(board) => RResult::ROk(board.into()),
+            Err(error) => RResult::RErr(error.to_string().into()),
+        }
+    }
+
     fn current_project(&self) -> FfiProjectContext {
         self.current_project.into()
     }
@@ -325,12 +345,163 @@ impl HostApi for PluginHostApiImpl<'_> {
     }
 }
 
+/// Owned (no-lifetime) host API for plugin calls dispatched on background threads.
+///
+/// Takes a snapshot of the relevant state at dispatch time. Plugins running
+/// asynchronously see this frozen snapshot — they do NOT observe later edits
+/// the user makes on the main thread. Mutations come back as `FfiCommand`s
+/// applied by the main thread when the plugin response arrives.
+pub struct OwnedPluginHostApi {
+    pub todo_list: TodoList,
+    pub current_project: Project,
+    pub enabled_projects: HashSet<String>,
+    pub plugin_name: String,
+}
+
+impl OwnedPluginHostApi {
+    pub fn new(
+        todo_list: TodoList,
+        current_project: Project,
+        enabled_projects: HashSet<String>,
+        plugin_name: String,
+    ) -> Self {
+        Self {
+            todo_list,
+            current_project,
+            enabled_projects,
+            plugin_name,
+        }
+    }
+
+    fn borrowed(&self) -> PluginHostApiImpl<'_> {
+        PluginHostApiImpl {
+            todo_list: &self.todo_list,
+            current_project: &self.current_project,
+            enabled_projects: self.enabled_projects.clone(),
+            plugin_name: self.plugin_name.clone(),
+        }
+    }
+}
+
+impl HostApi for OwnedPluginHostApi {
+    fn kanban_request(&self, request: RString) -> RResult<RString, RString> {
+        self.borrowed().kanban_request(request)
+    }
+    fn current_project(&self) -> FfiProjectContext {
+        self.borrowed().current_project()
+    }
+
+    fn list_projects(&self) -> RVec<FfiProjectContext> {
+        self.borrowed().list_projects()
+    }
+
+    fn query_todos(&self, query: FfiTodoQuery) -> RVec<FfiTodoItem> {
+        self.borrowed().query_todos(query)
+    }
+
+    fn get_todo(&self, id: RString) -> ROption<FfiTodoItem> {
+        self.borrowed().get_todo(id)
+    }
+
+    fn query_todos_tree(&self) -> RVec<FfiTodoNode> {
+        self.borrowed().query_todos_tree()
+    }
+
+    fn get_todo_metadata(&self, todo_id: RString) -> RString {
+        self.borrowed().get_todo_metadata(todo_id)
+    }
+
+    fn get_todo_metadata_batch(&self, todo_ids: RVec<RString>) -> RVec<FfiTodoMetadata> {
+        self.borrowed().get_todo_metadata_batch(todo_ids)
+    }
+
+    fn get_project_metadata(&self, project_name: RString) -> RString {
+        self.borrowed().get_project_metadata(project_name)
+    }
+
+    fn query_todos_by_metadata(&self, key: RString, value: RString) -> RVec<FfiTodoItem> {
+        self.borrowed().query_todos_by_metadata(key, value)
+    }
+
+    fn list_projects_with_metadata(&self) -> RVec<RString> {
+        self.borrowed().list_projects_with_metadata()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::todo::{TodoItem, TodoList};
     use chrono::Local;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_rebuilt_plugin_libraries_load_with_current_interface() {
+        let Some(paths) = std::env::var_os("TOTUI_TEST_PLUGIN_LIBRARIES") else {
+            return;
+        };
+        for path in std::env::split_paths(&paths) {
+            let header = abi_stable::library::lib_header_from_path(&path).unwrap();
+            let module: totui_plugin_interface::PluginModule_Ref =
+                header.init_root_module().unwrap();
+            let plugin = (module.create_plugin())();
+            assert_eq!(plugin.min_interface_version().as_str(), "0.5.0");
+            assert!(!plugin.name().is_empty());
+        }
+    }
+
+    #[test]
+    fn test_loadable_kanban_plugin_creates_board_through_host() {
+        let Ok(path) = std::env::var("TOTUI_TEST_KANBAN_LIBRARY") else {
+            return;
+        };
+        let header =
+            abi_stable::library::lib_header_from_path(std::path::Path::new(&path)).unwrap();
+        let module: totui_plugin_interface::PluginModule_Ref = header.init_root_module().unwrap();
+        let plugin = (module.create_plugin())();
+        assert_eq!(plugin.name().as_str(), "kanban");
+        let dir = tempfile::tempdir().unwrap();
+        crate::storage::context::with_root(dir.path().to_path_buf(), || {
+            crate::storage::database::init_database().unwrap();
+            let project = crate::storage::database::ensure_default_project_exists().unwrap();
+            let list = create_test_list();
+            let host = PluginHostApiImpl::new(
+                &list,
+                &project,
+                HashSet::from([project.name.clone()]),
+                "kanban".into(),
+            );
+            let response = plugin
+                .invoke_action(
+                    "create-board".into(),
+                    "Plugin delivery".into(),
+                    totui_plugin_interface::HostApi_TO::from_value(
+                        host,
+                        abi_stable::sabi_trait::TD_Opaque,
+                    ),
+                )
+                .into_result()
+                .unwrap();
+            assert!(matches!(
+                response,
+                totui_plugin_interface::FfiActionResponse::OpenKanban
+            ));
+            let board = crate::kanban::execute(crate::kanban::Request {
+                project: project.name.clone(),
+                actor: "test".into(),
+                action: crate::kanban::Action::View,
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(board.name, "Plugin delivery");
+            let denied = PluginHostApiImpl::new(&list, &project, HashSet::new(), "kanban".into());
+            assert!(
+                denied
+                    .kanban_request(r#"{"action":"view"}"#.into())
+                    .is_err()
+            );
+        });
+    }
 
     fn create_test_list() -> TodoList {
         let date = Local::now().date_naive();

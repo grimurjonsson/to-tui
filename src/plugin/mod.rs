@@ -17,6 +17,7 @@ pub use hooks::{HookDispatcher, HookResult};
 pub use host_impl::PluginHostApiImpl;
 pub use loader::{ConfigError, LoadedPlugin, PluginErrorKind, PluginLoadError, PluginLoader};
 pub use manager::{PluginInfo, PluginManager, PluginSource};
+pub use manifest::{EntryInput, EntrySpec};
 
 /// Legacy plugin registry - now empty (built-in generators removed).
 ///

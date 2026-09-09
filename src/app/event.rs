@@ -36,6 +36,22 @@ use totui_plugin_interface::{
 const GITHUB_URL: &str = "https://github.com/grimurjonsson/to-tui";
 
 pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
+    if let Some(board) = &mut state.kanban {
+        if board.handle(key) {
+            state.kanban = None;
+        }
+        return Ok(());
+    }
+    if key.code == KeyCode::F(7)
+        && state.mode == Mode::Navigate
+        && !state.show_help
+        && state.sync_dialog.is_none()
+    {
+        state.kanban = Some(super::kanban::KanbanUi::new(
+            state.current_project.name.clone(),
+        ));
+        return Ok(());
+    }
     if state.sync_dialog.is_some() {
         return super::sync::handle(key, state);
     }
@@ -161,6 +177,9 @@ pub fn handle_key_event(key: KeyEvent, state: &mut AppState) -> Result<()> {
 }
 
 pub fn handle_mouse_event(mouse: MouseEvent, state: &mut AppState) -> Result<()> {
+    if state.kanban.is_some() {
+        return Ok(());
+    }
     if state.mode == Mode::Web || state.sync_dialog.is_some() {
         return Ok(());
     }
@@ -1567,7 +1586,17 @@ fn handle_plugin_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
             plugin_name,
             input_buffer,
             cursor_pos,
-        } => handle_plugin_input(key, state, plugin_name, input_buffer, cursor_pos),
+            action_id,
+            input_label,
+        } => handle_plugin_input(
+            key,
+            state,
+            plugin_name,
+            action_id,
+            input_buffer,
+            cursor_pos,
+            input_label,
+        ),
         PluginSubState::Executing { plugin_name } => {
             if key.code == KeyCode::Esc {
                 // Cancel: drop receiver (thread finishes on its own, result is discarded)
@@ -1582,6 +1611,32 @@ fn handle_plugin_mode(key: KeyEvent, state: &mut AppState) -> Result<()> {
         }
         PluginSubState::Error { message } => handle_plugin_error(key, state, message),
         PluginSubState::Preview { items } => handle_plugin_preview(key, state, items),
+        PluginSubState::EntryMenu {
+            plugin_name,
+            entries,
+            selected_index,
+        } => handle_entry_menu_mode(key, state, plugin_name, entries, selected_index),
+        PluginSubState::Picker {
+            plugin_name,
+            title,
+            items,
+            callback_token,
+            selected_index,
+            filter,
+        } => handle_picker_mode(
+            key,
+            state,
+            plugin_name,
+            title,
+            items,
+            callback_token,
+            (selected_index, filter),
+        ),
+        PluginSubState::Confirm {
+            plugin_name,
+            message,
+            callback_token,
+        } => handle_confirm_plugin_mode(key, state, plugin_name, message, callback_token),
     }
 }
 
@@ -1795,12 +1850,34 @@ fn handle_plugins_tabs(
                                     selected_index: 0,
                                 });
                             } else {
-                                // No Select field, use regular text Input
-                                state.plugins_modal_state = Some(PluginsModalState::Input {
-                                    plugin_name: plugin.name.clone(),
-                                    input_buffer: String::new(),
-                                    cursor_pos: 0,
-                                });
+                                // No Select field — route through entry-aware logic so
+                                // plugins with multiple entries see the EntryMenu and
+                                // single-entry plugins with input="none" skip the prompt.
+                                let plugin_name = plugin.name.clone();
+                                let entries = state.plugin_loader.entries_for(&plugin_name);
+                                if entries.len() > 1 {
+                                    // Multi-entry plugin: close the tabbed modal and show EntryMenu.
+                                    state.plugins_modal_state = None;
+                                    state.plugin_state = Some(PluginSubState::EntryMenu {
+                                        plugin_name,
+                                        entries,
+                                        selected_index: 0,
+                                    });
+                                } else {
+                                    // Single-entry (or synthesized fallback): use advance_from_entry
+                                    // which handles Text → InputPrompt and None → immediate invoke.
+                                    let entry = entries.into_iter().next().unwrap_or_else(|| {
+                                        crate::plugin::manifest::EntrySpec {
+                                            id: "generate".to_string(),
+                                            label: "Input".to_string(),
+                                            input: crate::plugin::manifest::EntryInput::Text,
+                                            input_label: Some("Input".to_string()),
+                                        }
+                                    });
+                                    state.plugins_modal_state = None;
+                                    state.plugin_state =
+                                        Some(advance_from_entry(plugin_name, entry, state));
+                                }
                             }
                         } else {
                             state.plugins_modal_state = Some(PluginsModalState::Error {
@@ -2270,11 +2347,28 @@ fn handle_plugin_selecting(
         KeyCode::Enter => {
             if let Some(plugin) = plugins.get(selected_index) {
                 if plugin.available {
-                    state.plugin_state = Some(PluginSubState::InputPrompt {
-                        plugin_name: plugin.name.clone(),
-                        input_buffer: String::new(),
-                        cursor_pos: 0,
-                    });
+                    let plugin_name = plugin.name.clone();
+                    let entries = state.plugin_loader.entries_for(&plugin_name);
+                    if entries.len() <= 1 {
+                        let entry = entries.into_iter().next().unwrap_or_else(|| {
+                            // Safety: resolved_entries() always returns at least one entry
+                            // (synthesizes "generate" if none declared). This branch should
+                            // be unreachable for loaded plugins.
+                            crate::plugin::manifest::EntrySpec {
+                                id: "generate".to_string(),
+                                label: "Input".to_string(),
+                                input: crate::plugin::manifest::EntryInput::Text,
+                                input_label: Some("Input".to_string()),
+                            }
+                        });
+                        state.plugin_state = Some(advance_from_entry(plugin_name, entry, state));
+                    } else {
+                        state.plugin_state = Some(PluginSubState::EntryMenu {
+                            plugin_name,
+                            entries,
+                            selected_index: 0,
+                        });
+                    }
                 } else {
                     let reason = plugin
                         .unavailable_reason
@@ -2296,12 +2390,247 @@ fn handle_plugin_selecting(
     Ok(())
 }
 
+fn advance_from_entry(
+    plugin_name: String,
+    entry: crate::plugin::manifest::EntrySpec,
+    state: &mut AppState,
+) -> PluginSubState {
+    match entry.input {
+        crate::plugin::manifest::EntryInput::Text => PluginSubState::InputPrompt {
+            plugin_name,
+            action_id: entry.id,
+            input_buffer: String::new(),
+            cursor_pos: 0,
+            input_label: entry.input_label.unwrap_or_else(|| "Input".to_string()),
+        },
+        crate::plugin::manifest::EntryInput::None => {
+            // Kick off the plugin call immediately.
+            invoke_plugin_action(state, plugin_name.clone(), entry.id, String::new());
+            PluginSubState::Executing { plugin_name }
+        }
+    }
+}
+
+fn invoke_plugin_action(state: &mut AppState, plugin_name: String, action: String, input: String) {
+    let mut enabled_projects = std::collections::HashSet::new();
+    enabled_projects.insert(state.current_project.name.clone());
+    let todo_list = state.todo_list.clone();
+    let current_project = state.current_project.clone();
+    match state.plugin_loader.spawn_invoke_action(
+        &plugin_name,
+        &action,
+        &input,
+        todo_list,
+        current_project,
+        enabled_projects,
+    ) {
+        Ok(rx) => {
+            state.plugin_action_rx = Some(rx);
+            state.plugin_state = Some(PluginSubState::Executing { plugin_name });
+        }
+        Err(e) => {
+            state.plugin_state = Some(PluginSubState::Error { message: e.message });
+        }
+    }
+}
+
+fn invoke_plugin_callback(
+    state: &mut AppState,
+    plugin_name: String,
+    token: String,
+    result: totui_plugin_interface::FfiCallbackResult,
+) {
+    let mut enabled_projects = std::collections::HashSet::new();
+    enabled_projects.insert(state.current_project.name.clone());
+    let todo_list = state.todo_list.clone();
+    let current_project = state.current_project.clone();
+    match state.plugin_loader.spawn_on_callback(
+        &plugin_name,
+        &token,
+        result,
+        todo_list,
+        current_project,
+        enabled_projects,
+    ) {
+        Ok(rx) => {
+            state.plugin_action_rx = Some(rx);
+            state.plugin_state = Some(PluginSubState::Executing { plugin_name });
+        }
+        Err(e) => {
+            state.plugin_state = Some(PluginSubState::Error { message: e.message });
+        }
+    }
+}
+
+pub(crate) fn match_picker_filter(filter: &str, item: &crate::app::state::PickerItem) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let needle = filter.to_lowercase();
+    item.label.to_lowercase().contains(&needle)
+        || item
+            .detail
+            .as_deref()
+            .map(|d| d.to_lowercase().contains(&needle))
+            .unwrap_or(false)
+}
+
+fn handle_picker_mode(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin_name: String,
+    title: String,
+    items: Vec<crate::app::state::PickerItem>,
+    callback_token: String,
+    selection: (usize, String),
+) -> Result<()> {
+    let (mut selected_index, mut filter) = selection;
+    let visible: Vec<&crate::app::state::PickerItem> = items
+        .iter()
+        .filter(|it| match_picker_filter(&filter, it))
+        .collect();
+
+    match key.code {
+        KeyCode::Esc => {
+            invoke_plugin_callback(
+                state,
+                plugin_name,
+                callback_token,
+                totui_plugin_interface::FfiCallbackResult::PickerCancelled,
+            );
+            return Ok(());
+        }
+        KeyCode::Enter => {
+            if let Some(picked) = visible.get(selected_index).cloned() {
+                let id = picked.id.clone();
+                invoke_plugin_callback(
+                    state,
+                    plugin_name,
+                    callback_token,
+                    totui_plugin_interface::FfiCallbackResult::PickerSelected {
+                        item_id: id.into(),
+                    },
+                );
+                return Ok(());
+            }
+        }
+        KeyCode::Up => {
+            selected_index = selected_index.saturating_sub(1);
+        }
+        KeyCode::Down => {
+            if selected_index + 1 < visible.len() {
+                selected_index += 1;
+            }
+        }
+        KeyCode::Backspace => {
+            filter.pop();
+            selected_index = 0;
+        }
+        KeyCode::Char(c) if !c.is_control() => {
+            filter.push(c);
+            selected_index = 0;
+        }
+        _ => {}
+    }
+
+    state.plugin_state = Some(PluginSubState::Picker {
+        plugin_name,
+        title,
+        items,
+        callback_token,
+        selected_index,
+        filter,
+    });
+    Ok(())
+}
+
+fn handle_confirm_plugin_mode(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin_name: String,
+    message: String,
+    callback_token: String,
+) -> Result<()> {
+    let reply = match key.code {
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+            Some(totui_plugin_interface::FfiCallbackResult::ConfirmYes)
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            Some(totui_plugin_interface::FfiCallbackResult::ConfirmNo)
+        }
+        _ => None,
+    };
+    if let Some(reply) = reply {
+        invoke_plugin_callback(state, plugin_name, callback_token, reply);
+    } else {
+        state.plugin_state = Some(PluginSubState::Confirm {
+            plugin_name,
+            message,
+            callback_token,
+        });
+    }
+    Ok(())
+}
+
+fn handle_entry_menu_mode(
+    key: KeyEvent,
+    state: &mut AppState,
+    plugin_name: String,
+    entries: Vec<crate::plugin::manifest::EntrySpec>,
+    mut selected_index: usize,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            state.close_plugin_menu();
+        }
+        KeyCode::Up | KeyCode::Char('k') => {
+            selected_index = selected_index.saturating_sub(1);
+            state.plugin_state = Some(PluginSubState::EntryMenu {
+                plugin_name,
+                entries,
+                selected_index,
+            });
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            if selected_index < entries.len().saturating_sub(1) {
+                selected_index += 1;
+            }
+            state.plugin_state = Some(PluginSubState::EntryMenu {
+                plugin_name,
+                entries,
+                selected_index,
+            });
+        }
+        KeyCode::Enter => {
+            if let Some(entry) = entries.get(selected_index).cloned() {
+                state.plugin_state = Some(advance_from_entry(plugin_name, entry, state));
+            } else {
+                state.plugin_state = Some(PluginSubState::EntryMenu {
+                    plugin_name,
+                    entries,
+                    selected_index,
+                });
+            }
+        }
+        _ => {
+            state.plugin_state = Some(PluginSubState::EntryMenu {
+                plugin_name,
+                entries,
+                selected_index,
+            });
+        }
+    }
+    Ok(())
+}
+
 fn handle_plugin_input(
     key: KeyEvent,
     state: &mut AppState,
     plugin_name: String,
+    action_id: String,
     mut input_buffer: String,
     mut cursor_pos: usize,
+    input_label: String,
 ) -> Result<()> {
     match key.code {
         KeyCode::Esc => {
@@ -2327,23 +2656,12 @@ fn handle_plugin_input(
             return Ok(());
         }
         KeyCode::Enter if !input_buffer.trim().is_empty() => {
-            // Execute plugin on background thread so spinner can animate
-            state.plugin_state = Some(PluginSubState::Executing {
-                plugin_name: plugin_name.clone(),
-            });
-
-            match state
-                .plugin_loader
-                .spawn_generate(&plugin_name, &input_buffer)
-            {
-                Ok(rx) => {
-                    state.plugin_result_rx = Some(rx);
-                    state.plugin_result_source = Some(PluginResultSource::PluginSubState);
-                }
-                Err(e) => {
-                    state.plugin_state = Some(PluginSubState::Error { message: e.message });
-                }
-            }
+            invoke_plugin_action(
+                state,
+                plugin_name.clone(),
+                action_id.clone(),
+                input_buffer.clone(),
+            );
             return Ok(());
         }
         KeyCode::Backspace if cursor_pos > 0 => {
@@ -2369,8 +2687,10 @@ fn handle_plugin_input(
     // Restore InputPrompt state with potentially modified input_buffer and cursor_pos
     state.plugin_state = Some(PluginSubState::InputPrompt {
         plugin_name,
+        action_id,
         input_buffer,
         cursor_pos,
+        input_label,
     });
     Ok(())
 }

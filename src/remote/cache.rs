@@ -1,3 +1,5 @@
+mod persistence;
+
 use super::{
     Client,
     protocol::{Mutation, Request, SyncBatch, SyncSnapshot, TaskResource, TaskVersion},
@@ -20,7 +22,7 @@ pub struct Conflict {
     pub server: Option<TaskVersion>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct Entry {
     server: Option<TaskVersion>,
     local: Option<TaskResource>,
@@ -51,7 +53,7 @@ struct Data {
 
 pub struct Cache {
     _lease: Mutex<rusqlite::Connection>,
-    path: PathBuf,
+    store: Mutex<persistence::Store>,
     data: Mutex<Data>,
     wake: Condvar,
 }
@@ -94,15 +96,10 @@ impl Cache {
         lease
             .execute_batch("BEGIN EXCLUSIVE")
             .context("This remote workspace is already open in another TUI")?;
-        let path = root.join("sync-cache.db");
-        let conn = rusqlite::Connection::open(&path)?;
-        conn.execute_batch("CREATE TABLE IF NOT EXISTS cache_state(id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)")?;
-        use rusqlite::OptionalExtension;
-        let saved: Option<String> = conn
-            .query_row("SELECT value FROM cache_state WHERE id=1", [], |r| r.get(0))
-            .optional()?;
+        let (mut store, saved) = persistence::Store::open(root)?;
+        let fresh = saved.is_none();
         let state = if let Some(saved) = saved {
-            serde_json::from_str(&saved).context("Could not read remote cache")?
+            saved
         } else {
             let snapshot = initial()?;
             State {
@@ -125,9 +122,12 @@ impl Cache {
                 generation: 1,
             }
         };
+        if fresh {
+            store.save(None, &state)?;
+        }
         let cache = Arc::new(Self {
             _lease: Mutex::new(lease),
-            path,
+            store: Mutex::new(store),
             data: Mutex::new(Data {
                 state,
                 views: BTreeMap::new(),
@@ -136,7 +136,6 @@ impl Cache {
             }),
             wake: Condvar::new(),
         });
-        cache.persist(&cache.lock()?.state)?;
         Ok(cache)
     }
 
@@ -146,11 +145,11 @@ impl Cache {
             .map_err(|_| anyhow::anyhow!("Remote cache lock failed"))
     }
 
-    fn persist(&self, state: &State) -> Result<()> {
-        let conn = rusqlite::Connection::open(&self.path)?;
-        conn.busy_timeout(Duration::from_secs(5))?;
-        conn.execute("INSERT INTO cache_state VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET value=excluded.value", [serde_json::to_string(state)?])?;
-        Ok(())
+    fn persist(&self, previous: Option<&State>, state: &State) -> Result<()> {
+        self.store
+            .lock()
+            .map_err(|_| anyhow::anyhow!("Remote cache store lock failed"))?
+            .save(previous, state)
     }
 
     pub fn start(self: &Arc<Self>, client: Client) {
@@ -273,7 +272,7 @@ impl Cache {
             next.snapshot.version = 0;
         }
         reconcile(&mut next, snapshot, None);
-        self.persist(&next)?;
+        self.persist(Some(&data.state), &next)?;
         data.state = next;
         data.stream_error = None;
         Ok(())
@@ -369,7 +368,7 @@ impl Cache {
         entry.local = resource;
         entry.conflict = None;
         next.generation += 1;
-        self.persist(&next)?;
+        self.persist(Some(&data.state), &next)?;
         data.state = next;
         self.wake.notify_one();
         Ok(())
@@ -495,7 +494,7 @@ impl Cache {
                 next.snapshot.dates.push((project.to_string(), list.date));
             }
         }
-        self.persist(&next)?;
+        self.persist(Some(&data.state), &next)?;
         data.state = next;
         for (list, project) in lists {
             data.views.insert(
@@ -568,7 +567,7 @@ impl Cache {
         let mut data = self.lock()?;
         let mut next = data.state.clone();
         reconcile(&mut next, snapshot, None);
-        self.persist(&next)?;
+        self.persist(Some(&data.state), &next)?;
         data.state = next;
         Ok(())
     }
@@ -600,7 +599,7 @@ impl Cache {
                         request_id: Uuid::new_v4(),
                         mutations,
                     });
-                    self.persist(&next)?;
+                    self.persist(Some(&data.state), &next)?;
                     data.state = next;
                 }
             }
@@ -613,7 +612,7 @@ impl Cache {
                     let mut next = data.state.clone();
                     reconcile(&mut next, snapshot, Some(&batch));
                     next.pending = None;
-                    self.persist(&next)?;
+                    self.persist(Some(&data.state), &next)?;
                     data.state = next;
                 }
                 Err(error) if error.downcast_ref::<super::PreconditionFailed>().is_some() => {
@@ -640,7 +639,7 @@ impl Cache {
                         }
                     }
                     next.pending = None;
-                    self.persist(&next)?;
+                    self.persist(Some(&data.state), &next)?;
                     data.state = next;
                 }
                 Err(error) => return Err(error),
@@ -767,6 +766,218 @@ mod tests {
                 PathBuf::new(),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn test_single_toggle_persists_only_changed_records_in_large_cache() {
+        let root = tempfile::tempdir().unwrap();
+        let mut snapshot = initial();
+        let template = snapshot.tasks[0].clone();
+        snapshot.tasks = (0..3000)
+            .map(|position| {
+                let mut task = template.clone();
+                task.id = Uuid::new_v4();
+                let resource = task.resource.as_mut().unwrap();
+                resource.item.id = task.id;
+                resource.item.description = Some("context ".repeat(100));
+                resource.position = position;
+                task
+            })
+            .collect();
+        let cache = Cache::open(root.path(), || Ok(snapshot)).unwrap();
+        let conn = rusqlite::Connection::open(root.path().join("sync-cache.db")).unwrap();
+        conn.execute_batch("CREATE TABLE measured_writes(bytes INTEGER)")
+            .unwrap();
+        let tables = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'cache_%'")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        for table in tables {
+            for operation in ["INSERT", "UPDATE"] {
+                conn.execute_batch(&format!("CREATE TRIGGER measure_{table}_{operation} AFTER {operation} ON {table} BEGIN INSERT INTO measured_writes VALUES(length(new.value)); END")).unwrap();
+            }
+        }
+        let mut edited = list(&cache);
+        edited.items[0].toggle_state();
+        let start = std::time::Instant::now();
+        cache.save(&[(&edited, "default")]).unwrap();
+        let bytes: i64 = conn
+            .query_row(
+                "SELECT coalesce(sum(bytes),0) FROM measured_writes",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        eprintln!(
+            "single toggle: {:?}, {bytes} bytes written",
+            start.elapsed()
+        );
+        assert!(bytes < 64 * 1024, "A single toggle rewrote {bytes} bytes");
+        drop(cache);
+        let cache = Cache::open(root.path(), || panic!("Must restore offline")).unwrap();
+        assert_eq!(list(&cache).items, edited.items);
+    }
+
+    #[test]
+    fn test_legacy_cache_migration_preserves_pending_edits_conflicts_and_history() {
+        let root = tempfile::tempdir().unwrap();
+        let mut snapshot = initial();
+        snapshot.history.push(crate::remote::protocol::HistoryList {
+            project: "default".into(),
+            date: snapshot.dates[0].1,
+            items: vec![snapshot.tasks[0].resource.as_ref().unwrap().item.clone()],
+        });
+        let mut state = State {
+            tasks: snapshot
+                .tasks
+                .iter()
+                .map(|task| {
+                    (
+                        task.id,
+                        Entry {
+                            server: Some(task.clone()),
+                            local: task.resource.clone(),
+                            conflict: None,
+                        },
+                    )
+                })
+                .collect(),
+            snapshot,
+            pending: None,
+            generation: 7,
+        };
+        let id = state.snapshot.tasks[0].id;
+        let entry = state.tasks.get_mut(&id).unwrap();
+        entry.local.as_mut().unwrap().item.toggle_state();
+        entry.conflict = Some(Conflict {
+            id,
+            base: entry.server.as_ref().and_then(|t| t.resource.clone()),
+            local: entry.local.clone(),
+            server: entry.server.clone(),
+        });
+        state.pending = Some(SyncBatch {
+            request_id: Uuid::new_v4(),
+            mutations: vec![Mutation {
+                id,
+                if_match: Some("v1".into()),
+                resource: entry.local.clone(),
+            }],
+        });
+        let conn = rusqlite::Connection::open(root.path().join("sync-cache.db")).unwrap();
+        conn.execute_batch("CREATE TABLE cache_state(id INTEGER PRIMARY KEY, value TEXT NOT NULL)")
+            .unwrap();
+        conn.execute(
+            "INSERT INTO cache_state VALUES(1,?1)",
+            [serde_json::to_string(&state).unwrap()],
+        )
+        .unwrap();
+        let expected = serde_json::to_value(&state).unwrap();
+        for _ in 0..2 {
+            let cache = Cache::open(root.path(), || panic!("Migration must work offline")).unwrap();
+            assert_eq!(
+                serde_json::to_value(&cache.lock().unwrap().state).unwrap(),
+                expected
+            );
+        }
+        let legacy: String = conn
+            .query_row("SELECT value FROM cache_state", [], |r| r.get(0))
+            .unwrap();
+        assert!(
+            serde_json::from_str::<State>(&legacy).is_err(),
+            "Old clients must not mistake the migrated cache for an empty workspace"
+        );
+    }
+
+    #[test]
+    fn test_failed_cache_commit_rolls_back_changed_records_and_memory() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::open(root.path(), || Ok(initial())).unwrap();
+        let original = list(&cache);
+        let mut edited = original.clone();
+        edited.items[0].toggle_state();
+        let conn = rusqlite::Connection::open(root.path().join("sync-cache.db")).unwrap();
+        conn.execute_batch("CREATE TRIGGER reject_save BEFORE UPDATE ON cache_meta BEGIN SELECT RAISE(ABORT,'simulated write failure'); END").unwrap();
+        assert!(cache.save(&[(&edited, "default")]).is_err());
+        assert_eq!(list(&cache).items, original.items);
+        assert_eq!(edited.revision.get(), original.revision.get());
+        drop(cache);
+        let cache = Cache::open(root.path(), || panic!()).unwrap();
+        assert_eq!(list(&cache).items, original.items);
+    }
+
+    #[test]
+    fn test_toggle_remains_local_while_upload_is_blocked() {
+        use std::io::{BufRead, Read, Write};
+        use std::sync::mpsc;
+
+        let root = tempfile::tempdir().unwrap();
+        let cache = Cache::open(root.path(), || Ok(initial())).unwrap();
+        let mut edited = list(&cache);
+        edited.items[0].toggle_state();
+        cache.save(&[(&edited, "default")]).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let client = Client::new(
+            super::super::RemoteConfig {
+                url: format!("http://{}", listener.local_addr().unwrap()),
+                user_id: None,
+            },
+            None,
+        )
+        .unwrap();
+        let (arrived, waiting) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(stream);
+            let mut length = 0;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = value.trim().parse::<usize>().unwrap();
+                }
+            }
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            arrived.send(()).unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(5));
+            reader.get_mut().write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        let upload_cache = cache.clone();
+        let upload = std::thread::spawn(move || upload_cache.cycle(&client));
+        waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+        edited.items[0].toggle_state();
+        let latest = edited.items.clone();
+        let save_cache = cache.clone();
+        let (saved, completed) = mpsc::channel();
+        let save = std::thread::spawn(move || {
+            saved
+                .send(save_cache.save(&[(&edited, "default")]))
+                .unwrap();
+        });
+        let result = completed.recv_timeout(Duration::from_millis(500));
+        release.send(()).unwrap();
+        save.join().unwrap();
+        assert!(upload.join().unwrap().is_err());
+        server.join().unwrap();
+        result
+            .expect("Local toggle waited for the network")
+            .unwrap();
+        assert_eq!(list(&cache).items, latest);
+        assert_eq!(cache.status().pending, 1);
+        drop(cache);
+        let cache =
+            Cache::open(root.path(), || panic!("Must retain pending edits offline")).unwrap();
+        assert_eq!(list(&cache).items, latest);
+        assert_eq!(cache.status().pending, 1);
     }
 
     #[test]
@@ -964,7 +1175,7 @@ mod tests {
                 }],
             };
             data.state.pending = Some(batch.clone());
-            cache.persist(&data.state).unwrap();
+            cache.persist(None, &data.state).unwrap();
             batch
         };
         client.sync_apply(&pending).unwrap();

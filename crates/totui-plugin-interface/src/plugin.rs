@@ -8,8 +8,9 @@ use abi_stable::sabi_trait;
 use abi_stable::std_types::{RBox, RHashMap, RResult, RString, RVec};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use crate::actions::{FfiActionResponse, FfiCallbackResult};
 use crate::config::{FfiConfigSchema, FfiConfigValue};
-use crate::events::{FfiEvent, FfiEventType, FfiHookResponse};
+use crate::events::{FfiEvent, FfiEventType};
 use crate::host_api::{FfiCommand, HostApi_TO};
 use crate::types::FfiTodoItem;
 
@@ -150,11 +151,62 @@ pub trait Plugin: Send + Sync + Debug {
     /// # Arguments
     ///
     /// * `event` - The event that occurred
+    /// * `host` - Host API for querying current state
     ///
     /// # Returns
     ///
-    /// Commands to apply in response, or error message.
-    fn on_event(&self, event: FfiEvent) -> RResult<FfiHookResponse, RString>;
+    /// An `FfiActionResponse` describing UI steps or commands to apply in response.
+    fn on_event(
+        &self,
+        _event: crate::events::FfiEvent,
+        _host: HostApi_TO<'_, RBox<()>>,
+    ) -> RResult<FfiActionResponse, RString> {
+        RResult::ROk(FfiActionResponse::noop())
+    }
+
+    /// Invoke a named action declared in the plugin manifest's `[[entries]]`.
+    ///
+    /// The plugin returns an `FfiActionResponse` describing the next UI step
+    /// (pickers/confirms) or the final result (todos/commands/status/error).
+    ///
+    /// Default implementation routes the historical `"generate"` action to
+    /// `generate(input)` for backwards compatibility; any other action returns
+    /// `Error`.
+    fn invoke_action(
+        &self,
+        action: RString,
+        input: RString,
+        _host: HostApi_TO<'_, RBox<()>>,
+    ) -> RResult<FfiActionResponse, RString> {
+        if action.as_str() == "generate" {
+            match self.generate(input) {
+                RResult::ROk(items) => RResult::ROk(FfiActionResponse::Todos { items }),
+                RResult::RErr(msg) => RResult::ROk(FfiActionResponse::Error { message: msg }),
+            }
+        } else {
+            RResult::ROk(FfiActionResponse::Error {
+                message: format!("plugin does not handle action '{}'", action).into(),
+            })
+        }
+    }
+
+    /// Handle a callback that resumes a previously-returned interactive flow.
+    ///
+    /// `token` is the `callback_token` the plugin set when returning
+    /// `Picker` / `Confirm`. `result` carries the user's reply.
+    ///
+    /// Default implementation returns an `Error` — plugins that emit pickers
+    /// or confirms MUST override this.
+    fn on_callback(
+        &self,
+        _token: RString,
+        _result: FfiCallbackResult,
+        _host: HostApi_TO<'_, RBox<()>>,
+    ) -> RResult<FfiActionResponse, RString> {
+        RResult::ROk(FfiActionResponse::Error {
+            message: "plugin does not support callbacks".into(),
+        })
+    }
 
     /// Set a notifier callback that the plugin can use to signal updates.
     ///
@@ -287,6 +339,7 @@ pub fn call_plugin_on_config_loaded(
 ///
 /// * `plugin` - The plugin trait object to call
 /// * `event` - The event to pass to the plugin's on_event method
+/// * `host` - Host API trait object for the plugin to query
 ///
 /// # Returns
 ///
@@ -294,20 +347,82 @@ pub fn call_plugin_on_config_loaded(
 pub fn call_plugin_on_event(
     plugin: &Plugin_TO<'_, RBox<()>>,
     event: FfiEvent,
-) -> RResult<FfiHookResponse, RString> {
-    let result = catch_unwind(AssertUnwindSafe(|| plugin.on_event(event)));
+    host: HostApi_TO<'_, RBox<()>>,
+) -> RResult<FfiActionResponse, RString> {
+    let result = catch_unwind(AssertUnwindSafe(|| plugin.on_event(event, host)));
 
     match result {
         Ok(r) => r,
-        Err(panic_info) => {
-            let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
-                format!("Plugin hook panicked: {}", s)
-            } else if let Some(s) = panic_info.downcast_ref::<String>() {
-                format!("Plugin hook panicked: {}", s)
-            } else {
-                "Plugin hook panicked with unknown error".to_string()
-            };
-            RResult::RErr(msg.into())
-        }
+        Err(panic_info) => RResult::RErr(panic_msg(&panic_info, "on_event").into()),
+    }
+}
+
+/// Wrapper for calling plugin.invoke_action() safely.
+///
+/// This function catches any panics from the plugin and converts them to
+/// `RResult::RErr`, preventing panics from crossing the FFI boundary which
+/// would cause undefined behavior.
+///
+/// # Arguments
+///
+/// * `plugin` - The plugin trait object to call
+/// * `action` - The action name to invoke
+/// * `input` - Plugin-specific input string
+/// * `host` - Host API trait object for the plugin to query
+///
+/// # Returns
+///
+/// The plugin's result, or an error if the plugin panicked.
+pub fn call_plugin_invoke_action(
+    plugin: &Plugin_TO<'_, RBox<()>>,
+    action: RString,
+    input: RString,
+    host: HostApi_TO<'_, RBox<()>>,
+) -> RResult<FfiActionResponse, RString> {
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        plugin.invoke_action(action, input, host)
+    }));
+    match result {
+        Ok(r) => r,
+        Err(panic_info) => RResult::RErr(panic_msg(&panic_info, "invoke_action").into()),
+    }
+}
+
+/// Wrapper for calling plugin.on_callback() safely.
+///
+/// This function catches any panics from the plugin and converts them to
+/// `RResult::RErr`, preventing panics from crossing the FFI boundary which
+/// would cause undefined behavior.
+///
+/// # Arguments
+///
+/// * `plugin` - The plugin trait object to call
+/// * `token` - The callback token identifying the pending interactive flow
+/// * `result` - The user's reply to the previous picker/confirm
+/// * `host` - Host API trait object for the plugin to query
+///
+/// # Returns
+///
+/// The plugin's result, or an error if the plugin panicked.
+pub fn call_plugin_on_callback(
+    plugin: &Plugin_TO<'_, RBox<()>>,
+    token: RString,
+    result: FfiCallbackResult,
+    host: HostApi_TO<'_, RBox<()>>,
+) -> RResult<FfiActionResponse, RString> {
+    let r = catch_unwind(AssertUnwindSafe(|| plugin.on_callback(token, result, host)));
+    match r {
+        Ok(r) => r,
+        Err(panic_info) => RResult::RErr(panic_msg(&panic_info, "on_callback").into()),
+    }
+}
+
+fn panic_msg(panic_info: &Box<dyn std::any::Any + Send>, method: &str) -> String {
+    if let Some(s) = panic_info.downcast_ref::<&str>() {
+        format!("Plugin panicked in {}: {}", method, s)
+    } else if let Some(s) = panic_info.downcast_ref::<String>() {
+        format!("Plugin panicked in {}: {}", method, s)
+    } else {
+        format!("Plugin panicked in {} with unknown error", method)
     }
 }

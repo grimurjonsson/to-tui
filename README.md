@@ -61,6 +61,30 @@ totui
 | `?` | Show help |
 | `q` | Quit |
 
+### Project kanban boards
+
+Press **F7** in the TUI, or choose **kanban** from the **P** plugin menu. Each project has one persistent board, independent of daily rollover, with Backlog, Ready, In progress, Review, Done and Blocked columns.
+
+Use arrows to select columns and tickets, **n** to create a ticket, **e** to edit, **c** to comment (or create the first board), **1–6** to move, and **a** to resolve feedback. Forms use Tab/Shift-Tab to select fields, Enter for newlines, Ctrl+S to save and Esc to cancel. Page Up/Down scrolls history.
+
+The web workspace's **Board** page opens the live board. Drag tickets between columns with a mouse, or open a ticket and use its Column selector. Backward drops open the ticket editor for a reason before moving. TUI, plugin and agent changes appear automatically. Moving a ticket back requires a reason. Agents see that reason until they record a resolution; unresolved feedback prevents marking the ticket done.
+
+Kanban keeps active stages above a full-width Backlog, with responsive wrapping instead of horizontal scrolling. Backlog is one ticket per row with **To board** (moves to Ready) and **Trash** controls; active board cards have neither Trash nor To backlog shortcuts. Done tickets stay on the board until **Archive** moves them into **Completed**, a collapsed list below Backlog. Expand it to read ticket history or **Restore to Done**. Archiving is manual, with no timer. Trash also preserves history and supports restoration.
+
+In the TUI, use `Tab` for Backlog, `b` to move there, `x` to trash a backlog item, `t` to view Trash, and `u` to restore. Use `z` on a Done ticket to archive it, `v` to view Completed, and `z` there to restore it to Done. Agents can use `trash_ticket` / `restore_ticket` and `archive_ticket` / `unarchive_ticket` with the latest revision; tickets with `trashed: true` or `archived: true` are outside active work.
+
+Agents use the MCP **kanban** tool or JSON CLI:
+
+```bash
+totui kanban --json '{"project":"default","actor":"agent","action":"view"}'
+totui kanban --json '{"project":"default","actor":"agent","action":"create_board","name":"Delivery"}'
+totui kanban --json '{"project":"default","actor":"agent","action":"create_ticket","title":"Implement search","description":"Include empty results","assignee":"agent"}'
+```
+
+Read ticket activity and feedback before working. Include the latest `expected_revision` with ticket mutations; reload after a conflict. `--json -` reads stdin; `--remote NAME` selects a configured remote. REST provides GET `/api/kanban?project=NAME` and POST `/api/kanban` with the same request shape.
+
+Kanban tables migrate automatically at startup. Upgrade host and plugins together: interface 0.5, kanban 0.1.0, jira-claude 0.2.1 and claude-tasks 1.0.6.
+
 ### Command Line
 
 ```bash
@@ -267,7 +291,16 @@ for browser sign-in and switching back to local storage.
 
 Run `totui web --open` (or `cargo run --bin totui -- web --open`) to use the
 responsive task workspace at <http://127.0.0.1:48372>. The Rust binary bundles the
-frontend; no Node runtime is required. `totui serve start` also serves the web UI.
+frontend, including the IBM Plex fonts; no Node runtime is required.
+`totui serve start` also serves the web UI.
+
+The workspace is laid out as a dark ledger: each day is a numbered, ruled page
+with the markdown state glyphs (`[ ]`, `[*]`, `[x]`, `[?]`, `[!]`, `[-]`) in a
+tick column and a footed total of what is done and what carries forward to the
+next day. Vim keys work on the page: **j**/**k** move, **x** toggles done,
+**s** cycles the state, **h**/**l** fold and unfold a branch, **o** starts a new
+task, **Enter** opens the details, **[**/**]** step between days and **?**
+lists every shortcut.
 Both commands now bind to loopback by default; `TOTUI_BIND` overrides the interface.
 
 See [Web startup, development, synchronization, and verification](docs/web.md) for

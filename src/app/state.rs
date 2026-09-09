@@ -81,22 +81,49 @@ pub enum PluginsModalState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PluginResultSource {
     PluginsModal,
-    PluginSubState,
 }
 
+#[derive(Debug, Clone)]
+pub struct PickerItem {
+    pub id: String,
+    pub label: String,
+    pub detail: Option<String>,
+}
+
+#[allow(dead_code)] // TODO(jira-augment): Confirm constructed in Task 13
 #[derive(Debug, Clone)]
 pub enum PluginSubState {
     Selecting {
         plugins: Vec<GeneratorInfo>,
         selected_index: usize,
     },
+    EntryMenu {
+        plugin_name: String,
+        entries: Vec<crate::plugin::manifest::EntrySpec>,
+        selected_index: usize,
+    },
     InputPrompt {
         plugin_name: String,
+        action_id: String,
         input_buffer: String,
         cursor_pos: usize,
+        input_label: String,
     },
     Executing {
         plugin_name: String,
+    },
+    Picker {
+        plugin_name: String,
+        title: String,
+        items: Vec<PickerItem>,
+        callback_token: String,
+        selected_index: usize,
+        filter: String,
+    },
+    Confirm {
+        plugin_name: String,
+        message: String,
+        callback_token: String,
     },
     Error {
         message: String,
@@ -179,8 +206,14 @@ pub struct AppState {
     pub sync_dialog: Option<super::sync::SyncDialog>,
     pub sync_dismissed: Option<uuid::Uuid>,
     pub web: super::web::WebController,
+    pub kanban: Option<super::kanban::KanbanUi>,
+    pending_plugin_dialogs:
+        std::collections::VecDeque<(String, String, totui_plugin_interface::FfiActionResponse)>,
     pub github_icon: Option<crate::ui::github_icon::GithubIcon>,
     pub plugin_result_rx: Option<mpsc::Receiver<Result<Vec<TodoItem>, String>>>,
+    /// Channel receiver for action-protocol responses (Todos/Picker/Confirm/Commands/Status/Error).
+    pub plugin_action_rx:
+        Option<mpsc::Receiver<Result<totui_plugin_interface::FfiActionResponse, String>>>,
     pub plugin_result_source: Option<PluginResultSource>,
     pub spinner_frame: usize,
     pub pending_rollover: Option<PendingRollover>,
@@ -313,8 +346,11 @@ impl AppState {
             sync_dialog: None,
             sync_dismissed: None,
             web: super::web::WebController::default(),
+            kanban: None,
+            pending_plugin_dialogs: std::collections::VecDeque::new(),
             github_icon: None,
             plugin_result_rx: None,
+            plugin_action_rx: None,
             plugin_result_source: None,
             spinner_frame: 0,
             pending_rollover: None,
@@ -1157,7 +1193,7 @@ impl AppState {
                                     Some(PluginsModalState::Preview { items });
                             }
                         }
-                        Some(PluginResultSource::PluginSubState) | None => {
+                        None => {
                             if items.is_empty() {
                                 self.plugin_state = Some(PluginSubState::Error {
                                     message: "Plugin generated no items".to_string(),
@@ -1176,7 +1212,7 @@ impl AppState {
                             self.plugins_modal_state =
                                 Some(PluginsModalState::Error { message: e });
                         }
-                        Some(PluginResultSource::PluginSubState) | None => {
+                        None => {
                             self.plugin_state = Some(PluginSubState::Error { message: e });
                         }
                     }
@@ -1190,12 +1226,149 @@ impl AppState {
                         Some(PluginResultSource::PluginsModal) => {
                             self.plugins_modal_state = Some(PluginsModalState::Error { message });
                         }
-                        Some(PluginResultSource::PluginSubState) | None => {
+                        None => {
                             self.plugin_state = Some(PluginSubState::Error { message });
                         }
                     }
                 }
             }
+        }
+    }
+
+    pub fn check_plugin_action(&mut self) {
+        let Some(rx) = self.plugin_action_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(msg) => {
+                self.plugin_action_rx = None;
+                let plugin_name = match self.plugin_state.as_ref() {
+                    Some(PluginSubState::Executing { plugin_name }) => plugin_name.clone(),
+                    _ => String::new(),
+                };
+                self.apply_plugin_action_response(plugin_name, msg);
+            }
+            Err(mpsc::TryRecvError::Empty) => {}
+            Err(mpsc::TryRecvError::Disconnected) => {
+                self.plugin_action_rx = None;
+                self.plugin_state = Some(PluginSubState::Error {
+                    message: "Plugin action thread crashed".to_string(),
+                });
+            }
+        }
+    }
+
+    fn apply_plugin_action_response(
+        &mut self,
+        plugin_name: String,
+        result: Result<totui_plugin_interface::FfiActionResponse, String>,
+    ) {
+        use totui_plugin_interface::FfiActionResponse;
+        self.mode = Mode::Plugin;
+        match result {
+            Ok(FfiActionResponse::OpenKanban) => {
+                self.plugin_state = None;
+                self.plugins_modal_state = None;
+                self.mode = Mode::Navigate;
+                self.kanban = Some(super::kanban::KanbanUi::new(
+                    self.current_project.name.clone(),
+                ));
+            }
+            Err(msg) => {
+                self.plugin_state = Some(PluginSubState::Error { message: msg });
+            }
+            Ok(FfiActionResponse::Error { message }) => {
+                self.plugin_state = Some(PluginSubState::Error {
+                    message: message.into(),
+                });
+            }
+            Ok(FfiActionResponse::Todos { items }) => {
+                let local: Vec<crate::todo::TodoItem> = items
+                    .into_iter()
+                    .filter_map(|ffi| {
+                        crate::todo::TodoItem::try_from(ffi)
+                            .inspect_err(|e| tracing::warn!(error = %e, "Plugin returned invalid TodoItem; skipping"))
+                            .ok()
+                    })
+                    .collect();
+                if local.is_empty() {
+                    self.plugin_state = Some(PluginSubState::Error {
+                        message: "Plugin returned no items".to_string(),
+                    });
+                } else {
+                    self.plugin_state = Some(PluginSubState::Preview { items: local });
+                }
+            }
+            Ok(FfiActionResponse::Picker {
+                title,
+                items,
+                callback_token,
+            }) => {
+                let picker_items: Vec<crate::app::state::PickerItem> = items
+                    .into_iter()
+                    .map(|i| crate::app::state::PickerItem {
+                        id: i.id.into(),
+                        label: i.label.into(),
+                        detail: i.detail.into_option().map(|s| s.into()),
+                    })
+                    .collect();
+                self.plugin_state = Some(PluginSubState::Picker {
+                    plugin_name,
+                    title: title.into(),
+                    items: picker_items,
+                    callback_token: callback_token.into(),
+                    selected_index: 0,
+                    filter: String::new(),
+                });
+            }
+            Ok(FfiActionResponse::Confirm {
+                message,
+                callback_token,
+            }) => {
+                self.plugin_state = Some(PluginSubState::Confirm {
+                    plugin_name,
+                    message: message.into(),
+                    callback_token: callback_token.into(),
+                });
+            }
+            Ok(FfiActionResponse::Commands { commands }) => {
+                self.mode = Mode::Navigate;
+                self.plugin_state = None;
+                self.apply_plugin_commands(&plugin_name, commands.into_iter().collect());
+            }
+            Ok(FfiActionResponse::Status { message, commands }) => {
+                self.mode = Mode::Navigate;
+                let msg_str: String = message.into();
+                self.plugin_state = None;
+                self.apply_plugin_commands(&plugin_name, commands.into_iter().collect());
+                self.set_status_message(msg_str);
+            }
+        }
+    }
+
+    fn apply_plugin_commands(
+        &mut self,
+        plugin_name: &str,
+        commands: Vec<totui_plugin_interface::FfiCommand>,
+    ) {
+        if commands.is_empty() {
+            return;
+        }
+        self.save_undo();
+        let mut executor =
+            crate::plugin::command_executor::CommandExecutor::new(plugin_name.to_string());
+        if let Err(e) = executor.execute_batch(commands, &mut self.todo_list) {
+            self.set_status_message(format!("Plugin error: {}", e));
+            return;
+        }
+        self.unsaved_changes = true;
+        if let Err(e) = crate::storage::file::save_todo_list_for_project(
+            &self.todo_list,
+            &self.current_project.name,
+        ) {
+            tracing::warn!(plugin = %plugin_name, error = %e, "Failed to save after plugin commands");
+        } else {
+            self.unsaved_changes = false;
         }
     }
 
@@ -2139,8 +2312,16 @@ impl AppState {
         let subscribed = self.plugin_loader.plugins_for_event(event_type);
 
         for (plugin, timeout) in subscribed {
+            let mut enabled_projects = std::collections::HashSet::new();
+            enabled_projects.insert(self.current_project.name.clone());
+            let host = crate::plugin::host_impl::OwnedPluginHostApi::new(
+                self.todo_list.clone(),
+                self.current_project.clone(),
+                enabled_projects,
+                plugin.name.clone(),
+            );
             self.hook_dispatcher
-                .dispatch_to_plugin(event.clone(), plugin, timeout);
+                .dispatch_to_plugin(event.clone(), plugin, timeout, host);
         }
     }
 
@@ -2151,7 +2332,7 @@ impl AppState {
     pub fn apply_pending_hook_results(&mut self) {
         let results = self.hook_dispatcher.poll_results();
 
-        for result in results {
+        for mut result in results {
             // Handle errors
             if let Some(error) = result.error {
                 self.pending_plugin_errors
@@ -2166,57 +2347,79 @@ impl AppState {
                 continue;
             }
 
-            if result.commands.is_empty() {
-                continue;
-            }
+            if !result.commands.is_empty() {
+                tracing::info!(
+                    plugin = %result.plugin_name,
+                    command_count = result.commands.len(),
+                    "Applying hook commands"
+                );
 
-            tracing::info!(
-                plugin = %result.plugin_name,
-                command_count = result.commands.len(),
-                "Applying hook commands"
-            );
+                // Apply commands WITHOUT undo snapshot (intentional design decision).
+                // Hook modifications are secondary effects, not user-initiated actions.
+                // If user undoes the original action, hook effects would become orphaned.
+                // This is consistent with Phase 9's CommandExecutor which provides the
+                // execute_batch() method - undo snapshot is caller's responsibility.
+                // For hooks, we deliberately skip the snapshot.
+                self.in_hook_apply = true;
 
-            // Apply commands WITHOUT undo snapshot (intentional design decision).
-            // Hook modifications are secondary effects, not user-initiated actions.
-            // If user undoes the original action, hook effects would become orphaned.
-            // This is consistent with Phase 9's CommandExecutor which provides the
-            // execute_batch() method - undo snapshot is caller's responsibility.
-            // For hooks, we deliberately skip the snapshot.
-            self.in_hook_apply = true;
+                let mut executor = crate::plugin::command_executor::CommandExecutor::new(
+                    result.plugin_name.clone(),
+                );
 
-            let mut executor =
-                crate::plugin::command_executor::CommandExecutor::new(result.plugin_name.clone());
-
-            match executor.execute_batch(result.commands, &mut self.todo_list) {
-                Ok(_) => {
-                    // Save immediately to persist plugin changes
-                    if let Err(e) = crate::storage::file::save_todo_list_for_project(
-                        &self.todo_list,
-                        &self.current_project.name,
-                    ) {
+                match executor.execute_batch(result.commands, &mut self.todo_list) {
+                    Ok(_) => {
+                        // Save immediately to persist plugin changes
+                        if let Err(e) = crate::storage::file::save_todo_list_for_project(
+                            &self.todo_list,
+                            &self.current_project.name,
+                        ) {
+                            tracing::warn!(
+                                plugin = %result.plugin_name,
+                                error = %e,
+                                "Failed to save after hook commands"
+                            );
+                        } else {
+                            tracing::debug!(
+                                plugin = %result.plugin_name,
+                                "Applied and saved hook commands"
+                            );
+                        }
+                        self.unsaved_changes = false;
+                    }
+                    Err(e) => {
                         tracing::warn!(
                             plugin = %result.plugin_name,
                             error = %e,
-                            "Failed to save after hook commands"
-                        );
-                    } else {
-                        tracing::debug!(
-                            plugin = %result.plugin_name,
-                            "Applied and saved hook commands"
+                            "Hook command execution failed"
                         );
                     }
-                    self.unsaved_changes = false;
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        plugin = %result.plugin_name,
-                        error = %e,
-                        "Hook command execution failed"
-                    );
-                }
+
+                self.in_hook_apply = false;
             }
 
-            self.in_hook_apply = false;
+            if let Some(response) = result.next_response.take() {
+                self.pending_plugin_dialogs.push_back((
+                    self.current_project.name.clone(),
+                    result.plugin_name,
+                    response,
+                ));
+            }
+        }
+        if self.mode == Mode::Navigate
+            && self.kanban.is_none()
+            && self.plugin_state.is_none()
+            && self.plugins_modal_state.is_none()
+            && self.sync_dialog.is_none()
+            && !self.show_help
+            && !self.show_plugin_error_popup
+        {
+            while let Some((project, plugin, response)) = self.pending_plugin_dialogs.pop_front() {
+                if project == self.current_project.name {
+                    self.apply_plugin_action_response(plugin, Ok(response));
+                    break;
+                }
+            }
         }
     }
 
@@ -2460,6 +2663,42 @@ mod tests {
     fn yesterday_state() -> AppState {
         let yesterday = Local::now().date_naive() - chrono::Duration::days(1);
         make_test_state_for_date(yesterday)
+    }
+
+    #[test]
+    fn test_plugin_completion_returns_to_navigation() {
+        let mut state = make_test_state_for_date(Local::now().date_naive());
+        state.mode = Mode::Plugin;
+        state.apply_plugin_action_response(
+            "test".into(),
+            Ok(totui_plugin_interface::FfiActionResponse::noop()),
+        );
+        assert_eq!(state.mode, Mode::Navigate);
+        assert!(state.plugin_state.is_none());
+    }
+
+    #[test]
+    fn test_hook_confirmation_waits_for_editor_to_close() {
+        let mut state = make_test_state_for_date(Local::now().date_naive());
+        state.mode = Mode::Edit;
+        state.pending_plugin_dialogs.push_back((
+            state.current_project.name.clone(),
+            "test".into(),
+            totui_plugin_interface::FfiActionResponse::Confirm {
+                message: "Confirm operation".into(),
+                callback_token: "confirm".into(),
+            },
+        ));
+        state.apply_pending_hook_results();
+        assert_eq!(state.mode, Mode::Edit);
+        assert_eq!(state.pending_plugin_dialogs.len(), 1);
+        state.mode = Mode::Navigate;
+        state.apply_pending_hook_results();
+        assert_eq!(state.mode, Mode::Plugin);
+        assert!(matches!(
+            state.plugin_state,
+            Some(PluginSubState::Confirm { .. })
+        ));
     }
 
     #[test]

@@ -145,6 +145,12 @@ pub async fn script() -> impl IntoResponse {
         include_str!("../../web/app.js"),
     )
 }
+pub async fn clipboard_script() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript")],
+        include_str!("../../web/clipboard.js"),
+    )
+}
 pub async fn style() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/css")],
@@ -157,6 +163,29 @@ pub async fn favicon() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "image/x-icon")],
         include_bytes!("../../web/favicon.ico").as_slice(),
     )
+}
+
+fn font(bytes: &'static [u8]) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "font/woff2"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        bytes,
+    )
+}
+pub async fn font_sans() -> impl IntoResponse {
+    font(include_bytes!("../../web/fonts/IBMPlexSans-latin.woff2"))
+}
+pub async fn font_mono() -> impl IntoResponse {
+    font(include_bytes!(
+        "../../web/fonts/IBMPlexMono-400-latin.woff2"
+    ))
+}
+pub async fn font_mono_medium() -> impl IntoResponse {
+    font(include_bytes!(
+        "../../web/fonts/IBMPlexMono-500-latin.woff2"
+    ))
 }
 
 pub async fn protect_local_writes(
