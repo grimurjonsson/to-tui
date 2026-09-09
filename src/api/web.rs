@@ -159,6 +159,29 @@ pub async fn favicon() -> impl IntoResponse {
     )
 }
 
+fn font(bytes: &'static [u8]) -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "font/woff2"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        bytes,
+    )
+}
+pub async fn font_sans() -> impl IntoResponse {
+    font(include_bytes!("../../web/fonts/IBMPlexSans-latin.woff2"))
+}
+pub async fn font_mono() -> impl IntoResponse {
+    font(include_bytes!(
+        "../../web/fonts/IBMPlexMono-400-latin.woff2"
+    ))
+}
+pub async fn font_mono_medium() -> impl IntoResponse {
+    font(include_bytes!(
+        "../../web/fonts/IBMPlexMono-500-latin.woff2"
+    ))
+}
+
 pub async fn protect_local_writes(
     request: axum::extract::Request,
     next: axum::middleware::Next,

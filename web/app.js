@@ -18,14 +18,57 @@ const state = {
   editor: null,
 };
 const stateIcons = {
-  " ": "⬜",
-  "*": "🔄",
-  x: "✅",
-  "?": "❔",
-  "!": "❗",
-  "-": "🚫",
+  " ": "[ ]",
+  "*": "[*]",
+  x: "[x]",
+  "?": "[?]",
+  "!": "[!]",
+  "-": "[-]",
 };
+const stateOrder = [" ", "*", "x", "?", "!", "-"];
+const PAGE_LINES = 14;
+const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const complete = (item) => ["x", "-"].includes(item.state);
+const parseDate = (value) => {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+};
+const isoDate = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const shiftDate = (value, days) => {
+  const date = parseDate(value);
+  date.setDate(date.getDate() + days);
+  return isoDate(date);
+};
+function longDate(value, today) {
+  const date = parseDate(value);
+  const options = { weekday: "long", day: "numeric", month: "long" };
+  if (!today || parseDate(today).getFullYear() !== date.getFullYear())
+    options.year = "numeric";
+  return date.toLocaleDateString("en-GB", options);
+}
+const MONTHS = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+const shortDate = (value) => {
+  const date = parseDate(value);
+  return `${date.getDate()} ${MONTHS[date.getMonth()]}`;
+};
+const dayOfYear = (value) => {
+  const date = parseDate(value);
+  return Math.round((date - new Date(date.getFullYear(), 0, 0)) / 86400000);
+};
+function descendants(items, id) {
+  const index = items.findIndex((item) => item.id === id);
+  const out = [];
+  for (
+    let i = index + 1;
+    index >= 0 &&
+    i < items.length &&
+    items[i].indent_level > items[index].indent_level;
+    i++
+  )
+    out.push(items[i]);
+  return out;
+}
 const scope = () => `${state.project}/${state.snapshot?.date || state.date}`;
 const key = (id) => `${scope()}/${id}`;
 const query = () =>
@@ -154,7 +197,8 @@ async function refresh(force = false) {
   }
 }
 function renderProjects() {
-  $("kanban-link").href = `/kanban?project=${encodeURIComponent(state.project)}`;
+  $("kanban-link").href =
+    `/kanban?project=${encodeURIComponent(state.project)}`;
   const focusedProject = document.activeElement?.dataset.project;
   const signature = JSON.stringify(state.projects);
   if ($("projects").dataset.signature !== signature) {
@@ -342,12 +386,13 @@ function changeScope() {
   state.selected = null;
   state.editor = null;
   state.snapshot = null;
+  state.cursor = null;
   $("add").disabled = true;
-  $("empty-add").disabled = true;
   state.rows.clear();
   $("list").replaceChildren();
+  $("ledger-extra").replaceChildren();
   closeEditor();
-  message("notice", "Loading tasks…");
+  message("notice", "Loading");
   refresh();
 }
 function visibleItems(items) {
@@ -376,20 +421,28 @@ function visibleItems(items) {
 function renderList(previous) {
   const snapshot = state.snapshot;
   if (!snapshot) return;
-  text($("heading"), state.date ? snapshot.date : "Today");
-  text($("project-label"), state.project.toUpperCase());
-  const done = snapshot.items.filter(complete).length;
+  const viewingToday = !state.date || snapshot.date === snapshot.today;
+  text($("heading"), longDate(snapshot.date, snapshot.today));
+  $("today-tag").hidden = !viewingToday;
+  $("today").hidden = viewingToday;
+  $("next-day").disabled = viewingToday;
+  text($("project-label"), state.project);
+  text($("folio"), `folio ${dayOfYear(snapshot.date)}`);
+  const done = snapshot.items.filter((item) => item.state === "x").length;
+  const cancelled = snapshot.items.filter((item) => item.state === "-").length;
+  const open = snapshot.items.length - done - cancelled;
   text(
     $("summary"),
-    `${snapshot.items.length - done} open · ${done} completed · ${snapshot.date}`,
+    [`${open} open`, `${done} done`, cancelled && `${cancelled} cancelled`]
+      .filter(Boolean)
+      .join(", "),
   );
   $("date").max = snapshot.today;
-  $("date").value = state.date;
-  $("today").classList.toggle("selected", !state.date);
+  $("date").value = snapshot.date;
   $("add").disabled = snapshot.read_only;
-  $("empty-add").hidden = snapshot.read_only;
-  $("empty-add").disabled = snapshot.read_only;
-  message("notice", snapshot.read_only ? "History · read-only snapshot" : "");
+  $("new-row").hidden = snapshot.read_only;
+  text($("new-no"), String(snapshot.items.length + 1));
+  message("notice", snapshot.read_only ? "History, read only" : "");
   const visible = visibleItems(snapshot.items);
   const ids = new Set(visible.map((i) => i.id));
   const old = new Map(
@@ -398,8 +451,21 @@ function renderList(previous) {
   const hasChildren = new Set(
     snapshot.items.map((i) => i.parent_id).filter(Boolean),
   );
-  $("expand-all").disabled = !hasChildren.size;
-  $("collapse-all").disabled = !hasChildren.size;
+  $("fold-all").disabled = !hasChildren.size;
+  text(
+    $("fold-all"),
+    hasChildren.size &&
+      [...hasChildren].every((id) => state.collapsed.has(key(id)))
+      ? "Unfold all"
+      : "Fold all",
+  );
+  const lineNumbers = new Map(
+    snapshot.items.map((item, i) => [item.id, i + 1]),
+  );
+  if (!visible.some((item) => item.id === state.cursor))
+    state.cursor = visible.some((item) => item.id === state.selected)
+      ? state.selected
+      : (visible[0]?.id ?? null);
   const active = document.activeElement;
   const scroll = document.querySelector("main").scrollTop;
   const pageScroll = window.scrollY;
@@ -434,31 +500,14 @@ function renderList(previous) {
         )
           openStateMenu(event, item.id);
       };
-      const branch = document.createElement("button");
-      branch.className = "branch";
-      branch.innerHTML =
-        '<svg viewBox="0 0 32 32" width="24" height="24" aria-hidden="true" focusable="false"><rect x="1" y="1" width="30" height="30" rx="7" fill="currentColor" opacity="0.1"/><path d="M13 9 L20 16 L13 23" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-      branch.onclick = () => {
-        const k = key(item.id);
-        state.collapsed.has(k)
-          ? state.collapsed.delete(k)
-          : state.collapsed.add(k);
-        renderList(state.snapshot);
-      };
-      const symbol = document.createElement("button");
-      symbol.className = "symbol";
-      symbol.setAttribute("role", "checkbox");
-      symbol.setAttribute("aria-haspopup", "menu");
-      symbol.onclick = () => toggleCompletion(item.id);
-      const open = document.createElement("button");
-      open.className = "task-open";
-      open.innerHTML =
-        '<span class="priority-badge" hidden></span><span class="task-title"></span><span class="meta" hidden></span>';
-      open.onclick = () => select(item.id);
+      row.addEventListener("animationend", () =>
+        row.classList.remove("unfolding"),
+      );
+      const number = document.createElement("div");
+      number.className = "no";
       const handle = document.createElement("button");
       handle.className = "drag-handle";
-      handle.innerHTML =
-        '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M9 5h0M15 5h0M9 12h0M15 12h0M9 19h0M15 19h0" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>';
+      handle.textContent = "⠿";
       handle.onpointerdown = (event) => startDrag(event, item.id);
       handle.onpointermove = trackDrag;
       handle.onpointerup = finishDrag;
@@ -467,38 +516,87 @@ function renderList(previous) {
       handle.onclick = (event) => {
         if (event.detail === 0) select(item.id);
       };
-      row.append(branch, symbol, open, handle);
+      const lineNumber = document.createElement("span");
+      lineNumber.className = "n";
+      number.append(handle, lineNumber);
+      const symbol = document.createElement("button");
+      symbol.className = "symbol";
+      symbol.setAttribute("role", "checkbox");
+      symbol.setAttribute("aria-haspopup", "menu");
+      symbol.onclick = () => toggleCompletion(item.id);
+      const entry = document.createElement("div");
+      entry.className = "entry";
+      const branch = document.createElement("button");
+      branch.className = "branch";
+      branch.textContent = "▾";
+      branch.onclick = () => {
+        if (state.collapsed.has(key(item.id))) unfoldItem(item.id);
+        else foldItem(item.id);
+      };
+      const open = document.createElement("button");
+      open.className = "task-open";
+      open.innerHTML = '<span class="task-title"></span>';
+      open.onclick = () => select(item.id);
+      const fold = document.createElement("button");
+      fold.className = "fold";
+      fold.hidden = true;
+      fold.onclick = () => unfoldItem(item.id);
+      entry.append(branch, open, fold);
+      const priority = document.createElement("div");
+      priority.className = "pri";
+      priority.innerHTML = '<span class="priority-badge" hidden></span>';
+      const due = document.createElement("div");
+      due.className = "due";
+      due.innerHTML = '<span class="meta" hidden></span>';
+      row.append(number, symbol, entry, priority, due);
       state.rows.set(item.id, row);
     }
     const handle = row.querySelector(".drag-handle");
     handle.hidden = snapshot.read_only;
     handle.setAttribute("aria-label", `Move ${item.content}`);
     handle.title = "Drag to move; use Enter for move controls";
-    const branch = row.children[0];
+    const branch = row.querySelector(".branch");
+    const folded =
+      hasChildren.has(item.id) && state.collapsed.has(key(item.id));
     branch.disabled = !hasChildren.has(item.id);
     branch.setAttribute(
       "aria-label",
-      `${state.collapsed.has(key(item.id)) ? "Expand" : "Collapse"} ${item.content}`,
+      `${folded ? "Expand" : "Collapse"} ${item.content}`,
     );
+    text(branch, folded ? "▸" : "▾");
     if (hasChildren.has(item.id))
-      branch.setAttribute(
-        "aria-expanded",
-        String(!state.collapsed.has(key(item.id))),
-      );
+      branch.setAttribute("aria-expanded", String(!folded));
     else branch.removeAttribute("aria-expanded");
+    row.classList.toggle("folded", folded);
+    const fold = row.querySelector(".fold");
+    fold.hidden = !folded;
+    if (folded) {
+      const count = descendants(snapshot.items, item.id).length;
+      text(fold, `${count} folded`);
+      fold.setAttribute(
+        "aria-label",
+        `Unfold ${count} tasks under ${item.content}`,
+      );
+    }
+    text(row.querySelector(".n"), String(lineNumbers.get(item.id)));
     row.style.setProperty("--depth", item.indent_level);
     row.classList.toggle("active", state.selected === item.id);
+    row.classList.toggle(
+      "cursor",
+      state.cursor === item.id && state.selected !== item.id,
+    );
     row.classList.toggle("complete", complete(item));
     row.classList.toggle(
       "context",
       $("hide-completed").checked && complete(item),
     );
-    const checkbox = row.children[1];
+    const checkbox = row.querySelector(".symbol");
     text(checkbox, stateIcons[item.state]);
+    checkbox.dataset.state = item.state;
     checkbox.disabled = snapshot.read_only || state.saving;
     checkbox.setAttribute("aria-checked", String(item.state === "x"));
     checkbox.setAttribute("aria-label", `Complete ${item.content}`);
-    checkbox.title = `${item.state_description.replace("_", " ")} · ${item.state === "x" ? "Mark pending" : "Mark done"}`;
+    checkbox.title = `${item.state_description.replace("_", " ")}. Click to ${item.state === "x" ? "mark pending" : "mark done"}, right-click for every state`;
     text(row.querySelector(".task-title"), item.content);
     row
       .querySelector(".task-open")
@@ -515,22 +613,27 @@ function renderList(previous) {
           item.due_date && `Due ${item.due_date}`,
         ]
           .filter(Boolean)
-          .join(" · "),
+          .join(", "),
       );
     const priority = row.querySelector(".priority-badge");
     priority.hidden = !item.priority;
     priority.dataset.priority = item.priority || "";
     text(priority, item.priority || "");
-    text(
-      row.querySelector(".meta"),
-      [
-        item.due_date && `Due ${item.due_date}`,
-        item.indent_level > 5 && `Depth ${item.indent_level}`,
-      ]
-        .filter(Boolean)
-        .join(" · "),
+    const meta = row.querySelector(".meta");
+    text(meta, item.due_date ? shortDate(item.due_date) : "");
+    meta.title = item.due_date ? `Due ${item.due_date}` : "";
+    meta.hidden = !item.due_date;
+    meta.classList.toggle(
+      "overdue",
+      !!item.due_date && !complete(item) && item.due_date < snapshot.today,
     );
-    row.querySelector(".meta").hidden = !row.querySelector(".meta").textContent;
+    meta.classList.toggle(
+      "soon",
+      !!item.due_date &&
+        !complete(item) &&
+        item.due_date >= snapshot.today &&
+        item.due_date <= shiftDate(snapshot.today, 2),
+    );
     if (
       previous?.date === snapshot.date &&
       old.get(item.id) !== JSON.stringify(item)
@@ -541,21 +644,21 @@ function renderList(previous) {
     if (row !== cursor) $("list").insertBefore(row, cursor);
     cursor = row.nextElementSibling;
   }
-  $("empty").hidden = visible.length > 0;
+  $("empty").hidden =
+    visible.length > 0 || (!snapshot.items.length && !snapshot.read_only);
   text(
     $("empty").querySelector("h2"),
     snapshot.items.length
       ? "Nothing left in this view."
-      : "A little room to think.",
+      : "No entries for this date.",
   );
   text(
     $("empty").querySelector("p"),
     snapshot.items.length
-      ? "All tasks are completed. Turn off Hide completed to see them."
-      : snapshot.read_only
-        ? "There are no tasks recorded for this date."
-        : "No tasks here yet. Add something you want to move forward.",
+      ? "Every entry is done. Turn off Hide completed to see them."
+      : "",
   );
+  renderLedgerExtra(snapshot, { open, done, cancelled });
   if (active?.isConnected && active !== document.activeElement)
     active.focus({ preventScroll: true });
   document.querySelector("main").scrollTop = scroll;
@@ -567,8 +670,87 @@ function renderList(previous) {
     else document.querySelector("main").scrollTop = scroll + delta;
   }
 }
+function ledgerLine(className, cells) {
+  const row = document.createElement("div");
+  row.className = `ledger-row ${className}`;
+  row.setAttribute("aria-hidden", "true");
+  for (const [cell, value] of cells) {
+    const node = document.createElement("div");
+    node.className = cell;
+    if (value !== undefined && cell === "no") {
+      const number = document.createElement("span");
+      number.className = "n";
+      number.textContent = String(value);
+      node.append(number);
+    } else if (value !== undefined) node.textContent = String(value);
+    row.append(node);
+  }
+  return row;
+}
+function renderLedgerExtra(snapshot, totals) {
+  const rows = [];
+  const first = snapshot.items.length + (snapshot.read_only ? 1 : 2);
+  for (let line = first; line <= PAGE_LINES; line++)
+    rows.push(
+      ledgerLine("blank", [["no", line], [""], ["entry"], ["pri"], ["due"]]),
+    );
+  rows.push(
+    ledgerLine("total", [
+      ["no"],
+      [""],
+      ["entry", "Done"],
+      ["pri"],
+      ["due", totals.done],
+    ]),
+  );
+  if (totals.cancelled)
+    rows.push(
+      ledgerLine("total", [
+        ["no"],
+        [""],
+        ["entry", "Cancelled"],
+        ["pri"],
+        ["due", totals.cancelled],
+      ]),
+    );
+  rows.push(
+    ledgerLine("total foot", [
+      ["no"],
+      [""],
+      [
+        "entry",
+        `Carried forward to ${longDate(shiftDate(snapshot.date, 1), snapshot.today)}`,
+      ],
+      ["pri"],
+      ["due", totals.open],
+    ]),
+  );
+  $("ledger-extra").replaceChildren(...rows);
+}
+function foldItem(id) {
+  if (!state.snapshot) return;
+  const hidden = descendants(state.snapshot.items, id);
+  if (hidden.some((item) => item.id === state.cursor)) state.cursor = id;
+  state.collapsed.add(key(id));
+  const rows = hidden.map((item) => state.rows.get(item.id)).filter(Boolean);
+  if (reducedMotion || !rows.length) {
+    renderList(state.snapshot);
+    return;
+  }
+  for (const row of rows) row.classList.add("folding");
+  setTimeout(() => renderList(state.snapshot), 150);
+}
+function unfoldItem(id) {
+  if (!state.snapshot) return;
+  state.collapsed.delete(key(id));
+  renderList(state.snapshot);
+  if (reducedMotion) return;
+  for (const item of descendants(state.snapshot.items, id))
+    state.rows.get(item.id)?.classList.add("unfolding");
+}
 function select(id) {
   state.selected = id;
+  state.cursor = id;
   loadEditor(id);
   renderList(state.snapshot);
   $("details").classList.add("open");
@@ -597,6 +779,11 @@ function loadEditor(id) {
     draft.revision = state.snapshot.revision;
   }
   state.editor = draft;
+  const line = state.snapshot.items.findIndex((i) => i.id === id) + 1;
+  text(
+    $("editor-title"),
+    id === "new" ? "New task" : line ? `line ${line}` : "Task",
+  );
   $("details").hidden = false;
   $("editor").hidden = false;
   for (const name of [
@@ -615,9 +802,9 @@ function loadEditor(id) {
   message(
     "draft-status",
     readonly
-      ? "Read-only · this task is historical or has been deleted."
+      ? "Read only. This task is historical or was deleted."
       : draft.dirty || draft.moveDirty
-        ? "Unsaved draft · kept while you browse"
+        ? "Unsaved draft, kept while you browse"
         : "",
   );
   $("conflict").hidden = true;
@@ -681,7 +868,7 @@ function captureDraft() {
   if (!state.editor) return;
   state.editor.dirty = true;
   state.editor.values = Object.fromEntries(new FormData($("task-form")));
-  message("draft-status", "Unsaved draft · kept while you browse");
+  message("draft-status", "Unsaved draft, kept while you browse");
 }
 async function mutate(path, method, body, draft = state.editor) {
   if (state.saving) return false;
@@ -695,7 +882,7 @@ async function mutate(path, method, body, draft = state.editor) {
   controls.forEach((control) => {
     control.disabled = true;
   });
-  text($("save-status"), "Saving…");
+  text($("save-status"), "Saving");
   try {
     await api(path, {
       method,
@@ -716,7 +903,7 @@ async function mutate(path, method, body, draft = state.editor) {
       text(
         $("latest"),
         latest
-          ? `Latest task: ${latest.content}\n${latest.description || "No description"}\n${latest.state_description} · ${latest.priority || "No priority"} · ${latest.due_date || "No due date"}`
+          ? `Latest task: ${latest.content}\n${latest.description || "No description"}\n${latest.state_description}, ${latest.priority || "no priority"}, ${latest.due_date ? "due " + latest.due_date : "no due date"}`
           : "The task may have been deleted or moved to another day. Your draft is still here.",
       );
     }
@@ -814,19 +1001,18 @@ $("clear-date").onclick = () => {
   captureDraft();
 };
 $("add").onclick = () => newTask();
-$("empty-add").onclick = () => newTask();
 $("add-child").onclick = () => newTask(state.selected);
 $("parent").onchange = () => {
   state.editor.moveDirty = true;
   state.editor.moveParent = $("parent").value;
   state.editor.moveBefore = "";
-  message("draft-status", "Unsaved placement · Save task to apply all changes");
+  message("draft-status", "Unsaved placement. Save task to apply it.");
   renderPositions();
 };
 $("before").onchange = () => {
   state.editor.moveDirty = true;
   state.editor.moveBefore = $("before").value;
-  message("draft-status", "Unsaved placement · Save task to apply all changes");
+  message("draft-status", "Unsaved placement. Save task to apply it.");
 };
 $("move-root").onclick = () => moveTask(null, null);
 $("move").onclick = () =>
@@ -906,35 +1092,40 @@ $("today").onclick = () => {
   state.date = "";
   changeScope();
 };
-$("expand-all").onclick = () => {
-  for (const item of state.snapshot.items) state.collapsed.delete(key(item.id));
+$("fold-all").onclick = () => {
+  const items = state.snapshot.items;
+  const parents = items.filter((item) =>
+    items.some((child) => child.parent_id === item.id),
+  );
+  if (parents.every((item) => state.collapsed.has(key(item.id))))
+    for (const item of parents) state.collapsed.delete(key(item.id));
+  else for (const item of parents) state.collapsed.add(key(item.id));
   renderList(state.snapshot);
 };
-$("collapse-all").onclick = () => {
-  for (const item of state.snapshot.items) state.collapsed.add(key(item.id));
-  renderList(state.snapshot);
+$("prev-day").onclick = () => {
+  const current = state.snapshot?.date || state.date;
+  if (!current) return;
+  state.date = shiftDate(current, -1);
+  changeScope();
+};
+$("next-day").onclick = () => {
+  const snapshot = state.snapshot;
+  if (!snapshot || !state.date) return;
+  const next = shiftDate(snapshot.date, 1);
+  state.date = next >= snapshot.today ? "" : next;
+  changeScope();
 };
 $("hide-completed").onchange = () => renderList(state.snapshot);
 $("refresh").onclick = refresh;
-const savedTheme = localStorage.getItem("totui-theme");
-document.documentElement.dataset.theme =
-  savedTheme ||
-  (matchMedia("(prefers-color-scheme:dark)").matches ? "dark" : "light");
-$("theme").onclick = () => {
-  const theme =
-    document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-  document.documentElement.dataset.theme = theme;
-  localStorage.setItem("totui-theme", theme);
-};
 const events = new EventSource("api/events");
 events.onopen = () => {
-  text($("connection"), "● Live");
+  text($("connection"), "Live");
   $("connection").className = "connected";
   schedule();
 };
 events.addEventListener("change", schedule);
 events.onerror = () => {
-  text($("connection"), "Reconnecting…");
+  text($("connection"), "Reconnecting");
   $("connection").className = "";
 };
 document.addEventListener("visibilitychange", () => {
@@ -1005,7 +1196,7 @@ $("recreate").onclick = () => {
 };
 
 window.addEventListener("offline", () => {
-  text($("connection"), "Reconnecting…");
+  text($("connection"), "Reconnecting");
   $("connection").className = "";
 });
 
@@ -1182,7 +1373,7 @@ async function finishDrag(event) {
     revealParent(drag.target.parent_id);
     if (state.editor && !state.editor.dirty && !state.editor.moveDirty)
       loadEditor(state.selected);
-    message("drag-result", "Task and descendants moved");
+    message("drag-result", "Moved");
     clearTimeout(state.dragResultTimer);
     state.dragResultTimer = setTimeout(() => message("drag-result", ""), 2500);
   } else {
@@ -1339,7 +1530,7 @@ async function refreshServer() {
   try {
     const info = await api("api/server");
     state.server = info;
-    text($("server-version"), `Server version: ${info.version}`);
+    text($("server-version"), `v${info.version}`);
     $("server-current").hidden =
       !info.latest_version ||
       !!info.check_error ||
@@ -1356,7 +1547,7 @@ async function refreshServer() {
     $("logout").hidden = !info.logout_url;
     $("server-upgrade").hidden = !info.update_available;
     $("server-upgrade").disabled = !info.can_upgrade || info.upgrade_pending;
-    text($("server-upgrade"), `⬆️ v${info.latest_version}`);
+    text($("server-upgrade"), `Upgrade to v${info.latest_version}`);
     $("server-upgrade").title = info.can_upgrade
       ? "Back up and upgrade server"
       : "Update available — ask the server owner to upgrade";
@@ -1377,8 +1568,10 @@ async function refreshServer() {
     );
   }
 }
+let accountMenuOpenedAt = 0;
 $("account-menu").addEventListener("beforetoggle", (event) => {
   if (event.newState !== "open") return;
+  accountMenuOpenedAt = performance.now();
   const anchor = $("account-menu-button").getBoundingClientRect();
   const menu = $("account-menu");
   menu.style.left = `${Math.max(8, Math.min(anchor.left, innerWidth - 168))}px`;
@@ -1414,7 +1607,10 @@ $("account-menu").onkeydown = (event) => {
 window.addEventListener("resize", () => $("account-menu").hidePopover());
 document.addEventListener(
   "scroll",
-  () => $("account-menu").hidePopover(),
+  () => {
+    if (performance.now() - accountMenuOpenedAt > 300)
+      $("account-menu").hidePopover();
+  },
   true,
 );
 $("logout").onclick = () => {
@@ -1446,7 +1642,7 @@ $("server-upgrade").onclick = async () => {
     });
     message(
       "server-message",
-      "Upgrade queued. Backing up server data before installation…",
+      "Upgrade queued. Backing up server data before installation.",
     );
   } catch (error) {
     message("server-message", error.message);
@@ -1455,3 +1651,109 @@ $("server-upgrade").onclick = async () => {
 };
 refreshServer();
 setInterval(refreshServer, 15000);
+
+async function cycleState(id) {
+  if (state.saving || state.drag || state.snapshot.read_only) return;
+  const item = state.snapshot.items.find((task) => task.id === id);
+  if (!item) return;
+  const next =
+    stateOrder[(stateOrder.indexOf(item.state) + 1) % stateOrder.length];
+  await setTaskState(id, next, state.snapshot.revision, query().toString());
+}
+function showKeys(show) {
+  $("keys").hidden = !show;
+  if (show) $("keys-close").focus({ preventScroll: true });
+}
+$("shortcuts-toggle").onclick = () => {
+  $("account-menu").hidePopover();
+  showKeys(true);
+};
+$("keys-close").onclick = () => showKeys(false);
+document.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey)
+    return;
+  if (
+    event.target.closest(
+      "input, textarea, select, [contenteditable], dialog, #account-menu, #state-menu, #details",
+    ) ||
+    document.querySelector("dialog[open]") ||
+    $("account-menu").matches(":popover-open") ||
+    !$("state-menu").hidden ||
+    state.drag
+  )
+    return;
+  if (
+    ["Enter", " "].includes(event.key) &&
+    event.target.closest("button, a, summary")
+  )
+    return;
+  const snapshot = state.snapshot;
+  if (!snapshot) return;
+  const visible = visibleItems(snapshot.items);
+  const focusedRow = event.target.closest?.(".task-row")?.dataset.id;
+  if (focusedRow && visible.some((item) => item.id === focusedRow))
+    state.cursor = focusedRow;
+  const index = visible.findIndex((item) => item.id === state.cursor);
+  const current = visible[index];
+  const moveCursor = (target) => {
+    if (!target) return;
+    state.cursor = target.id;
+    renderList(snapshot);
+    state.rows.get(target.id)?.scrollIntoView({ block: "nearest" });
+  };
+  const hasChildren = (item) =>
+    snapshot.items.some((child) => child.parent_id === item?.id);
+  switch (event.key) {
+    case "j":
+      moveCursor(visible[Math.min(visible.length - 1, index + 1)]);
+      break;
+    case "k":
+      moveCursor(visible[Math.max(0, index - 1)]);
+      break;
+    case "x":
+      if (current) toggleCompletion(current.id);
+      break;
+    case "s":
+      if (current) cycleState(current.id);
+      break;
+    case "h":
+      if (!current) return;
+      if (hasChildren(current) && !state.collapsed.has(key(current.id)))
+        foldItem(current.id);
+      else if (current.parent_id)
+        moveCursor(visible.find((item) => item.id === current.parent_id));
+      break;
+    case "l":
+      if (!current) return;
+      if (state.collapsed.has(key(current.id)) && hasChildren(current))
+        unfoldItem(current.id);
+      else if (hasChildren(current)) moveCursor(visible[index + 1]);
+      break;
+    case "o":
+      newTask();
+      break;
+    case "Enter":
+      if (current) {
+        select(current.id);
+        $("content").focus({ preventScroll: true });
+      }
+      break;
+    case "Escape":
+      if (!$("keys").hidden) showKeys(false);
+      else if (state.editor) $("close-editor").click();
+      else return;
+      break;
+    case "?":
+      showKeys($("keys").hidden);
+      break;
+    case "[":
+      $("prev-day").click();
+      break;
+    case "]":
+      if (!$("next-day").disabled) $("next-day").click();
+      break;
+    default:
+      return;
+  }
+  event.preventDefault();
+});

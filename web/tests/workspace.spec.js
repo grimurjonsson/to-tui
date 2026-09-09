@@ -41,8 +41,12 @@ test.afterEach(async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
+const openMove = (page) =>
+  page.locator("#task-actions").evaluate((details) => {
+    details.open = true;
+  });
 async function createInBrowser(page, content) {
-  await page.getByRole("button", { name: "+ New task", exact: true }).click();
+  await page.getByRole("button", { name: "New task", exact: true }).click();
   await page.getByRole("textbox", { name: "Task", exact: true }).fill(content);
   await page.getByRole("button", { name: "Save task", exact: true }).click();
   await expect(
@@ -210,6 +214,7 @@ test("phone hierarchy controls, all states, clearing fields, deletion, and theme
   await expect(
     page.getByRole("dialog", { name: "Task details" }),
   ).toBeVisible();
+  await openMove(page);
   await page.getByRole("button", { name: "+ Add child task" }).tap();
   await page
     .getByRole("textbox", { name: "Task", exact: true })
@@ -253,19 +258,19 @@ test("phone hierarchy controls, all states, clearing fields, deletion, and theme
   await expect
     .poll(() => cli("list").find((i) => i.content === "Child task").priority)
     .toBeUndefined();
+  await openMove(page);
   await page
     .getByRole("combobox", { name: "Move under", exact: true })
     .selectOption("");
-  await page
-    .getByRole("button", { name: "Move task & descendants", exact: true })
-    .tap();
+  await openMove(page);
+  await page.getByRole("button", { name: "Move here", exact: true }).tap();
   await expect
     .poll(
       () => cli("list").find((i) => i.content === "Child task").indent_level,
     )
     .toBe(0);
   await page
-    .getByRole("button", { name: "Delete task & descendants", exact: true })
+    .getByRole("button", { name: "Delete task and its children", exact: true })
     .tap();
   await page.getByRole("button", { name: "Delete branch", exact: true }).tap();
   await expect(
@@ -276,7 +281,6 @@ test("phone hierarchy controls, all states, clearing fields, deletion, and theme
       page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
     )
     .toBe(true);
-  await page.getByRole("button", { name: "Switch color theme" }).tap();
   await page.screenshot({ path: "test-results/phone.png", fullPage: true });
   await page.setViewportSize({ width: 320, height: 700 });
   await expect
@@ -368,8 +372,8 @@ test("project and historical selection resist late responses; nested filtering p
   await page.getByLabel("Browse historical date").fill("2025-01-01");
   await expect(page.locator(".task-title")).toHaveText(["Historical task"]);
   await expect(
-    page.getByRole("button", { name: "+ New task", exact: true }),
-  ).toBeDisabled();
+    page.getByRole("button", { name: "New task", exact: true }),
+  ).toBeHidden();
   cli("create", "--content", "New Today task");
   await page.waitForTimeout(250);
   await expect(page.locator(".task-title")).toHaveText(["Historical task"]);
@@ -379,14 +383,14 @@ test("reordering above the viewport preserves the visible task and active draft"
   page,
 }) => {
   let last;
-  for (let i = 0; i < 30; i++)
+  for (let i = 0; i < 45; i++)
     last = cli(
       "create",
       "--content",
       `Ordered task ${String(i).padStart(2, "0")}`,
     );
   await page.goto(base);
-  await expect(page.locator(".task-row")).toHaveCount(30);
+  await expect(page.locator(".task-row")).toHaveCount(45);
   await page.evaluate(() => {
     document.querySelector("main").scrollTop = 650;
   });
@@ -408,7 +412,7 @@ test("reordering above the viewport preserves the visible task and active draft"
     last.id,
   ]);
   await expect(page.locator(".task-title").first()).toHaveText(
-    "Ordered task 29",
+    "Ordered task 44",
   );
   const y = await page
     .locator(`[data-id="${anchor.id}"]`)
@@ -421,7 +425,6 @@ test("reordering above the viewport preserves the visible task and active draft"
     page.getByRole("textbox", { name: "Description", exact: true }),
   ).toBeFocused();
   await page.screenshot({ path: "test-results/desktop-light.png" });
-  await page.getByRole("button", { name: "Switch color theme" }).click();
   await page.screenshot({ path: "test-results/desktop-dark.png" });
 });
 
@@ -450,12 +453,10 @@ for (const phone of [false, true]) {
     await page.goto(base);
     const activate = async (locator) =>
       phone ? locator.tap() : locator.click();
-    await activate(
-      page.getByRole("button", { name: "Collapse all", exact: true }),
-    );
+    await activate(page.getByRole("button", { name: "Fold all", exact: true }));
     await expect(page.locator(".task-row")).toHaveCount(2);
     await activate(
-      page.getByRole("button", { name: "Expand all", exact: true }),
+      page.getByRole("button", { name: "Unfold all", exact: true }),
     );
     await expect(page.locator(".task-row")).toHaveCount(4);
     await activate(
@@ -465,14 +466,17 @@ for (const phone of [false, true]) {
       page.getByRole("button", { name: "Moving branch pending", exact: true }),
     );
     await expect(page.locator("#move-root")).toBeDisabled();
+    await openMove(page);
     await page
       .getByRole("combobox", { name: "Move under", exact: true })
       .selectOption(destination.id);
+    await openMove(page);
     await activate(page.locator("#move"));
     await expect
       .poll(() => cli("get", branch.id).parent_id)
       .toBe(destination.id);
     await expect.poll(() => cli("get", descendant.id).indent_level).toBe(2);
+    await openMove(page);
     await expect(page.locator("#move-root")).toBeEnabled();
     if (phone) await activate(page.locator("#close-editor"));
     await expect(
@@ -485,15 +489,18 @@ for (const phone of [false, true]) {
           exact: true,
         }),
       );
+    await openMove(page);
     await activate(page.locator("#move-root"));
     await expect.poll(() => cli("get", branch.id).indent_level).toBe(0);
     await expect
       .poll(() => cli("get", descendant.id).parent_id)
       .toBe(branch.id);
     await expect.poll(() => cli("get", descendant.id).indent_level).toBe(1);
+    await openMove(page);
     await page
       .getByRole("combobox", { name: "Position", exact: true })
       .selectOption(destination.id);
+    await openMove(page);
     await activate(page.locator("#move"));
     await expect.poll(() => cli("list")[0].id).toBe(branch.id);
     await expect(page.locator("#move-root")).toBeDisabled();
@@ -543,12 +550,12 @@ for (const mapped of [false, true]) {
     server.stderr.on("data", (chunk) => (output += chunk));
     await expect.poll(() => output).toContain("?project=web-notes");
     await page.goto(base);
-    await expect(page.locator("#project-label")).toHaveText("WEB-NOTES");
+    await expect(page.locator("#project-label")).toHaveText("web-notes");
     await expect(page.locator(".task-title")).toHaveText(
       "Selected project task",
     );
     await page.goto(`${base}/?project=default`);
-    await expect(page.locator("#project-label")).toHaveText("DEFAULT");
+    await expect(page.locator("#project-label")).toHaveText("default");
     await page.getByRole("button", { name: "web-notes", exact: true }).click();
     await expect(page).toHaveURL(`${base}/?project=web-notes`);
     await page.reload();
@@ -567,6 +574,7 @@ test("Save task commits parent, position, and text together", async ({
   await page
     .getByRole("button", { name: "Move me pending", exact: true })
     .click();
+  await openMove(page);
   await page
     .getByRole("combobox", { name: "Move under", exact: true })
     .selectOption(parent.id);
@@ -574,9 +582,11 @@ test("Save task commits parent, position, and text together", async ({
   await page.locator("#save").click();
   await expect.poll(() => cli("get", task.id).parent_id).toBe(parent.id);
   await expect.poll(() => cli("get", task.id).content).toBe("Moved and edited");
+  await openMove(page);
   await page
     .getByRole("combobox", { name: "Move under", exact: true })
     .selectOption("");
+  await openMove(page);
   await page
     .getByRole("combobox", { name: "Position", exact: true })
     .selectOption(parent.id);
@@ -763,14 +773,14 @@ test("touch drag autoscrolls and cancels without moving", async ({
   await context.close();
 });
 
-test("all six task states have matching emoji labels", async ({ page }) => {
+test("all six task states have matching glyph labels", async ({ page }) => {
   const icons = {
-    " ": "⬜",
-    "*": "🔄",
-    x: "✅",
-    "?": "❔",
-    "!": "❗",
-    "-": "🚫",
+    " ": "[ ]",
+    "*": "[*]",
+    x: "[x]",
+    "?": "[?]",
+    "!": "[!]",
+    "-": "[-]",
   };
   for (const [state, icon] of Object.entries(icons))
     cli("create", "--content", `State ${icon}`, "--state", state);
@@ -871,12 +881,12 @@ test("right-click state menu saves all states, preserves drafts, and supports ke
   const row = page.locator(`[data-id="${task.id}"]`);
   const checkbox = row.locator(".symbol");
   const states = [
-    ["*", "🔄 In progress"],
-    ["?", "❔ Question"],
-    ["!", "❗ Important"],
-    ["-", "🚫 Cancelled"],
-    ["x", "✅ Done"],
-    [" ", "⬜ Pending"],
+    ["*", "[*] In progress"],
+    ["?", "[?] Question"],
+    ["!", "[!] Important"],
+    ["-", "[-] Cancelled"],
+    ["x", "[x] Done"],
+    [" ", "[ ] Pending"],
   ];
   for (const [state, label] of states) {
     await expect(checkbox).toBeEnabled();
@@ -898,7 +908,7 @@ test("right-click state menu saves all states, preserves drafts, and supports ke
   await checkbox.focus();
   await page.keyboard.press("Shift+F10");
   await expect(
-    page.getByRole("menuitemradio", { name: "⬜ Pending" }),
+    page.getByRole("menuitemradio", { name: "[ ] Pending" }),
   ).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
@@ -936,8 +946,8 @@ test("state menu refuses a stale choice after an external edit", async ({
     .getByRole("checkbox", { name: "Complete Menu conflict" })
     .click({ button: "right" });
   cli("update", task.id, "--state", "!");
-  await expect(page.locator(".symbol")).toHaveText("❗");
-  await page.getByRole("menuitemradio", { name: "✅ Done" }).click();
+  await expect(page.locator(".symbol")).toHaveText("[!]");
+  await page.getByRole("menuitemradio", { name: "[x] Done" }).click();
   await expect(page.locator("#error")).toContainText("Conflict");
   expect(cli("get", task.id).state).toBe("!");
 });
@@ -961,7 +971,6 @@ test("compact rows show prominent priority badges without redundant state text",
     (await row.locator(".symbol").boundingBox()).height,
   ).toBeGreaterThanOrEqual(44);
   await page.screenshot({ path: "test-results/compact-light.png" });
-  await page.locator("#theme").click();
   await page.screenshot({ path: "test-results/compact-dark.png" });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator(".priority-badge:visible")).toHaveText([
@@ -1044,7 +1053,7 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
   await page.locator("#new-project").click();
   await page.locator("#project-name").fill("Work");
   await page.locator("#save-project").click();
-  await expect(page.locator("#project-label")).toHaveText("WORK");
+  await expect(page.locator("#project-label")).toHaveText("Work");
   await createInBrowser(page, "Keep through rename");
   const tab = await context.newPage();
   await tab.goto(`${base}/?project=Work`);
@@ -1059,9 +1068,9 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
   await page.locator("#project-name").fill("Work & plans");
   await page.screenshot({ path: "test-results/project-manager-desktop.png" });
   await page.locator("#save-project").click();
-  await expect(page.locator("#project-label")).toHaveText("WORK & PLANS");
+  await expect(page.locator("#project-label")).toHaveText("Work & plans");
   await expect(page.locator(".task-title")).toHaveText("Keep through rename");
-  await expect(tab.locator("#project-label")).toHaveText("WORK & PLANS");
+  await expect(tab.locator("#project-label")).toHaveText("Work & plans");
   await expect(tab.locator(".task-title")).toHaveText("Keep through rename");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "Open account menu" }).click();
@@ -1080,14 +1089,14 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
   await expect(page.locator("#project-form")).toBeHidden();
   await page.locator("#delete-project").click();
   await page.locator("#save-project").click();
-  await expect(page.locator("#project-label")).toHaveText("DEFAULT");
-  await expect(tab.locator("#project-label")).toHaveText("DEFAULT");
+  await expect(page.locator("#project-label")).toHaveText("default");
+  await expect(tab.locator("#project-label")).toHaveText("default");
   await page.getByRole("button", { name: "Open account menu" }).click();
   await page.locator("#manage-projects").click();
   await page.locator("#new-project").click();
   await page.locator("#project-name").fill("Work & plans");
   await page.locator("#save-project").click();
-  await expect(page.locator("#project-label")).toHaveText("WORK & PLANS");
+  await expect(page.locator("#project-label")).toHaveText("Work & plans");
   await expect(page.locator(".task-title")).toHaveCount(0);
 });
 
@@ -1250,9 +1259,7 @@ test("server account, owner upgrade confirmation, and logout", async ({
     await route.fulfill({ status: 202, json: { status: "queued" } });
   });
   await page.goto(base);
-  await expect(page.locator("#server-version")).toHaveText(
-    "Server version: 0.7.0",
-  );
+  await expect(page.locator("#server-version")).toHaveText("v0.7.0");
   await expect(page.locator("#current-user")).toHaveText("owner@example.test");
   await expect(page.locator("#server-message")).toBeHidden();
   await expect(page.locator(".sidebar #current-user")).toBeVisible();
@@ -1273,7 +1280,7 @@ test("server account, owner upgrade confirmation, and logout", async ({
     page.getByRole("menuitem", { name: "Manage projects" }),
   ).toBeFocused();
   await page.screenshot({ path: "/tmp/totui-compact-account-menu.png" });
-  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("End");
   await expect(page.getByRole("menuitem", { name: "Log out" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menuitem", { name: "Log out" })).toBeHidden();
@@ -1302,7 +1309,7 @@ test("nonowners see the update indicator without upgrade access on mobile", asyn
     }),
   );
   await page.goto(base);
-  await expect(page.locator("#server-upgrade")).toHaveText("⬆️ v0.8.0");
+  await expect(page.locator("#server-upgrade")).toHaveText("Upgrade to v0.8.0");
   await expect(page.locator("#server-upgrade")).toBeDisabled();
   await expect(page.locator("#current-user")).toBeVisible();
   expect(

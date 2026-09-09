@@ -37,6 +37,12 @@ fn router(state: auth::ServerState) -> Router {
         .route("/app.js", get(web::script))
         .route("/style.css", get(web::style))
         .route("/favicon.ico", get(web::favicon))
+        .route("/fonts/IBMPlexSans-latin.woff2", get(web::font_sans))
+        .route("/fonts/IBMPlexMono-400-latin.woff2", get(web::font_mono))
+        .route(
+            "/fonts/IBMPlexMono-500-latin.woff2",
+            get(web::font_mono_medium),
+        )
         .route("/api/events", get(web::events))
         .route(
             "/api/kanban",

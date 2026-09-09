@@ -67,7 +67,7 @@ Press **F7** in the TUI, or choose **kanban** from the **P** plugin menu. Each p
 
 Use arrows to select columns and tickets, **n** to create a ticket, **e** to edit, **c** to comment (or create the first board), **1–6** to move, and **a** to resolve feedback. Forms use Tab/Shift-Tab to select fields, Enter for newlines, Ctrl+S to save and Esc to cancel. Page Up/Down scrolls history.
 
-The web workspace's **Kanban** link opens the live board. Drag tickets between columns with a mouse, or open a ticket and use its Column selector. Backward drops open the ticket editor for a reason before moving. TUI, plugin and agent changes appear automatically. Moving a ticket back requires a reason. Agents see that reason until they record a resolution; unresolved feedback prevents marking the ticket done.
+The web workspace's **Board** page opens the live board. Drag tickets between columns with a mouse, or open a ticket and use its Column selector. Backward drops open the ticket editor for a reason before moving. TUI, plugin and agent changes appear automatically. Moving a ticket back requires a reason. Agents see that reason until they record a resolution; unresolved feedback prevents marking the ticket done.
 
 Kanban keeps active stages above a full-width Backlog, with responsive wrapping instead of horizontal scrolling. Backlog is one ticket per row with **To board** (moves to Ready) and **Trash** controls; active board cards have neither Trash nor To backlog shortcuts. Done tickets stay on the board until **Archive** moves them into **Completed**, a collapsed list below Backlog. Expand it to read ticket history or **Restore to Done**. Archiving is manual, with no timer. Trash also preserves history and supports restoration.
 
@@ -291,7 +291,16 @@ for browser sign-in and switching back to local storage.
 
 Run `totui web --open` (or `cargo run --bin totui -- web --open`) to use the
 responsive task workspace at <http://127.0.0.1:48372>. The Rust binary bundles the
-frontend; no Node runtime is required. `totui serve start` also serves the web UI.
+frontend, including the IBM Plex fonts; no Node runtime is required.
+`totui serve start` also serves the web UI.
+
+The workspace is laid out as a dark ledger: each day is a numbered, ruled page
+with the markdown state glyphs (`[ ]`, `[*]`, `[x]`, `[?]`, `[!]`, `[-]`) in a
+tick column and a footed total of what is done and what carries forward to the
+next day. Vim keys work on the page: **j**/**k** move, **x** toggles done,
+**s** cycles the state, **h**/**l** fold and unfold a branch, **o** starts a new
+task, **Enter** opens the details, **[**/**]** step between days and **?**
+lists every shortcut.
 Both commands now bind to loopback by default; `TOTUI_BIND` overrides the interface.
 
 See [Web startup, development, synchronization, and verification](docs/web.md) for
