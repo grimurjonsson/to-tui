@@ -243,6 +243,15 @@ changed archive lists, and project/date indexes when those indexes change.
 acknowledgement. Legacy callers without `since` retain snapshot responses.
 Normal remote TUI synchronization uses these incremental responses.
 
+The TUI commits edits to its local SQLite cache before background upload. Cache
+records are stored separately, so a checkbox change writes only the changed task
+and sync metadata instead of serializing the entire workspace. Transactions use
+WAL with full synchronization; failed commits retain the previous cache state.
+Older single-record caches migrate transactionally on first open, preserving
+queued uploads, conflict choices, history, and the sync cursor. Older TUI builds
+cannot read the migrated format; use an updated binary or restore a matching
+pre-upgrade cache backup when rolling back.
+
 Each active account shares a database observer across SSE connections, including
 changes committed by other processes. Watch notifications coalesce under load;
 streams do not accumulate an unbounded event queue or hold a database transaction
