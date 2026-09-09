@@ -419,3 +419,8 @@ The API accepts `POST /api/projects` and `PATCH /api/projects/{id}` with
 `{"name":"Work"}`, and `DELETE /api/projects/{id}`. IDs come from
 `GET /api/projects`. Duplicate names return 409; invalid names and attempts to
 rename or delete `default` return 400; missing project IDs return 404.
+
+On desktop, the task area and task-details panel scroll independently inside the
+viewport. The header and left sidebar stay fixed. When projects exceed the
+available sidebar height, only the project list scrolls; the account controls
+remain visible at the bottom. Mobile keeps its normal page scrolling layout.

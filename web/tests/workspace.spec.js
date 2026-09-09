@@ -1027,6 +1027,7 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
 }) => {
   await page.goto(base);
   await expect(page.locator("#add")).toBeEnabled();
+  await page.getByRole("button", { name: "Open account menu" }).click();
   await page.locator("#manage-projects").click();
   await expect(page.locator("#rename-project")).toBeDisabled();
   await expect(page.locator("#delete-project")).toBeDisabled();
@@ -1048,6 +1049,7 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
   const tab = await context.newPage();
   await tab.goto(`${base}/?project=Work`);
   await expect(tab.locator(".task-title")).toHaveText("Keep through rename");
+  await page.getByRole("button", { name: "Open account menu" }).click();
   await page.locator("#manage-projects").click();
   await page.locator("#rename-project").click();
   await page.locator("#project-name").fill("default");
@@ -1062,6 +1064,7 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
   await expect(tab.locator("#project-label")).toHaveText("WORK & PLANS");
   await expect(tab.locator(".task-title")).toHaveText("Keep through rename");
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open account menu" }).click();
   await page.locator("#manage-projects").click();
   await page.locator("#delete-project").click();
   await expect(page.locator("#project-delete-message")).toContainText(
@@ -1079,6 +1082,7 @@ test("project CRUD preserves tasks on rename and removes them on delete", async 
   await page.locator("#save-project").click();
   await expect(page.locator("#project-label")).toHaveText("DEFAULT");
   await expect(tab.locator("#project-label")).toHaveText("DEFAULT");
+  await page.getByRole("button", { name: "Open account menu" }).click();
   await page.locator("#manage-projects").click();
   await page.locator("#new-project").click();
   await page.locator("#project-name").fill("Work & plans");
@@ -1216,4 +1220,259 @@ test("an account switch reloads before using another user's response", async ({
   await expect(page.locator(".task-title")).toHaveText("Account switch task");
   await expect(page.locator("#editor")).toBeHidden();
   await expect(page.getByText("Unsaved private draft")).toHaveCount(0);
+});
+
+test("server account, owner upgrade confirmation, and logout", async ({
+  page,
+}) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  let upgradeCalls = 0;
+  await page.route("**/api/server", (route) =>
+    route.fulfill({
+      json: {
+        version: "0.7.0",
+        user: { id: "owner", email: "owner@example.test" },
+        logout_url: "/oauth2/sign_out?rd=%2Fsigned-out",
+        can_upgrade: true,
+        latest_version: "0.8.0",
+        update_available: true,
+        upgrade_pending: false,
+        upgrade_status: {
+          state: "complete",
+          message: "Server v0.7.0 is already up to date.",
+        },
+      },
+    }),
+  );
+  await page.route("**/api/server/upgrade", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ version: "0.8.0" });
+    upgradeCalls++;
+    await route.fulfill({ status: 202, json: { status: "queued" } });
+  });
+  await page.goto(base);
+  await expect(page.locator("#server-version")).toHaveText(
+    "Server version: 0.7.0",
+  );
+  await expect(page.locator("#current-user")).toHaveText("owner@example.test");
+  await expect(page.locator("#server-message")).toBeHidden();
+  await expect(page.locator(".sidebar #current-user")).toBeVisible();
+  await page.screenshot({ path: "/tmp/totui-sidebar-desktop.png" });
+  page.once("dialog", (dialog) => dialog.dismiss());
+  await page.locator("#server-upgrade").click();
+  expect(upgradeCalls).toBe(0);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.locator("#server-upgrade").click();
+  await expect(page.locator("#server-message")).toContainText("Upgrade queued");
+  expect(upgradeCalls).toBe(1);
+  await page.route("**/oauth2/sign_out?*", (route) =>
+    route.fulfill({ body: "Signed out" }),
+  );
+  await expect(page.getByRole("menuitem", { name: "Log out" })).toBeHidden();
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Manage projects" }),
+  ).toBeFocused();
+  await page.screenshot({ path: "/tmp/totui-compact-account-menu.png" });
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "Log out" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menuitem", { name: "Log out" })).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Open account menu" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await page.getByRole("menuitem", { name: "Log out", exact: true }).click();
+  await expect(page).toHaveURL(/oauth2\/sign_out/);
+});
+
+test("nonowners see the update indicator without upgrade access on mobile", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route("**/api/server", (route) =>
+    route.fulfill({
+      json: {
+        version: "0.7.0",
+        user: { id: "member", email: "member@example.test" },
+        logout_url: "/oauth2/sign_out",
+        can_upgrade: false,
+        latest_version: "0.8.0",
+        update_available: true,
+      },
+    }),
+  );
+  await page.goto(base);
+  await expect(page.locator("#server-upgrade")).toHaveText("⬆️ v0.8.0");
+  await expect(page.locator("#server-upgrade")).toBeDisabled();
+  await expect(page.locator("#current-user")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.locator("#current-user").scrollIntoViewIfNeeded();
+  await page.getByRole("button", { name: "Open account menu" }).click();
+  await expect(
+    page.getByRole("menu", { name: "Account", exact: true }),
+  ).toBeVisible();
+  const menu = await page.locator("#account-menu").boundingBox();
+  expect(menu.y).toBeGreaterThanOrEqual(0);
+  expect(menu.y + menu.height).toBeLessThanOrEqual(844);
+  await page.screenshot({ path: "/tmp/totui-account-menu-mobile.png" });
+  await page.locator("#server-version").click();
+  await expect(page.locator("#account-menu")).toBeHidden();
+});
+
+test("task scrolling keeps the sidebar fixed and overflowing projects scroll separately", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  for (let index = 0; index < 35; index++) {
+    const task = await fetch(`${base}/api/todos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: `Scrolling task ${index}` }),
+    });
+    expect(task.ok).toBe(true);
+    const project = await fetch(`${base}/api/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: `project-${index}` }),
+    });
+    expect(project.ok).toBe(true);
+  }
+  await page.route("**/api/server", (route) =>
+    route.fulfill({
+      json: {
+        version: "0.7.0",
+        user: { id: "member", email: "member@example.test" },
+        logout_url: "/oauth2/sign_out",
+        can_upgrade: false,
+        update_available: false,
+      },
+    }),
+  );
+  await page.goto(base);
+  await expect(page.locator("#current-user")).toHaveText("member@example.test");
+  await expect(page.locator(".task-row")).toHaveCount(35);
+  const sidebar = await page.locator(".sidebar").boundingBox();
+  const account = await page.locator(".server-account").boundingBox();
+  expect(account.y + account.height).toBeLessThanOrEqual(720);
+  await page.locator("main").hover();
+  await page.mouse.wheel(0, 650);
+  await expect
+    .poll(() => page.locator("main").evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  expect(await page.locator(".sidebar").boundingBox()).toEqual(sidebar);
+  expect(await page.locator(".server-account").boundingBox()).toEqual(account);
+  const mainScroll = await page
+    .locator("main")
+    .evaluate((element) => element.scrollTop);
+  await page.locator("#projects").hover();
+  await page.mouse.wheel(0, 1500);
+  await expect
+    .poll(() =>
+      page.locator("#projects").evaluate((element) => element.scrollTop),
+    )
+    .toBeGreaterThan(0);
+  expect(
+    await page.locator("main").evaluate((element) => element.scrollTop),
+  ).toBe(mainScroll);
+  expect(await page.locator(".server-account").boundingBox()).toEqual(account);
+  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(
+    720,
+  );
+});
+
+for (const found of [true, false]) {
+  test(`account avatar ${found ? "shows Gravatar" : "falls back to initials when unavailable"}`, async ({
+    page,
+  }) => {
+    const avatarUrl = "https://gravatar.com/avatar/test-user?s=80&d=404&r=g";
+    await page.route("**/api/server", (route) =>
+      route.fulfill({
+        json: {
+          version: "0.7.0",
+          user: { id: "member", email: "test.user@example.test" },
+          avatar_url: avatarUrl,
+          logout_url: "/oauth2/sign_out",
+          can_upgrade: false,
+          update_available: false,
+        },
+      }),
+    );
+    await page.route("https://gravatar.com/avatar/**", (route) => {
+      expect(route.request().headers().referer).toBeUndefined();
+      return route.fulfill(
+        found
+          ? {
+              contentType: "image/png",
+              body: Buffer.from(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=",
+                "base64",
+              ),
+            }
+          : { status: 404 },
+      );
+    });
+    const avatarResponse = page.waitForResponse(avatarUrl);
+    await page.goto(base);
+    await avatarResponse;
+    await expect(page.locator("#current-user")).toHaveText(
+      "test.user@example.test",
+    );
+    await expect(page.locator("#avatar-initials")).toHaveText("TU");
+    if (found) {
+      await expect(page.locator("#user-avatar")).toBeVisible();
+      await expect(page.locator("#avatar-initials")).toBeHidden();
+    } else {
+      await expect(page.locator("#user-avatar")).toBeHidden();
+      await expect(page.locator("#avatar-initials")).toBeVisible();
+    }
+  });
+}
+
+test("email opens the account menu and only a confirmed current version gets a checkmark", async ({
+  page,
+}) => {
+  let release = { latest_version: "0.7.0", update_available: false };
+  await page.route("**/api/server", (route) =>
+    route.fulfill({
+      json: {
+        version: "0.7.0",
+        user: { id: "member", email: "member@example.test" },
+        logout_url: "/oauth2/sign_out",
+        can_upgrade: false,
+        ...release,
+      },
+    }),
+  );
+  await page.goto(base);
+  await expect(page.locator("#server-current")).toBeVisible();
+  await page
+    .getByRole("button", { name: "member@example.test", exact: true })
+    .click();
+  await expect(
+    page.getByRole("menuitem", { name: "Manage projects" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator("#account-menu")).toBeHidden();
+  await expect(page.locator("#current-user")).toBeFocused();
+  for (const next of [
+    { latest_version: "0.8.0", update_available: true },
+    {
+      latest_version: null,
+      update_available: false,
+      check_error: "Could not check",
+    },
+    { latest_version: "0.7.0", update_available: false, upgrade_pending: true },
+  ]) {
+    release = next;
+    await page.reload();
+    await expect(page.locator("#current-user")).toHaveText(
+      "member@example.test",
+    );
+    await expect(page.locator("#server-current")).toBeHidden();
+  }
 });

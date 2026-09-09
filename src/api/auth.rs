@@ -287,7 +287,11 @@ pub async fn identify(
 ) -> Response {
     if matches!(
         request.uri().path(),
-        "/api/health" | "/api/ready" | "/api/remote/login/exchange" | "/api/remote/logout"
+        "/signed-out"
+            | "/api/health"
+            | "/api/ready"
+            | "/api/remote/login/exchange"
+            | "/api/remote/logout"
     ) {
         return next.run(request).await;
     }

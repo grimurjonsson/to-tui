@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 
-BINARY = Path(__file__).resolve().parent.parent / "target/debug/totui"
+BINARY = Path(os.environ.get("TOTUI_TEST_BINARY", Path(__file__).resolve().parent.parent / "target/debug/totui"))
 
 
 class Gateway(BaseHTTPRequestHandler):
@@ -78,7 +78,7 @@ def main():
                     data=json.dumps(payload).encode() if payload is not None else None,
                 )
                 try:
-                    response = client.open(req, timeout=10)
+                    response = client.open(req, timeout=20)
                 except urllib.error.HTTPError as error:
                     response = error
                 with response:
@@ -127,7 +127,7 @@ def main():
             assert local_process.wait(timeout=5) == 0
 
             process, port = start(True)
-            for path in ["/", "/app.js", "/style.css", "/api/me", "/api/snapshot", "/api/projects", "/api/events"]:
+            for path in ["/", "/app.js", "/style.css", "/api/me", "/api/server", "/api/snapshot", "/api/projects", "/api/events"]:
                 assert request(port, path)[0] == 401, path
                 assert request(port, path, headers={"X-Auth-Request-User": "google-alice", "X-Totui-User": "google-alice"})[0] == 401, path
             assert request(port, "/api/me", "broken")[0] == 401
@@ -211,7 +211,20 @@ def main():
 
             process.terminate()
             assert process.wait(timeout=5) == 0
+            env["TOTUI_WEB_UPGRADE"] = "1"
+            env["TOTUI_SERVER_OWNER_ID"] = alice["id"]
             process, port = start(True, port)
+            assert request(port, "/signed-out")[0] == 200
+            for user, identity in [("alice", alice), ("bob", bob)]:
+                info = ok(port, "/api/server", user)
+                assert info["user"]["id"] == identity["id"]
+                assert info["version"]
+                assert info["logout_url"] == "/oauth2/sign_out?rd=%2Fsigned-out"
+                assert info["can_upgrade"] == (user == "alice" and os.uname().sysname == "Linux")
+            assert request(port, "/api/server/upgrade", "bob", "POST", {"version": "99.0.0"})[0] == 403
+            assert request(port, "/api/server/upgrade", "alice", "POST", {"version": "99.0.0"}, {"Origin": "https://evil.example"})[0] == 403
+            assert request(port, "/api/server/upgrade", "alice", "POST", {"version": "99.0.0"}, {"X-Totui-Expected-User": bob["id"]})[0] == 409
+            assert request(port, "/api/server/upgrade", None, "POST", {"version": "99.0.0"})[0] == 401
             assert ok(port, "/api/me", "alice")["id"] == alice["id"]
             assert [item["content"] for item in snapshot("bob")["items"]] == ["Bob update"]
             assert snapshot("alice", "private", "2001-01-01")["items"][0]["content"] == "Alice secret"

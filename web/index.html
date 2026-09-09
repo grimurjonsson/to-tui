@@ -13,9 +13,8 @@
   <body>
     <header class="topbar">
       <a class="brand" href="./"><span class="brand-mark">[✓]</span> totui</a
-      ><span class="local-label">YOUR LOCAL WORKSPACE</span>
+      ><span class="local-label">YOUR WORKSPACE</span>
       <div class="top-actions">
-        <button id="manage-projects">Manage projects</button>
         <span id="connection" role="status">Connecting…</span
         ><button id="refresh" aria-label="Refresh tasks">↻</button
         ><button id="theme" aria-label="Switch color theme">◐</button>
@@ -25,10 +24,53 @@
       <aside class="sidebar">
         <h2>Projects</h2>
         <nav id="projects" aria-label="Projects"></nav>
-        <div class="sidebar-note">
-          One list. Every interface.<br /><span
-            >Changes appear here as you work.</span
-          >
+        <div class="server-account" aria-label="Server and account">
+          <div class="account-identity">
+            <button
+              id="account-menu-button"
+              class="avatar"
+              type="button"
+              aria-label="Open account menu"
+              aria-haspopup="menu"
+              popovertarget="account-menu"
+            >
+              <span id="avatar-initials" aria-hidden="true">L</span>
+              <img
+                id="user-avatar"
+                width="36"
+                height="36"
+                alt=""
+                referrerpolicy="no-referrer"
+                hidden
+              />
+            </button>
+            <button
+              id="current-user"
+              type="button"
+              aria-haspopup="menu"
+              popovertarget="account-menu"
+              title="Account menu"
+            ></button>
+          </div>
+          <div class="server-version-row">
+            <span id="server-version">Server…</span>
+            <span
+              id="server-current"
+              role="img"
+              aria-label="Server is up to date"
+              title="Up to date"
+              hidden
+              >✓</span
+            >
+            <button id="server-upgrade" hidden></button>
+          </div>
+          <div id="account-menu" popover role="menu" aria-label="Account">
+            <button id="manage-projects" role="menuitem">
+              Manage projects
+            </button>
+            <button id="logout" role="menuitem" hidden>Log out</button>
+          </div>
+          <div id="server-message" role="status" hidden></div>
         </div>
       </aside>
       <main>
