@@ -80,6 +80,7 @@ fn change_project(name: &str, new_name: Option<&str>) -> Result<()> {
 
 fn execute(request: Request) -> Result<Value> {
     match request {
+        Request::Kanban { request } => Ok(serde_json::to_value(crate::kanban::execute(request)?)?),
         Request::Info => {
             Ok(json!({"protocol":1, "sync":1, "stream":1, "today":Local::now().date_naive()}))
         }

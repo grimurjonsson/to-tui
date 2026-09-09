@@ -201,10 +201,15 @@ fn main() -> Result<()> {
     if cli.remote.is_some()
         && !matches!(
             cli.command,
-            None | Some(Commands::Add { .. } | Commands::Show { .. } | Commands::Todo { .. })
+            None | Some(
+                Commands::Add { .. }
+                    | Commands::Show { .. }
+                    | Commands::Todo { .. }
+                    | Commands::Kanban { .. }
+            )
         )
     {
-        anyhow::bail!("--remote is supported for the TUI, add, show and todo commands");
+        anyhow::bail!("--remote is supported for the TUI, add, show, todo and kanban commands");
     }
     if let Some(Commands::Server { command }) = &cli.command {
         return server::run(command.clone());
@@ -222,7 +227,12 @@ fn main() -> Result<()> {
     if let Some(name) = selected_remote.as_deref() {
         if !matches!(
             cli.command,
-            None | Some(Commands::Add { .. } | Commands::Show { .. } | Commands::Todo { .. })
+            None | Some(
+                Commands::Add { .. }
+                    | Commands::Show { .. }
+                    | Commands::Todo { .. }
+                    | Commands::Kanban { .. }
+            )
         ) {
             anyhow::bail!("This command requires local mode. Use --local explicitly");
         }
@@ -287,6 +297,10 @@ fn main() -> Result<()> {
         }
         Some(Commands::Plugin { command }) => {
             handle_plugin_command(command)?;
+        }
+        Some(Commands::Kanban { json }) => {
+            let request = serde_json::from_str(&read_json_arg(&json)?)?;
+            print_json(&to_tui::kanban::execute(request)?)?;
         }
         Some(Commands::Todo { command }) => {
             handle_todo_command(command, selected_remote.as_deref())?;
@@ -530,9 +544,21 @@ fn start_server_background(port: u16, auth: bool) -> Result<()> {
     let current_exe = env::current_exe()?;
 
     let mut command = Command::new(&current_exe);
-    command.args(["serve", "start", "--port", &port.to_string(), "--daemon"]);
+    command.args([
+        "--local",
+        "serve",
+        "start",
+        "--port",
+        &port.to_string(),
+        "--daemon",
+    ]);
     if auth {
         command.arg("--auth");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
     }
     let child = command
         .stdin(Stdio::null())

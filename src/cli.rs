@@ -20,6 +20,13 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Manage project kanban boards and tickets; returns the full board as JSON.
+    Kanban {
+        /// JSON request with project, actor and action (view, create_board, create_ticket,
+        /// edit_ticket, move_ticket, comment, address_feedback, trash_ticket, restore_ticket, archive_ticket, unarchive_ticket). Use - for stdin.
+        #[arg(long)]
+        json: String,
+    },
     /// Configure and authenticate remote workspaces
     Remote {
         #[command(subcommand)]

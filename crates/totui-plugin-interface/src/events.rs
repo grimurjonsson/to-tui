@@ -5,9 +5,8 @@
 //! deleted, or when a project is loaded.
 
 use abi_stable::StableAbi;
-use abi_stable::std_types::{RString, RVec};
+use abi_stable::std_types::RString;
 
-use crate::host_api::FfiCommand;
 use crate::types::FfiTodoItem;
 
 // ============================================================================
@@ -119,28 +118,6 @@ pub enum FfiEvent {
         /// Current date in YYYY-MM-DD format.
         date: RString,
     },
-}
-
-// ============================================================================
-// FfiHookResponse - Response from event handler
-// ============================================================================
-
-/// FFI-safe response from a plugin's event handler.
-///
-/// Contains commands to be executed in response to the event.
-#[repr(C)]
-#[derive(StableAbi, Clone, Debug)]
-pub struct FfiHookResponse {
-    /// Commands to execute in response to the event.
-    pub commands: RVec<FfiCommand>,
-}
-
-impl Default for FfiHookResponse {
-    fn default() -> Self {
-        Self {
-            commands: RVec::new(),
-        }
-    }
 }
 
 // ============================================================================
@@ -288,12 +265,6 @@ mod tests {
             date: "2026-01-26".into(),
         };
         assert!(event.todo().is_none());
-    }
-
-    #[test]
-    fn test_hook_response_default() {
-        let response = FfiHookResponse::default();
-        assert!(response.commands.is_empty());
     }
 
     #[test]

@@ -154,6 +154,7 @@ async function refresh(force = false) {
   }
 }
 function renderProjects() {
+  $("kanban-link").href = `/kanban?project=${encodeURIComponent(state.project)}`;
   const focusedProject = document.activeElement?.dataset.project;
   const signature = JSON.stringify(state.projects);
   if ($("projects").dataset.signature !== signature) {

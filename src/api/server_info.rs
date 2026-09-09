@@ -161,6 +161,12 @@ pub async fn upgrade(
     }
 }
 
+pub async fn signed_out() -> axum::response::Html<&'static str> {
+    axum::response::Html(
+        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>totui · Signed out</title><main style="font:18px system-ui;max-width:36rem;margin:15vh auto;padding:2rem"><h1>You’re signed out</h1><p>Your server session has ended. Your Google account remains signed in.</p><a href="/">Sign in to totui</a></main></html>"#,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,10 +191,4 @@ mod tests {
             true
         ));
     }
-}
-
-pub async fn signed_out() -> axum::response::Html<&'static str> {
-    axum::response::Html(
-        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>totui · Signed out</title><main style="font:18px system-ui;max-width:36rem;margin:15vh auto;padding:2rem"><h1>You’re signed out</h1><p>Your server session has ended. Your Google account remains signed in.</p><a href="/">Sign in to totui</a></main></html>"#,
-    )
 }

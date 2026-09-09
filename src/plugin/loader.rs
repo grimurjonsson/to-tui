@@ -9,6 +9,7 @@
 
 use abi_stable::{
     library::{LibraryError, lib_header_from_path},
+    sabi_trait::TD_Opaque,
     std_types::{RBox, RString},
 };
 use std::collections::HashMap;
@@ -17,11 +18,13 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use totui_plugin_interface::{
-    FfiEventType, INTERFACE_VERSION, Plugin_TO, PluginModule_Ref, UpdateNotifier,
+    FfiActionResponse, FfiCallbackResult, FfiEventType, HostApi_TO, INTERFACE_VERSION, Plugin_TO,
+    PluginModule_Ref, UpdateNotifier, call_plugin_invoke_action, call_plugin_on_callback,
     call_plugin_on_config_loaded,
 };
 
 use crate::plugin::config::{PluginConfigLoader, to_ffi_config};
+use crate::plugin::manifest::EntrySpec;
 use crate::plugin::{PluginInfo, PluginManager};
 
 /// Global sender for plugin update notifications.
@@ -119,6 +122,8 @@ pub struct LoadedPlugin {
     /// Disabled for current session only (after runtime panic).
     /// Loading failures do NOT set this - they persist across launches.
     pub session_disabled: bool,
+    /// Resolved entry list for this plugin (synthesized if manifest declares none).
+    pub entries: Vec<EntrySpec>,
 }
 
 /// Plugin loader that manages loaded plugin instances.
@@ -335,6 +340,7 @@ impl PluginLoader {
             version: plugin_info.manifest.version.clone(),
             description: plugin_info.manifest.description.clone(),
             session_disabled: false,
+            entries: plugin_info.manifest.resolved_entries(),
         })
     }
 
@@ -454,6 +460,16 @@ impl PluginLoader {
                 })
             })
             .collect()
+    }
+
+    /// Returns the resolved entry list for a plugin (synthesizes one for
+    /// plugins that haven't declared any). Returns an empty vec if the plugin
+    /// is not loaded.
+    pub fn entries_for(&self, plugin_name: &str) -> Vec<EntrySpec> {
+        self.plugins
+            .get(&plugin_name.to_lowercase())
+            .map(|lp| lp.entries.clone())
+            .unwrap_or_default()
     }
 
     /// Call a plugin method safely, catching panics.
@@ -641,6 +657,124 @@ impl PluginLoader {
             let _ = tx.send(send_result);
         });
 
+        Ok(rx)
+    }
+
+    /// Spawn an `invoke_action` call on a background thread.
+    ///
+    /// Returns a receiver for the plugin's `FfiActionResponse` (or error string).
+    /// The host is a snapshot of state at dispatch time; the plugin sees frozen data
+    /// and returns mutations as `FfiCommand`s that the main thread applies.
+    pub fn spawn_invoke_action(
+        &self,
+        plugin_name: &str,
+        action: &str,
+        input: &str,
+        todo_list: crate::todo::TodoList,
+        current_project: crate::project::Project,
+        enabled_projects: std::collections::HashSet<String>,
+    ) -> Result<std::sync::mpsc::Receiver<Result<FfiActionResponse, String>>, PluginLoadError> {
+        let plugin = self.get(plugin_name).ok_or_else(|| PluginLoadError {
+            plugin_name: plugin_name.to_string(),
+            error_kind: PluginErrorKind::Other("Plugin not loaded".to_string()),
+            message: format!("Plugin {} is not loaded", plugin_name),
+        })?;
+
+        if plugin.session_disabled {
+            return Err(PluginLoadError {
+                plugin_name: plugin_name.to_string(),
+                error_kind: PluginErrorKind::SessionDisabled,
+                message: format!(
+                    "Plugin {} is disabled for this session after a previous error",
+                    plugin_name
+                ),
+            });
+        }
+
+        let plugin_ref = Arc::clone(&plugin.plugin);
+        let action_owned = action.to_string();
+        let input_owned = input.to_string();
+        let name_owned = plugin_name.to_string();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let host_owned = crate::plugin::host_impl::OwnedPluginHostApi::new(
+                todo_list,
+                current_project,
+                enabled_projects,
+                name_owned.clone(),
+            );
+            let host_to: HostApi_TO<'_, RBox<()>> = HostApi_TO::from_value(host_owned, TD_Opaque);
+            let result = call_plugin_invoke_action(
+                &plugin_ref,
+                RString::from(action_owned.as_str()),
+                RString::from(input_owned.as_str()),
+                host_to,
+            );
+            let send_result = match result.into_result() {
+                Ok(resp) => Ok(resp),
+                Err(err) => Err(err.to_string()),
+            };
+            let _ = tx.send(send_result);
+        });
+        Ok(rx)
+    }
+
+    /// Spawn an `on_callback` call on a background thread.
+    ///
+    /// Returns a receiver for the plugin's `FfiActionResponse` (or error string).
+    /// The host is a snapshot of state at dispatch time.
+    pub fn spawn_on_callback(
+        &self,
+        plugin_name: &str,
+        token: &str,
+        result: FfiCallbackResult,
+        todo_list: crate::todo::TodoList,
+        current_project: crate::project::Project,
+        enabled_projects: std::collections::HashSet<String>,
+    ) -> Result<std::sync::mpsc::Receiver<Result<FfiActionResponse, String>>, PluginLoadError> {
+        let plugin = self.get(plugin_name).ok_or_else(|| PluginLoadError {
+            plugin_name: plugin_name.to_string(),
+            error_kind: PluginErrorKind::Other("Plugin not loaded".to_string()),
+            message: format!("Plugin {} is not loaded", plugin_name),
+        })?;
+
+        if plugin.session_disabled {
+            return Err(PluginLoadError {
+                plugin_name: plugin_name.to_string(),
+                error_kind: PluginErrorKind::SessionDisabled,
+                message: format!(
+                    "Plugin {} is disabled for this session after a previous error",
+                    plugin_name
+                ),
+            });
+        }
+
+        let plugin_ref = Arc::clone(&plugin.plugin);
+        let token_owned = token.to_string();
+        let name_owned = plugin_name.to_string();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let host_owned = crate::plugin::host_impl::OwnedPluginHostApi::new(
+                todo_list,
+                current_project,
+                enabled_projects,
+                name_owned.clone(),
+            );
+            let host_to: HostApi_TO<'_, RBox<()>> = HostApi_TO::from_value(host_owned, TD_Opaque);
+            let cb_result = call_plugin_on_callback(
+                &plugin_ref,
+                RString::from(token_owned.as_str()),
+                result,
+                host_to,
+            );
+            let send_result = match cb_result.into_result() {
+                Ok(resp) => Ok(resp),
+                Err(err) => Err(err.to_string()),
+            };
+            let _ = tx.send(send_result);
+        });
         Ok(rx)
     }
 }
@@ -832,5 +966,50 @@ mod tests {
                 .plugins_for_event(totui_plugin_interface::FfiEventType::OnLoad)
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn entries_for_unknown_plugin_is_empty() {
+        let loader = PluginLoader::new();
+        assert!(loader.entries_for("nonexistent").is_empty());
+    }
+
+    fn make_test_todo_list() -> crate::todo::TodoList {
+        use chrono::Local;
+        use std::path::PathBuf;
+        let date = Local::now().date_naive();
+        crate::todo::TodoList::new(date, PathBuf::from("/tmp/test.md"))
+    }
+
+    #[test]
+    fn spawn_invoke_action_returns_error_for_unknown_plugin() {
+        let loader = PluginLoader::new();
+        let result = loader.spawn_invoke_action(
+            "nonexistent",
+            "generate",
+            "input",
+            make_test_todo_list(),
+            crate::project::Project::default_project(),
+            std::collections::HashSet::new(),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("not loaded"));
+    }
+
+    #[test]
+    fn spawn_on_callback_returns_error_for_unknown_plugin() {
+        let loader = PluginLoader::new();
+        let result = loader.spawn_on_callback(
+            "nonexistent",
+            "tok",
+            totui_plugin_interface::FfiCallbackResult::ConfirmYes,
+            make_test_todo_list(),
+            crate::project::Project::default_project(),
+            std::collections::HashSet::new(),
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.message.contains("not loaded"));
     }
 }

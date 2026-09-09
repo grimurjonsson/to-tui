@@ -1,0 +1,45 @@
+.kanban-workspace { max-width: none; padding: 28px; }
+.board-heading,.editor-heading { display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.board-heading h1 { margin:18px 0 6px; }.board-heading p { color:var(--muted); }
+.kanban-columns { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:16px;  padding:12px 0 24px; min-height:35vh; }
+.kanban-column { min-width:0; background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px; }
+.kanban-column h2 { font-size:15px; margin:0 0 18px; display:flex; justify-content:space-between; }
+.kanban-card { min-width:0; display:block; width:100%; text-align:left; padding:0; margin-bottom:12px; background:var(--bg); border-left:3px solid var(--accent); }
+.kanban-card[draggable="true"] { cursor:grab; }
+.kanban-card.dragging { opacity:.45; cursor:grabbing; }
+.kanban-column.drop-target { border-color:var(--accent); background:var(--accent-soft); outline:2px solid var(--accent); outline-offset:-2px; }
+.kanban-card strong,.kanban-card span { display:block; overflow-wrap:anywhere; white-space:pre-wrap; }
+.kanban-card span { color:var(--muted); font-size:13px; margin-top:9px; }.kanban-card .needs-feedback { color:var(--danger); }
+.empty-column { color:var(--muted); font-size:14px; }
+#editor { width:min(700px,95vw); max-height:90vh; padding:24px; overflow:auto; }
+#editor label { display:block; margin:14px 0 8px; }#editor input,#editor textarea,#editor select { display:block; width:100%; margin-top:6px; }
+#editor button { margin:6px 0; }#editor section { margin-top:24px; border-top:1px solid var(--line); padding-top:16px; }
+#editor h2 { margin:0; }#activity { padding-left:22px; }#activity li { padding:10px 0; border-bottom:1px solid var(--line); white-space:pre-wrap; overflow-wrap:anywhere; }#activity small { color:var(--muted); display:block; }
+#error,#form-error,#stale { color:var(--danger); padding:12px; background:var(--accent-soft); border-radius:8px; }
+#feedback { white-space:pre-wrap; overflow-wrap:anywhere; color:var(--muted); }
+#feedback.needs-feedback { color:var(--danger); }
+[hidden] { display:none !important; }
+@media(max-width:600px) { .kanban-workspace { padding:16px; }.topbar { padding:12px; }.top-actions { gap:6px; }.board-heading { align-items:flex-start; } }
+
+.kanban-card { border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:8px; overflow:hidden; }
+.kanban-card-open { width:100%; border:0; border-radius:0; padding:14px; text-align:left; background:transparent; }
+.card-actions,.ticket-shortcuts { display:flex; flex-wrap:wrap; gap:8px; }
+.card-actions { padding:0 10px 10px; }
+.card-actions button { font-size:12px; padding:6px 8px; }
+button.danger { color:var(--danger); }
+.kanban-backlog { margin-bottom:20px; }
+.kanban-trash summary,.kanban-archive summary { cursor:pointer; padding:12px 0; color:var(--muted); }
+.kanban-trash .kanban-column,.kanban-archive .kanban-column { margin:8px 0 16px; }
+.kanban-row { display:flex; align-items:center; gap:12px; border-bottom:1px solid var(--line); min-width:0; }
+.kanban-row:last-child { border-bottom:0; }
+.kanban-row .kanban-card-open { display:flex; align-items:center; gap:16px; min-width:0; flex:1; padding:12px 0; font-weight:400; }
+.kanban-row strong { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.kanban-row span { max-width:24ch; overflow:hidden; text-overflow:ellipsis; color:var(--muted); font-size:12px; white-space:nowrap; }
+.kanban-row .needs-feedback { color:var(--danger); }
+.kanban-row .card-actions { padding:0; flex-wrap:nowrap; flex-shrink:0; }
+.kanban-row[draggable="true"] { cursor:grab; }
+.kanban-row.dragging { opacity:.45; }
+@media(max-width:900px) { .kanban-row .kanban-card-open span { display:none; } }
+@media(max-width:1100px) { .kanban-columns { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+@media(max-width:720px) { .kanban-columns { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:440px) { .kanban-columns { grid-template-columns:minmax(0,1fr); }.board-heading { flex-wrap:wrap; }.topbar { flex-wrap:wrap; } }

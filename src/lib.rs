@@ -2,6 +2,7 @@ pub mod api;
 pub mod clipboard;
 pub mod config;
 pub mod hook;
+pub mod kanban;
 pub mod keybindings;
 pub mod mcp;
 pub mod plugin;

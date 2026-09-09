@@ -5,7 +5,7 @@
 
 use abi_stable::StableAbi;
 use abi_stable::sabi_trait;
-use abi_stable::std_types::{ROption, RString, RVec};
+use abi_stable::std_types::{ROption, RResult, RString, RVec};
 
 use crate::types::{FfiPriority, FfiTodoItem, FfiTodoState};
 
@@ -268,4 +268,6 @@ pub trait HostApi: Send + Sync {
     /// List projects that have metadata for this plugin.
     #[sabi(last_prefix_field)]
     fn list_projects_with_metadata(&self) -> RVec<RString>;
+
+    fn kanban_request(&self, request: RString) -> RResult<RString, RString>;
 }

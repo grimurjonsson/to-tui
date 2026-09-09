@@ -26,6 +26,34 @@ fn is_valid_action_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// Input kind for a plugin entry — controls whether the host prompts for text
+/// before invoking the action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryInput {
+    /// No input prompt; host calls `invoke_action(id, "")` immediately.
+    #[default]
+    None,
+    /// Single-line text input; host calls `invoke_action(id, <text>)`.
+    Text,
+}
+
+/// One user-facing entry surfaced in the plugin's sub-menu (after the user
+/// picks the plugin from the plugins modal).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntrySpec {
+    /// Identifier passed to the plugin's `invoke_action`.
+    pub id: String,
+    /// Label shown in the menu.
+    pub label: String,
+    /// Input kind.
+    #[serde(default)]
+    pub input: EntryInput,
+    /// Optional label for the input prompt (only meaningful when `input = "text"`).
+    #[serde(default)]
+    pub input_label: Option<String>,
+}
+
 /// Wrapper for plugin.toml files that use `[plugin]` section format.
 ///
 /// This allows parsing both formats:
@@ -76,6 +104,12 @@ pub struct PluginManifest {
     #[serde(default)]
     pub actions: HashMap<String, ActionDefinition>,
 
+    /// Sub-menu entries shown after the user picks this plugin from the
+    /// plugins modal. When empty, the host synthesizes a single "generate"
+    /// entry for backwards compatibility.
+    #[serde(default)]
+    pub entries: Vec<EntrySpec>,
+
     /// Timeout for hook execution in seconds (default: 5).
     /// Hooks that exceed this timeout will be terminated and counted as failures.
     #[serde(default = "default_hook_timeout")]
@@ -98,6 +132,7 @@ impl Default for PluginManifest {
             repository: None,
             min_interface_version: None,
             actions: HashMap::new(),
+            entries: Vec::new(),
             hook_timeout_secs: default_hook_timeout(),
         }
     }
@@ -178,6 +213,22 @@ impl PluginManifest {
         }
 
         Ok(())
+    }
+
+    /// Returns `entries` if non-empty, else a synthetic single-entry list so
+    /// pre-0.4 plugins keep working. The synthetic entry routes to action
+    /// id `"generate"` with a text input.
+    pub fn resolved_entries(&self) -> Vec<EntrySpec> {
+        if !self.entries.is_empty() {
+            self.entries.clone()
+        } else {
+            vec![EntrySpec {
+                id: "generate".to_string(),
+                label: self.description.clone(),
+                input: EntryInput::Text,
+                input_label: Some("Input".to_string()),
+            }]
+        }
     }
 }
 
@@ -528,5 +579,79 @@ hook_timeout_secs = 10
     #[test]
     fn test_default_hook_timeout_fn() {
         assert_eq!(super::default_hook_timeout(), 5);
+    }
+
+    #[test]
+    fn parses_entries_array() {
+        let toml = r#"
+        [plugin]
+        name = "demo"
+        version = "0.1.0"
+        description = "demo"
+
+        [[plugin.entries]]
+        id = "alpha"
+        label = "Alpha"
+        input = "text"
+        input_label = "Type something"
+
+        [[plugin.entries]]
+        id = "beta"
+        label = "Beta"
+        input = "none"
+    "#;
+        let m = PluginManifest::parse(toml).expect("parse");
+        assert_eq!(m.entries.len(), 2);
+        assert_eq!(m.entries[0].id, "alpha");
+        assert_eq!(m.entries[0].input, EntryInput::Text);
+        assert_eq!(m.entries[0].input_label.as_deref(), Some("Type something"));
+        assert_eq!(m.entries[1].id, "beta");
+        assert_eq!(m.entries[1].input, EntryInput::None);
+    }
+
+    #[test]
+    fn empty_entries_is_default() {
+        let toml = r#"
+        [plugin]
+        name = "legacy"
+        version = "0.1.0"
+        description = "legacy"
+    "#;
+        let m = PluginManifest::parse(toml).expect("parse");
+        assert!(m.entries.is_empty());
+    }
+
+    #[test]
+    fn resolved_entries_synthesizes_for_empty() {
+        let m = PluginManifest {
+            name: "x".into(),
+            version: "0".into(),
+            description: "Do the thing".into(),
+            ..PluginManifest::default()
+        };
+        let resolved = m.resolved_entries();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].id, "generate");
+        assert_eq!(resolved[0].label, "Do the thing");
+        assert_eq!(resolved[0].input, EntryInput::Text);
+    }
+
+    #[test]
+    fn resolved_entries_passes_through() {
+        let m = PluginManifest {
+            name: "x".into(),
+            version: "0".into(),
+            description: "d".into(),
+            entries: vec![EntrySpec {
+                id: "foo".into(),
+                label: "Foo".into(),
+                input: EntryInput::None,
+                input_label: None,
+            }],
+            ..PluginManifest::default()
+        };
+        let resolved = m.resolved_entries();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].id, "foo");
     }
 }

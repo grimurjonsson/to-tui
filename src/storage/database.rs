@@ -325,6 +325,7 @@ pub fn init_database() -> Result<()> {
           ON CONFLICT(project,date) DO UPDATE SET revision=revision+1; END;")?;
 
     crate::storage::sync::init(&conn)?;
+    crate::kanban::init(&conn)?;
     conn.commit()?;
     Ok(())
 }

@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod client_auth;
 pub mod handlers;
+mod kanban;
 pub mod models;
 mod projects;
 pub mod routes;

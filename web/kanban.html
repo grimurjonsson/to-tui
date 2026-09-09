@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark"><title>totui · Kanban</title>
+<link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/kanban.css">
+<script src="/kanban.js" defer></script>
+</head>
+<body>
+<header class="topbar"><a class="brand" id="tasks-link" href="/">[✓] totui · Tasks</a><div class="top-actions"><span id="connection" role="status">Connecting…</span><button id="refresh">Refresh</button><button id="theme" aria-label="Switch color theme">◐</button></div></header>
+<main class="kanban-workspace">
+<div class="board-heading"><div><label for="project">Project</label> <select id="project"></select><h1 id="heading">Kanban</h1><p id="summary">Loading board…</p></div><button id="create" class="primary" disabled>Create board</button></div>
+<p id="error" role="alert" hidden></p><div id="columns" class="kanban-columns" aria-label="Kanban board"></div>
+<div id="backlog" class="kanban-backlog"></div>
+<details id="completed" class="kanban-archive" hidden><summary id="completed-summary">Completed (0)</summary><div id="completed-tickets"></div></details>
+<details id="trash" class="kanban-trash" hidden><summary id="trash-summary">Trash</summary><div id="trash-tickets"></div></details>
+</main>
+<dialog id="editor" aria-labelledby="editor-heading">
+<form id="ticket-form"><div class="editor-heading"><h2 id="editor-heading">Ticket</h2><button type="button" id="close">Close</button></div>
+<p id="stale" role="alert" hidden>This ticket changed. Your draft is preserved. Read the latest ticket before saving. <button type="button" id="reload-ticket">Load latest ticket</button></p>
+<p id="form-error" role="alert" hidden></p>
+<div id="board-fields"><label>Board name<input id="board-name" maxlength="200"></label></div>
+<div id="ticket-fields"><label>Title<input id="title" maxlength="1000"></label><label>Description<textarea id="description" rows="3"></textarea></label><label>Assignee<input id="assignee" maxlength="200" placeholder="Agent or person"></label></div>
+<button id="save" class="primary" type="submit">Save</button></form>
+<section id="ticket-actions"><div class="ticket-shortcuts"><button id="to-board" type="button">To board</button><button id="archive-ticket" type="button">Archive</button><button id="trash-ticket" type="button" class="danger">Trash</button></div><p id="feedback"></p><div class="move-controls"><label>Column<select id="status"></select></label><label>Reason<textarea id="reason" rows="2" placeholder="Required when moving back"></textarea></label><button id="move" type="button">Move ticket</button></div>
+<label>Add comment<textarea id="comment" rows="2"></textarea></label><button id="add-comment" type="button">Add comment</button>
+<div id="resolution-fields"><label>How was the feedback addressed?<textarea id="resolution" rows="2"></textarea></label><button id="resolve" type="button">Record resolution</button></div>
+<h3>Activity</h3><ol id="activity"></ol></section>
+</dialog>
+</body></html>

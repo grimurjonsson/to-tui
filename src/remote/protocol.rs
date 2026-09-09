@@ -32,6 +32,9 @@ impl Snapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 pub enum Request {
+    Kanban {
+        request: crate::kanban::Request,
+    },
     Info,
     Load {
         project: String,

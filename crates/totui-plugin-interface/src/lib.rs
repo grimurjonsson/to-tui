@@ -8,6 +8,7 @@
 // See: https://github.com/rust-lang/rust/issues/59629
 #![allow(non_local_definitions)]
 
+pub mod actions;
 pub mod config;
 pub mod events;
 pub mod host_api;
@@ -15,15 +16,17 @@ pub mod plugin;
 pub mod types;
 pub mod version;
 
+pub use actions::{FfiActionResponse, FfiCallbackResult, FfiPickerItem};
 pub use config::{FfiConfigField, FfiConfigSchema, FfiConfigType, FfiConfigValue};
-pub use events::{FfiEvent, FfiEventSource, FfiEventType, FfiFieldChange, FfiHookResponse};
+pub use events::{FfiEvent, FfiEventSource, FfiEventType, FfiFieldChange};
 pub use host_api::{
     FfiCommand, FfiMovePosition, FfiProjectContext, FfiStateFilter, FfiTodoMetadata, FfiTodoNode,
     FfiTodoQuery, HostApi, HostApi_TO,
 };
 pub use plugin::{
     Plugin, Plugin_TO, UpdateNotifier, call_plugin_execute_with_host, call_plugin_generate,
-    call_plugin_on_config_loaded, call_plugin_on_event,
+    call_plugin_invoke_action, call_plugin_on_callback, call_plugin_on_config_loaded,
+    call_plugin_on_event,
 };
 pub use types::{FfiPriority, FfiTodoItem, FfiTodoState};
 pub use version::{INTERFACE_VERSION, PluginModule, PluginModule_Ref, is_version_compatible};
