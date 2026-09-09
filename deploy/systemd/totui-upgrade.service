@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up and upgrade the totui server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -I /usr/local/lib/totui/upgrade-server.py --web
+TimeoutStartSec=15min
+UMask=0077
+PrivateTmp=yes
+StandardOutput=journal
+StandardError=journal

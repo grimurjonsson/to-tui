@@ -212,6 +212,7 @@ function showProjectManagement() {
   projectControls();
 }
 $("manage-projects").onclick = () => {
+  $("account-menu").hidePopover();
   $("manage-project-picker").replaceChildren();
   for (const project of state.projects) {
     $("manage-project-picker").add(
@@ -958,6 +959,7 @@ function syncModal() {
     $("details").classList.contains("open");
   document.querySelector("main").inert = modal;
   document.querySelector(".topbar").inert = modal;
+  document.querySelector(".sidebar").inert = modal;
   $("details").setAttribute("role", modal ? "dialog" : "complementary");
   if (modal) $("details").setAttribute("aria-modal", "true");
   else $("details").removeAttribute("aria-modal");
@@ -1302,3 +1304,153 @@ document.addEventListener("pointerdown", (event) => {
 });
 window.addEventListener("resize", () => closeStateMenu());
 window.addEventListener("blur", () => closeStateMenu(false));
+
+function renderAvatar(user, url) {
+  const initials = (user.email?.split("@")[0] || "Local")
+    .split(/[.\s_+-]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => [...part][0])
+    .join("")
+    .toUpperCase();
+  text($("avatar-initials"), initials || "U");
+  const avatar = $("user-avatar");
+  if (avatar.dataset.url === (url || "")) return;
+  avatar.dataset.url = url || "";
+  avatar.hidden = true;
+  $("avatar-initials").hidden = false;
+  if (!url) {
+    avatar.removeAttribute("src");
+    return;
+  }
+  avatar.onload = () => {
+    avatar.hidden = false;
+    $("avatar-initials").hidden = true;
+  };
+  avatar.onerror = () => {
+    avatar.hidden = true;
+    $("avatar-initials").hidden = false;
+  };
+  avatar.src = url;
+}
+
+async function refreshServer() {
+  try {
+    const info = await api("api/server");
+    state.server = info;
+    text($("server-version"), `Server version: ${info.version}`);
+    $("server-current").hidden =
+      !info.latest_version ||
+      !!info.check_error ||
+      info.update_available ||
+      info.upgrade_pending;
+    $("server-version").title =
+      info.check_error || `Server version ${info.version}`;
+    text(
+      $("current-user"),
+      info.user.email ||
+        (info.user.id === "local" ? "Local workspace" : info.user.id),
+    );
+    renderAvatar(info.user, info.avatar_url);
+    $("logout").hidden = !info.logout_url;
+    $("server-upgrade").hidden = !info.update_available;
+    $("server-upgrade").disabled = !info.can_upgrade || info.upgrade_pending;
+    text($("server-upgrade"), `⬆️ v${info.latest_version}`);
+    $("server-upgrade").title = info.can_upgrade
+      ? "Back up and upgrade server"
+      : "Update available — ask the server owner to upgrade";
+    const status = info.upgrade_status;
+    message(
+      "server-message",
+      info.upgrade_pending
+        ? "Server upgrade in progress. The server will briefly restart; your drafts stay in this tab."
+        : status?.state === "failed"
+          ? status.message
+          : "",
+    );
+  } catch (error) {
+    $("server-current").hidden = true;
+    message(
+      "server-message",
+      `Server information unavailable: ${error.message}`,
+    );
+  }
+}
+$("account-menu").addEventListener("beforetoggle", (event) => {
+  if (event.newState !== "open") return;
+  const anchor = $("account-menu-button").getBoundingClientRect();
+  const menu = $("account-menu");
+  menu.style.left = `${Math.max(8, Math.min(anchor.left, innerWidth - 168))}px`;
+  menu.style.top = anchor.top < 120 ? `${anchor.bottom + 8}px` : "auto";
+  menu.style.bottom =
+    anchor.top < 120 ? "auto" : `${innerHeight - anchor.top + 8}px`;
+});
+function accountMenuItems() {
+  return [...$("account-menu").querySelectorAll('[role="menuitem"]')].filter(
+    (item) => !item.hidden,
+  );
+}
+$("account-menu").addEventListener("toggle", (event) => {
+  if (event.newState === "open")
+    accountMenuItems()[0]?.focus({ preventScroll: true });
+});
+$("account-menu").onkeydown = (event) => {
+  event.stopPropagation();
+  if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) {
+    event.preventDefault();
+    const items = accountMenuItems();
+    const current = items.indexOf(document.activeElement);
+    const index =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? items.length - 1
+          : (current + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
+            items.length;
+    items[index]?.focus({ preventScroll: true });
+  } else if (event.key === "Tab") $("account-menu").hidePopover();
+};
+window.addEventListener("resize", () => $("account-menu").hidePopover());
+document.addEventListener(
+  "scroll",
+  () => $("account-menu").hidePopover(),
+  true,
+);
+$("logout").onclick = () => {
+  $("account-menu").hidePopover();
+  if (
+    [...state.drafts.values()].some(
+      (draft) => draft.dirty || draft.moveDirty,
+    ) &&
+    !confirm("Log out and discard unsaved drafts?")
+  )
+    return;
+  state.drafts.clear();
+  location.assign(state.server.logout_url);
+};
+$("server-upgrade").onclick = async () => {
+  const info = state.server;
+  if (
+    !info?.can_upgrade ||
+    !confirm(
+      `Back up all server data and upgrade from v${info.version} to v${info.latest_version}? The server will briefly be unavailable.`,
+    )
+  )
+    return;
+  $("server-upgrade").disabled = true;
+  try {
+    await api("api/server/upgrade", {
+      method: "POST",
+      body: JSON.stringify({ version: info.latest_version }),
+    });
+    message(
+      "server-message",
+      "Upgrade queued. Backing up server data before installation…",
+    );
+  } catch (error) {
+    message("server-message", error.message);
+    $("server-upgrade").disabled = false;
+  }
+};
+refreshServer();
+setInterval(refreshServer, 15000);

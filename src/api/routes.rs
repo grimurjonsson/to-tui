@@ -1,4 +1,4 @@
-use super::{auth, client_auth, handlers, projects, web};
+use super::{auth, client_auth, handlers, projects, server_info, web};
 use axum::{
     Router,
     routing::{delete, get, post},
@@ -30,12 +30,15 @@ pub fn create_authenticated_router(auth_url: &str) -> anyhow::Result<Router> {
 fn router(state: auth::ServerState) -> Router {
     Router::new()
         .route("/", get(web::index))
+        .route("/signed-out", get(server_info::signed_out))
         .route("/app.js", get(web::script))
         .route("/style.css", get(web::style))
         .route("/favicon.ico", get(web::favicon))
         .route("/api/events", get(web::events))
         .route("/api/snapshot", get(web::snapshot))
         .route("/api/me", get(auth::me))
+        .route("/api/server", get(server_info::info))
+        .route("/api/server/upgrade", post(server_info::upgrade))
         .route("/api/remote/v1", post(crate::remote::handle))
         .route(
             "/api/remote/sync",

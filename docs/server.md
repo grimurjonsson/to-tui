@@ -366,3 +366,92 @@ to a blocking worker uses `storage::context::blocking` to carry that root onto t
 worker thread; unscoped workers would use the local user's root. SSE opens its
 connection within the same scope and retains that connection only for the active
 stream. Tenant routing does not change process environment variables.
+
+## Web account controls and owner upgrades
+
+The bottom of the web sidebar shows the running server version and verified account.
+The avatar uses Gravatar with a SHA-256 hash of the trimmed, lowercase verified
+email, a G rating, and no referrer header. Missing images and failed image loads
+show initials instead; local workspaces make no Gravatar request. Clicking the
+avatar or email opens the account menu with **Manage projects** and **Log out**.
+A small green check beside the version appears only after a successful release
+check confirms that no newer version is available. Logging out
+clears the OAuth gateway session and opens a signed-out page. Google remains signed
+in. This deployment shares its gateway cookie with other `.gimmi.is` sites, so
+logging out also ends that shared gateway session. `/signed-out` must be forwarded
+without `auth_request`, as in the checked-in Nginx site configuration.
+
+The server checks the latest stable GitHub release at most once an hour. An **⬆️**
+button beside the version highlights an available update. All users can see it;
+only the explicitly configured owner can trigger it. Failed release checks are
+shown as unavailable rather than claiming the server is up to date.
+
+Web upgrades are disabled by default and unavailable in local mode. On a managed
+Linux server, install the root-owned helper and its systemd units:
+
+```sh
+sudo install -o root -g root -m 0755 scripts/upgrade-server.py /usr/local/lib/totui/upgrade-server.py
+sudo install -o root -g root -m 0644 deploy/systemd/totui-upgrade.service deploy/systemd/totui-upgrade.path /etc/systemd/system/
+sudo systemctl edit totui.service
+```
+
+Set these values in the drop-in, using the owner's `id` from `/api/me` while
+signed in (the UUID, not the email address):
+
+```ini
+[Service]
+Environment=TOTUI_WEB_UPGRADE=1
+Environment=TOTUI_SERVER_OWNER_ID=OWNER-ACCOUNT-UUID
+```
+
+Then activate the watcher and reload the server configuration:
+
+```sh
+sudo systemctl daemon-reload
+sudo systemctl enable --now totui-upgrade.path
+sudo systemctl restart totui.service
+```
+
+The API checks the authenticated account on every upgrade request and requires
+the version the owner confirmed. It atomically queues one fixed request file.
+The separate root systemd job independently checks the latest release, verifies
+the downloaded checksum/version, stops only `totui.service`, and takes the same
+complete backup as the CLI upgrade before installation. The web process retains
+its existing `NoNewPrivileges` and filesystem restrictions; it gets no sudo access.
+No request supplies an executable, command, download URL, or installation path.
+
+Upgrade progress and failures appear beside the sidebar account controls, including
+after reconnection. Successful or already-up-to-date results do not show a notice.
+Failures are reported there; detailed errors and backup locations are in
+`sudo journalctl -u totui-upgrade.service`. Failed installation still requires
+operator-managed rollback using the retained backup. To disable web upgrades,
+remove `TOTUI_WEB_UPGRADE` from the drop-in, restart the server, and disable
+`totui-upgrade.path`. Other websites and the OAuth service are not restarted by
+an upgrade.
+
+### Concurrent Google login attempts
+
+The shared OAuth gateway must keep a separate CSRF cookie for each login attempt.
+Otherwise, logging out while other tabs reconnect can start overlapping logins:
+all use `_cait_oauth2_csrf`, and the later attempt overwrites the earlier cookie.
+The earlier Google callback then fails with `CSRF token mismatch` / `Unable to
+find a valid CSRF token`, even though the `.gimmi.is` cookie domain is correct.
+
+The VPS gateway configuration at `/etc/oauth2-proxy-cait.cfg` includes:
+
+```toml
+cookie_csrf_per_request = true
+cookie_csrf_per_request_limit = 8
+```
+
+These are supported by its installed oauth2-proxy v7.15.3. Keep the existing
+cookie name, domain, secret, and CSRF validation. Validate configuration with
+`oauth2-proxy --config /etc/oauth2-proxy-cait.cfg --config-test` before restarting
+`oauth2-proxy-cait.service`. The bounded per-request setting is documented in the
+[OAuth2 Proxy cookie options](https://oauth2-proxy.github.io/oauth2-proxy/configuration/overview/#cookie-options).
+
+Run `python3 scripts/test_oauth_login.py` against the deployed site to verify that
+three overlapping logins preserve the first login cookie and send it to the
+callback domain. This test follows no Google redirects, performs no account login,
+and prints no cookie values or authorization codes. After fixing this setting,
+start a fresh login from the application URL; old callback URLs remain invalid.

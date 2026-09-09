@@ -7,6 +7,8 @@ from pathlib import Path
 import platform
 import re
 import shutil
+import stat
+import signal
 import shlex
 import subprocess
 import sys
@@ -147,7 +149,7 @@ def upgrade(binary):
     print("Stopping the server to back up all databases and state in /var/lib/totui.", flush=True)
     run_privileged("systemctl", "stop", SERVICE)
     try:
-        run_privileged("tar", "--dereference", "-C", "/var/lib", "-czf", f"{backup}/data.tar.gz", "totui")
+        run_privileged("tar", "--dereference", "--exclude=totui/upgrade-request", "--exclude=totui/upgrade-status.json", "-C", "/var/lib", "-czf", f"{backup}/data.tar.gz", "totui")
     except (Exception, KeyboardInterrupt):
         print("Backup interrupted or failed; restarting the unchanged server.", file=sys.stderr)
         run_privileged("systemctl", "start", SERVICE)
@@ -170,6 +172,50 @@ def upgrade(binary):
         raise
 
 
+REQUEST = Path("/var/lib/totui/upgrade-request")
+STATUS = Path("/var/lib/totui/upgrade-status.json")
+
+
+def web_status(state, message):
+    with tempfile.NamedTemporaryFile(mode="w", dir=STATUS.parent, delete=False) as output:
+        temporary = Path(output.name)
+        json.dump({"state": state, "message": message}, output)
+    temporary.chmod(0o644)
+    temporary.replace(STATUS)
+
+
+def interrupted(signum, frame):
+    raise RuntimeError("Upgrade interrupted; inspect the service and retained backup before retrying")
+
+
+def web_upgrade():
+    try:
+        descriptor = os.open(REQUEST, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor) as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise RuntimeError("Upgrade request must be a regular file")
+            requested = source.read(128).strip()
+        version_key(requested)
+        web_status("running", f"Preparing server upgrade to v{requested}…")
+        architecture, installed = preflight()
+        version, asset = latest_release(architecture)
+        if version_key(version) != version_key(requested):
+            raise RuntimeError("The latest release changed. Refresh and confirm the new version.")
+        if version_key(version) <= version_key(installed):
+            web_status("complete", f"Server v{installed} is already up to date.")
+            return
+        with tempfile.TemporaryDirectory(prefix="totui-upgrade-") as directory:
+            binary = download(Path(directory), version, asset)
+            web_status("running", "Backing up server data and installing the update…")
+            upgrade(binary)
+        web_status("complete", f"Server upgraded to v{version.removeprefix('v')}. Backup retained on the server.")
+    except Exception:
+        web_status("failed", "Server upgrade failed. The owner can inspect journalctl -u totui-upgrade.service for details and the backup location.")
+        raise
+    finally:
+        REQUEST.unlink(missing_ok=True)
+
+
 def main():
     architecture, installed = preflight()
     version, asset = latest_release(architecture)
@@ -189,7 +235,13 @@ def main():
 
 if __name__ == "__main__":
     try:
-        main()
+        if sys.argv[1:] == ["--web"]:
+            signal.signal(signal.SIGTERM, interrupted)
+            web_upgrade()
+        elif sys.argv[1:]:
+            raise RuntimeError("Unknown arguments")
+        else:
+            main()
     except (RuntimeError, ValueError, KeyError, OSError, EOFError, tarfile.TarError, subprocess.CalledProcessError) as error:
         print(f"Upgrade stopped: {error}", file=sys.stderr)
         sys.exit(1)

@@ -131,7 +131,7 @@ class UpgradeTests(unittest.TestCase):
         self.assertLess(stop, backup)
         self.assertLess(backup, install)
         self.assertEqual(calls[backup], (
-            "sudo", "-n", "tar", "--dereference", "-C", "/var/lib", "-czf",
+            "sudo", "-n", "tar", "--dereference", "--exclude=totui/upgrade-request", "--exclude=totui/upgrade-status.json", "-C", "/var/lib", "-czf",
             "/root/totui-backup.test/data.tar.gz", "totui",
         ))
         self.assertIn("Database and state backup saved: /root/totui-backup.test/data.tar.gz", output.getvalue())
@@ -167,6 +167,46 @@ class UpgradeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "not installed"):
                 upgrade.main()
             latest.assert_not_called()
+
+
+class WebUpgradeTests(unittest.TestCase):
+    def test_web_upgrade_pins_confirmed_release_and_cleans_request(self):
+        for latest in ("v0.8.0", "v0.9.0"):
+            with tempfile.TemporaryDirectory() as directory:
+                request = Path(directory) / "request"
+                status = Path(directory) / "status"
+                request.write_text("0.8.0")
+                with patch.object(upgrade, "REQUEST", request), patch.object(upgrade, "STATUS", status), \
+                     patch.object(upgrade, "preflight", return_value=("x86_64", "0.7.0")), \
+                     patch.object(upgrade, "latest_release", return_value=(latest, {})), \
+                     patch.object(upgrade, "download", return_value=Path("/tmp/binary")) as download, \
+                     patch.object(upgrade, "upgrade") as install:
+                    if latest == "v0.8.0":
+                        upgrade.web_upgrade()
+                        install.assert_called_once_with(Path("/tmp/binary"))
+                        self.assertIn('"state": "complete"', status.read_text())
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "latest release changed"):
+                            upgrade.web_upgrade()
+                        download.assert_not_called()
+                        install.assert_not_called()
+                        self.assertIn('"state": "failed"', status.read_text())
+                    self.assertFalse(request.exists())
+
+    def test_web_upgrade_rejects_symlink_request_without_reading_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "target"
+            target.write_text("0.8.0")
+            request = Path(directory) / "request"
+            request.symlink_to(target)
+            with patch.object(upgrade, "REQUEST", request), \
+                 patch.object(upgrade, "STATUS", Path(directory) / "status"), \
+                 patch.object(upgrade, "preflight") as preflight:
+                with self.assertRaises(OSError):
+                    upgrade.web_upgrade()
+                preflight.assert_not_called()
+                self.assertEqual(target.read_text(), "0.8.0")
+                self.assertFalse(request.is_symlink())
 
 
 if __name__ == "__main__":
