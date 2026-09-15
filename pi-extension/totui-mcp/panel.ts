@@ -1,5 +1,5 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	collapseIndicator,
 	getVisibleIndices,
@@ -33,6 +33,7 @@ export class TotuiPanelComponent {
 		data: TotuiDataSource,
 		onClose: () => void,
 		onRefresh: (list: TotuiTodoList) => void,
+		private readonly requestRender: () => void = () => {},
 	) {
 		this.list = list;
 		this.theme = theme;
@@ -100,6 +101,8 @@ export class TotuiPanelComponent {
 			return;
 		}
 
+		if (this.refreshing) return;
+
 		if (matchesKey(data, "return") || data === " ") {
 			void this.toggleSelected();
 			return;
@@ -156,6 +159,7 @@ export class TotuiPanelComponent {
 	}
 
 	private async mutateList(mutator: () => Promise<TotuiTodoList>): Promise<void> {
+		if (this.refreshing || this.list.source === "error") return;
 		this.refreshing = true;
 		this.invalidate();
 		try {
@@ -224,20 +228,21 @@ export class TotuiPanelComponent {
 		if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
 
 		const th = this.theme;
+		if (width < 4) return ["".padEnd(Math.max(0, width))];
 		const boxW = Math.min(width, this.width);
 		const innerW = boxW - 2;
 		const pad = (s: string, len: number) => {
 			const vis = visibleWidth(s);
 			return s + " ".repeat(Math.max(0, len - vis));
 		};
-		const row = (content: string) => th.fg("border", "│") + pad(content, innerW) + th.fg("border", "│");
+		const row = (content: string) => th.fg("border", "│") + pad(truncateToWidth(content, innerW), innerW) + th.fg("border", "│");
 
 		const lines: string[] = [];
 		lines.push(th.fg("border", `╭${"─".repeat(innerW)}╮`));
 		lines.push(row(` ${formatPanelHeader(this.list, th, innerW - 1)}`));
 
 		if (this.visible.length === 0) {
-			lines.push(row(` ${th.fg("dim", `No todos for ${this.list.date}`)}`));
+			lines.push(row(` ${this.list.error ? th.fg("warning", this.list.error) : th.fg("dim", `No todos for ${this.list.date}`)}`));
 		} else {
 			const { done, total } = countDone(this.list.items);
 			const status = this.refreshing
@@ -261,7 +266,7 @@ export class TotuiPanelComponent {
 					: isFocused
 						? th.fg("accent", "◆ ")
 						: "  ";
-				const body = formatTodoLine(item, this.list.items, raw, th, innerW - 6);
+				const body = formatTodoLine(item, this.list.items, raw, th, Math.max(0, innerW - 6));
 				lines.push(row(prefix + fold + body));
 			}
 
@@ -283,5 +288,6 @@ export class TotuiPanelComponent {
 	invalidate(): void {
 		this.cachedWidth = undefined;
 		this.cachedLines = undefined;
+		this.requestRender();
 	}
 }

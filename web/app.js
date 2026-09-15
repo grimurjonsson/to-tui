@@ -388,6 +388,8 @@ function changeScope() {
   state.editor = null;
   state.snapshot = null;
   state.cursor = null;
+  $("new-row").querySelector(".inline-edit")?.remove();
+  $("add").hidden = false;
   $("add").disabled = true;
   state.rows.clear();
   $("list").replaceChildren();
@@ -1010,7 +1012,12 @@ $("clear-date").onclick = () => {
   $("due-date").value = "";
   captureDraft();
 };
-$("add").onclick = () => newTask();
+$("add").onclick = () => editInline(null);
+$("new-row").oncontextmenu = openNewTaskMenu;
+$("add").onkeydown = (event) => {
+  if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+    openNewTaskMenu(event);
+};
 $("add-child").onclick = () => newTask(state.selected);
 $("parent").onchange = () => {
   state.editor.moveDirty = true;
@@ -1449,17 +1456,23 @@ function resizeInlineInput(input) {
 }
 new ResizeObserver(() => {
   document.querySelectorAll(".inline-edit textarea").forEach(resizeInlineInput);
-}).observe($("list"));
+}).observe(document.querySelector(".ledger"));
 
 function editInline(id) {
   if (state.saving || state.drag) return;
-  if (state.snapshot.read_only) return select(id);
-  const row = state.rows.get(id);
+  if (!state.snapshot || state.snapshot.read_only) {
+    if (id && state.snapshot) select(id);
+    return;
+  }
+  const creating = id === null;
+  const row = creating ? $("new-row") : state.rows.get(id);
   if (row.querySelector(".inline-edit")) {
     row.querySelector("textarea").focus();
     return;
   }
-  const item = state.snapshot.items.find((task) => task.id === id);
+  const item = creating
+    ? { content: "" }
+    : state.snapshot.items.find((task) => task.id === id);
   if (!item) return;
   closeEditor();
   const revision = state.snapshot.revision;
@@ -1506,9 +1519,9 @@ function editInline(id) {
     if (content === item.content) return close();
     status.textContent = "Saving…";
     const saved = await mutate(
-      `api/todos/${id}?${targetQuery}`,
-      "PATCH",
-      { content, expected_revision: revision },
+      `api/todos${creating ? "" : "/" + id}?${targetQuery}`,
+      creating ? "POST" : "PATCH",
+      creating ? { content } : { content, expected_revision: revision },
       null,
     );
     if (saved) close();
@@ -1570,13 +1583,45 @@ function openStateMenu(event, id) {
     menu.append(button);
   }
   menu.hidden = false;
-  const anchor = state.rows.get(id).getBoundingClientRect();
+  positionTaskMenu(event, state.rows.get(id));
+  menu.querySelector('[aria-checked="true"]').focus({ preventScroll: true });
+}
+function positionTaskMenu(event, element) {
+  const menu = $("state-menu");
+  const anchor = element.getBoundingClientRect();
   const x = event.clientX || anchor.left;
   const y = event.clientY || anchor.bottom;
   const rect = menu.getBoundingClientRect();
   menu.style.left = `${Math.max(8, Math.min(x, innerWidth - rect.width - 8))}px`;
   menu.style.top = `${Math.max(8, Math.min(y, innerHeight - rect.height - 8))}px`;
-  menu.querySelector('[aria-checked="true"]').focus({ preventScroll: true });
+}
+function openNewTaskMenu(event) {
+  if (!state.snapshot || state.snapshot.read_only || state.saving) return;
+  event.preventDefault();
+  closeStateMenu(false);
+  state.stateMenu = { focus: $("add") };
+  const menu = $("state-menu");
+  menu.setAttribute("aria-label", "New task actions");
+  const button = document.createElement("button");
+  button.type = "button";
+  button.setAttribute("role", "menuitem");
+  button.textContent = "New task…";
+  button.onclick = () => {
+    const inline = $("new-row").querySelector("textarea");
+    const content = inline?.value;
+    $("new-row").querySelector(".inline-edit")?.remove();
+    $("add").hidden = false;
+    closeStateMenu(false);
+    newTask();
+    if (content !== undefined) {
+      $("content").value = content;
+      captureDraft();
+    }
+  };
+  menu.replaceChildren(button);
+  menu.hidden = false;
+  positionTaskMenu(event, $("add"));
+  button.focus();
 }
 function closeStateMenu(restoreFocus = true) {
   const selection = state.stateMenu;
@@ -1862,7 +1907,7 @@ document.addEventListener("keydown", (event) => {
       else if (hasChildren(current)) moveCursor(visible[index + 1]);
       break;
     case "o":
-      newTask();
+      editInline(null);
       break;
     case "Enter":
       if (current) {

@@ -8,14 +8,19 @@ export interface TotuiTodoItem {
 	description?: string | null;
 }
 
+export interface TotuiDestination {
+	backend: "local" | "remote";
+	project: string;
+	remote?: string | null;
+	server_url?: string | null;
+	directory: string;
+	folder?: string | null;
+}
+
 export interface TotuiTodoList {
 	date: string;
 	items: TotuiTodoItem[];
-	source: "api" | "empty" | "error";
+	source: "cli" | "error";
+	destination?: TotuiDestination;
 	error?: string;
-}
-
-export interface TotuiDataConfig {
-	apiBaseUrl: string;
-	project: string;
 }

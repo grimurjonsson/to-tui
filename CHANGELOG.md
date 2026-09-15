@@ -5,6 +5,13 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-09-15
+The web UI now lets you create new tasks directly with the inline editor, and the Pi todo extension talks to totui through the CLI so it works against remote instances as well as local ones.
+
+### Added
+- pi): use remote-aware CLI transport for todo extension
+- web): create tasks with the inline editor
+
 ## [0.7.3] - 2026-09-09
 Task text fields in the web UI now grow as you type, and sidebar edit and save actions are explicit buttons instead of implicit behaviors.
 

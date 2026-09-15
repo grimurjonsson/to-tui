@@ -449,7 +449,7 @@ install-codex-skills:
     echo ""
     echo "Restart Codex to pick up the skills."
 
-# Install totui-mcp pi extension (registers MCP tools in pi agent)
+# Install totui pi extension (remote-aware CLI tools, panel and widget)
 setup-pi-extension:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -469,7 +469,8 @@ setup-pi-extension:
 
     echo "✓ Linked $LINK -> $EXT_DIR"
     echo ""
-    echo "Restart pi (or run /reload) to load totui-mcp tools."
+    echo "Restart pi (or run /reload) to load totui CLI tools and panel."
+    echo "Verify your destination from the project folder: totui todo context"
     echo "Quick test: pi -e \"$EXT_DIR/index.ts\" -p \"list my totui projects\""
 
 # Install totui-mcp skill to Claude Code
