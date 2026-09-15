@@ -1,5 +1,9 @@
 # Kanban completion verification
 
+## Inline task creation (2026-09-10)
+
+New task and `o` open the growing inline editor. Right-click or the keyboard context-menu key exposes New task… for the sidebar, carrying over any inline text. Scope changes clear the inline creation form. All 50 browser tests and Rust formatting, strict all-target Clippy, build/tests passed; both creation tests passed against the Linux release. Deployed to Caitlyn with backup `/root/totui-backup.Gg1Ksj3a`; installed/built SHA-256: `31d78c54f91fe2cdb27a5f5921387ea61e6e65543b2a9416f3baea00878d8cd1`. Service readiness and authenticated public account reads passed.
+
 ## Inline cursor placement (2026-09-09)
 
 Opening the inline editor places a collapsed selection at the end of the title. Desktop/phone checks verify focus and both selection offsets; both passed along with web checks and the builds. Deployed to Caitlyn with backup `/root/totui-backup.hzEk7kX4`; installed/built SHA-256: `78071197d93f8fa2d4c9adf3af7d827d42a8032bad5f76314d657e837b813710`. Service readiness and authenticated public account reads passed.

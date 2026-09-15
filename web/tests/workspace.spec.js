@@ -47,8 +47,8 @@ const openMove = (page) =>
   });
 async function createInBrowser(page, content) {
   await page.getByRole("button", { name: "New task", exact: true }).click();
-  await page.getByRole("textbox", { name: "Task", exact: true }).fill(content);
-  await page.getByRole("button", { name: "Save task", exact: true }).click();
+  await page.locator("#new-row textarea").fill(content);
+  await page.locator("#new-row textarea").press("Enter");
   await expect(
     page.locator(".task-title").filter({ hasText: content }),
   ).toBeVisible();
@@ -1727,5 +1727,44 @@ for (const phone of [false, true]) {
     await input.press("Enter");
     await expect(input).toHaveCount(0);
     expect(cli("get", task.id).content).toBe(content);
+  });
+}
+
+for (const phone of [false, true]) {
+  test(`new task opens inline and context menu opens sidebar (${phone ? "phone" : "desktop"})`, async ({
+    page,
+  }) => {
+    if (phone) await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(base);
+    await page.locator("#add").click();
+    const input = page.locator("#new-row textarea");
+    await expect(input).toBeFocused();
+    await expect(page.locator("#details")).not.toBeVisible();
+    await input.fill("Cancelled creation");
+    await input.press("Escape");
+    await expect(input).toHaveCount(0);
+    await createInBrowser(page, "Created inline");
+    await expect(page.locator("#details")).not.toBeVisible();
+    await page.locator("#add").click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "New task…", exact: true })
+      .click();
+    await expect(page.locator("#content")).toBeFocused();
+    await page.locator("#content").fill("Created in sidebar");
+    await page.locator("#description").fill("Extra detail");
+    await page.getByRole("button", { name: "Save task", exact: true }).click();
+    await expect(page.locator(".task-title")).toHaveText([
+      "Created inline",
+      "Created in sidebar",
+    ]);
+    await page.locator("#add").focus();
+    await page.keyboard.press("o");
+    await input.fill("Keep this draft");
+    await page.locator("#new-row").click({ button: "right" });
+    await page
+      .getByRole("menuitem", { name: "New task…", exact: true })
+      .click();
+    await expect(page.locator("#content")).toHaveValue("Keep this draft");
+    await expect(input).toHaveCount(0);
   });
 }
