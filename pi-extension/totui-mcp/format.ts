@@ -1,5 +1,6 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { describeDestination } from "./client.js";
 import { findFocusedItems } from "./focus.js";
 import type { TotuiTodoItem, TotuiTodoList } from "./types.js";
 
@@ -49,7 +50,7 @@ export function formatWidgetLines(list: TotuiTodoList, theme: Theme, _maxRoots: 
 	const focused = findFocusedItems(list.items);
 	const header =
 		theme.fg("accent", " totui ") +
-		theme.fg("muted", ` ${list.date} (${done}/${total})`) +
+		theme.fg("muted", ` ${list.destination ? describeDestination(list.destination) : "unresolved"} · ${list.date} (${done}/${total})`) +
 		theme.fg("dim", "  ⌘⇧T · ctrl+⇧T");
 
 	const lines = [header];
@@ -69,7 +70,7 @@ export function formatWidgetLines(list: TotuiTodoList, theme: Theme, _maxRoots: 
 	if (list.error) {
 		lines.push(theme.fg("warning", list.error));
 	} else if (list.source === "error") {
-		lines.push(theme.fg("warning", "API unavailable"));
+		lines.push(theme.fg("warning", "Totui CLI unavailable"));
 	}
 
 	return lines;
@@ -78,7 +79,7 @@ export function formatWidgetLines(list: TotuiTodoList, theme: Theme, _maxRoots: 
 export function formatPanelHeader(list: TotuiTodoList, theme: Theme, width: number): string {
 	const { done, total } = countDone(list.items);
 	const title = theme.fg("accent", " totui ");
-	const stats = theme.fg("muted", `${list.date} · ${done}/${total}`);
+	const stats = theme.fg("muted", `${list.destination ? describeDestination(list.destination) : "unresolved"} · ${list.date} · ${done}/${total}`);
 	const hint = theme.fg("dim", " ⌘⇧T · ctrl+⇧T");
 	return truncateToWidth(`${title}${stats}${hint}`, width);
 }
