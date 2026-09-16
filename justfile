@@ -418,7 +418,7 @@ remove-mcp-codex:
         echo "totui-mcp not found in Codex config"
     fi
 
-# Symlink the todo-mcp and totui skills into ~/.codex/skills
+# Symlink the totui CLI skill into ~/.codex/skills
 install-codex-skills:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -426,7 +426,7 @@ install-codex-skills:
     SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
     mkdir -p "$SKILLS_DIR"
 
-    for SKILL in todo-mcp totui; do
+    for SKILL in totui; do
         SOURCE_DIR="$(pwd)/skills/$SKILL"
         LINK="$SKILLS_DIR/$SKILL"
 
@@ -448,6 +448,38 @@ install-codex-skills:
 
     echo ""
     echo "Restart Codex to pick up the skills."
+
+# Symlink the totui CLI skill into the shared Pi/OMP location
+install-pi-skills:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    SKILLS_DIR="$HOME/.agents/skills"
+    mkdir -p "$SKILLS_DIR"
+
+    for SKILL in totui; do
+        SOURCE_DIR="{{justfile_directory()}}/skills/$SKILL"
+        LINK="$SKILLS_DIR/$SKILL"
+
+        if [ ! -d "$SOURCE_DIR" ]; then
+            echo "Source skill directory not found: $SOURCE_DIR"
+            exit 1
+        fi
+
+        if [ -L "$LINK" ]; then
+            rm "$LINK"
+        elif [ -e "$LINK" ]; then
+            echo "$LINK exists and is not a symlink; move it aside first"
+            exit 1
+        fi
+
+        ln -s "$SOURCE_DIR" "$LINK"
+        echo "Linked $LINK -> $SOURCE_DIR"
+    done
+
+    echo ""
+    echo "Restart Pi or Oh My Pi to discover totui."
+    echo "Verify your destination from the project folder: totui todo context"
 
 # Install totui pi extension (remote-aware CLI tools, panel and widget)
 setup-pi-extension:
