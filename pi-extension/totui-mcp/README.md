@@ -30,11 +30,21 @@ Configure and authenticate a remote with `totui remote` first, if desired.
 
 ```sh
 totui todo context
+just install-pi-skills
 just setup-pi-extension
 ```
 
 Then `/reload` in pi (or restart). Existing installed directory symlinks need no
 change. There is no need to run `totui serve start` or install `totui-mcp`.
+
+`just install-pi-skills` links the same `totui` CLI skill used by Codex into
+`~/.agents/skills`, the shared skill location discovered by both Pi and Oh My Pi.
+It covers todo management and live progress tracking through the remote-aware
+CLI, not MCP. Restart the agent after installation. The registered skill name
+is `totui`, not `to-tui`. Use the current agent's name as the progress root
+rather than copying Codex from the examples.
+`just setup-pi-extension` targets upstream Pi's `~/.pi/agent/extensions`;
+installing the shared CLI skills does not require that extension.
 
 ## Configure
 
