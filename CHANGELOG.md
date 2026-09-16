@@ -5,6 +5,12 @@ All notable changes to to-tui will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-09-16
+The standalone totui skill is now installed correctly for Pi and OMP, so those clients get the totui skill available out of the box.
+
+### Fixed
+- skills): install standalone totui skill for Pi and OMP
+
 ## [0.7.4] - 2026-09-15
 The web UI now lets you create new tasks directly with the inline editor, and the Pi todo extension talks to totui through the CLI so it works against remote instances as well as local ones.
 
